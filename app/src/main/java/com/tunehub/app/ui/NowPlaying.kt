@@ -415,7 +415,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                         WavySeekBar(
                             songId = song.id,
                             progress = progress,
-                            isPlaying = isPlaying,
+                            isPlaying = PlayerConnection.isPlaying,
                             modifier = Modifier.fillMaxWidth().height(36.dp),
                             playedColor = tuneColors.accent,
                             playheadColor = tuneColors.accent,
