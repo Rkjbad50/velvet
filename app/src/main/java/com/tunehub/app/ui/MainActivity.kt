@@ -237,7 +237,13 @@ private fun AppRoot() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     MiniPlayer(onOpen = { nav.nowPlayingOpen = true })
-                    BottomTabs(selected = nav.tab, onSelect = nav::selectTab)
+                    BottomTabs(
+                        selected = nav.tab,
+                        onSelect = { i ->
+                            if (i == 1 && nav.tab == 1) searchVm.clear()
+                            nav.selectTab(i)
+                        },
+                    )
                 }
             }
 

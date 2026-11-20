@@ -39,10 +39,13 @@ import com.tunehub.app.data.isValidVideoId
 import com.tunehub.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -68,6 +71,11 @@ class PlaybackService : MediaSessionService() {
 
     /** Bumped whenever the queue is replaced, so slow radio lookups for an old queue are dropped. */
     private var queueGeneration = 0
+
+    // Crossfade automix state
+    private var crossfadeMonitorJob: Job? = null
+    private var fadeInJob: Job? = null
+    private var isFadingOut = false
 
     override fun onCreate() {
         super.onCreate()
@@ -120,6 +128,8 @@ class PlaybackService : MediaSessionService() {
             .setCallback(callback)
             .setSessionActivity(openApp)
             .build()
+
+        monitorCrossfade()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
@@ -130,6 +140,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        crossfadeMonitorJob?.cancel()
+        fadeInJob?.cancel()
         scope.cancel()
         AudioFx.release()
         SleepTimer.cancel()
@@ -229,6 +241,22 @@ class PlaybackService : MediaSessionService() {
             trimPlayedHistory()
             prefetchNext()
             extendQueueIfNeeded()
+
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                val crossfadeSec = TuneHubApp.library.data.value.crossfadeSeconds
+                if (crossfadeSec > 0f) {
+                    fadeInTrack(crossfadeSec)
+                } else {
+                    isFadingOut = false
+                    exo.volume = 1.0f
+                }
+            } else {
+                // Manual change by user (Seek, Next, Previous, Jump) — DO NOT crossfade
+                isFadingOut = false
+                fadeInJob?.cancel()
+                exo.volume = 1.0f
+            }
         }
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
@@ -356,6 +384,56 @@ class PlaybackService : MediaSessionService() {
 
     private fun radioWanted() =
         TuneHubApp.library.data.value.autoplay || (exo.mediaItemCount > 0 && exo.getMediaItemAt(0).isRadio())
+
+    private fun monitorCrossfade() {
+        crossfadeMonitorJob?.cancel()
+        crossfadeMonitorJob = scope.launch {
+            while (isActive) {
+                delay(100)
+                if (!::exo.isInitialized || !exo.isPlaying) continue
+                val crossfadeSec = TuneHubApp.library.data.value.crossfadeSeconds
+                if (crossfadeSec <= 0f) {
+                    if (isFadingOut) {
+                        isFadingOut = false
+                        exo.volume = 1.0f
+                    }
+                    continue
+                }
+
+                val duration = exo.duration
+                val position = exo.currentPosition
+                if (duration <= 0 || position <= 0) continue
+
+                val remainingMs = duration - position
+                val fadeMs = (crossfadeSec * 1000L).toLong()
+
+                if (remainingMs in 1..fadeMs && exo.hasNextMediaItem()) {
+                    isFadingOut = true
+                    val progress = (remainingMs.toFloat() / fadeMs.toFloat()).coerceIn(0.05f, 1f)
+                    exo.volume = progress
+                } else if (isFadingOut && remainingMs > fadeMs) {
+                    isFadingOut = false
+                    exo.volume = 1.0f
+                }
+            }
+        }
+    }
+
+    private fun fadeInTrack(crossfadeSec: Float) {
+        fadeInJob?.cancel()
+        fadeInJob = scope.launch {
+            isFadingOut = false
+            val fadeDurationMs = (crossfadeSec * 600L).toLong().coerceIn(300L, 3000L)
+            val steps = 25
+            val stepDelay = (fadeDurationMs / steps).coerceAtLeast(10L)
+            for (i in 0..steps) {
+                val vol = (i.toFloat() / steps).coerceIn(0f, 1f)
+                exo.volume = vol
+                delay(stepDelay)
+            }
+            exo.volume = 1.0f
+        }
+    }
 
     companion object {
         private val POST_BODY = byteArrayOf(0x78, 0)

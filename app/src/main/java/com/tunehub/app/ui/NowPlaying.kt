@@ -380,22 +380,30 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, bottom = gap),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    ) {
                         PanelIconButton(Icons.Default.KeyboardArrowDown, "Close", onClick = onClose)
-                        Crossfade(
-                            targetState = quality ?: "—",
-                            modifier = Modifier.weight(1f).padding(start = 12.dp),
-                            animationSpec = tween(160),
-                            label = "streamQuality",
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "NOW PLAYING",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 2.sp,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                            color = tuneColors.muted,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        PanelIconButton(
+                            AppIcons.Lyrics,
+                            "Lyrics",
+                            tint = if (showLyrics) tuneColors.accentText else tuneColors.text,
                         ) {
-                            Text(it, style = MaterialTheme.typography.labelSmall, color = tuneColors.accentText, maxLines = 1)
-                        }
-                        TextButton(onClick = {
                             showLyrics = true
                             if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
-                        }) {
-                            Text("Lyrics", style = MaterialTheme.typography.labelSmall)
                         }
+                        Spacer(Modifier.width(8.dp))
                         PanelIconButton(Icons.Default.MoreVert, "More") { openMenu(SongMenuRequest(song, null)) }
                     }
 
@@ -422,14 +430,38 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(song.title, style = MaterialTheme.typography.headlineMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                song.artist,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = tuneColors.muted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = if (openArtist != null) Modifier.clickable(onClick = openArtist) else Modifier,
-                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    song.artist,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = tuneColors.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = if (openArtist != null) Modifier.clickable(onClick = openArtist) else Modifier,
+                                )
+                                if (quality != null) {
+                                    Spacer(Modifier.width(10.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(tuneColors.raised)
+                                            .border(1.dp, tuneColors.rule, RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                                    ) {
+                                        Text(
+                                            quality,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                letterSpacing = 0.6.sp,
+                                            ),
+                                            color = tuneColors.accentText,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
                         }
                         PanelIconButton(
                             if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,

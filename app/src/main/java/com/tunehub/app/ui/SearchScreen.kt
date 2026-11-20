@@ -348,10 +348,10 @@ private fun SearchResults(vm: SearchViewModel) {
         val top = vm.top
         when {
             vm.error != null && top == null && vm.items.isEmpty() -> item { ErrorBox(vm.error ?: "") { vm.submit(remember = false) } }
-            vm.filter == SearchFilter.All && top != null -> topResults(top, vm.query, onMore = vm::selectFilter)
+            vm.filter == SearchFilter.All && top != null -> topResults(top, vm.query, onMore = vm::selectFilter, onSongClick = { vm.clear() })
             else -> {
                 items(vm.items, key = ::itemKey) { item ->
-                    BrowseItemRow(item)
+                    BrowseItemRow(item, onSongClick = { vm.clear() })
                     HorizontalDivider(Modifier.padding(start = 88.dp, end = 20.dp), color = tuneColors.rule)
                 }
                 if (!vm.loading && vm.items.isEmpty() && vm.error == null) item { EmptyHint("No results") }
@@ -362,10 +362,13 @@ private fun SearchResults(vm: SearchViewModel) {
 }
 
 @Composable
-fun BrowseItemRow(item: BrowseItem) {
+fun BrowseItemRow(item: BrowseItem, onSongClick: ((Song) -> Unit)? = null) {
     val nav = LocalNav.current
     when (item) {
-        is BrowseItem.SongItem -> SongRow(item.song, onClick = { PlayerConnection.startRadio(item.song) })
+        is BrowseItem.SongItem -> SongRow(item.song, onClick = {
+            PlayerConnection.startRadio(item.song)
+            onSongClick?.invoke(item.song)
+        })
         is BrowseItem.ArtistItem -> BrowseRow(
             title = item.artist.name,
             subtitle = artistSubtitle(item.artist),
@@ -384,19 +387,27 @@ fun BrowseItemRow(item: BrowseItem) {
     }
 }
 
-fun LazyListScope.topResults(top: YouTube.TopResults, query: String, onMore: ((SearchFilter) -> Unit)?) {
+fun LazyListScope.topResults(
+    top: YouTube.TopResults,
+    query: String,
+    onMore: ((SearchFilter) -> Unit)?,
+    onSongClick: ((Song) -> Unit)? = null,
+) {
     val seeAll = if (onMore != null) "See all" else null
     val topArtist = top.artists.firstOrNull()?.takeIf { it.name.equals(query.trim(), ignoreCase = true) }
     val topSong = top.songs.firstOrNull()
 
     if (topArtist != null || topSong != null) {
         item { BrowseSection("Top result") }
-        item { TopResultCard(topArtist, if (topArtist == null) topSong else null) }
+        item { TopResultCard(topArtist, if (topArtist == null) topSong else null, onSongClick) }
     }
     if (top.songs.isNotEmpty()) {
         item { BrowseSection("Songs", action = seeAll) { onMore?.invoke(SearchFilter.Songs) } }
         items(top.songs.take(5), key = { "ts-" + it.id }) { song ->
-            SongRow(song, onClick = { PlayerConnection.startRadio(song) })
+            SongRow(song, onClick = {
+                PlayerConnection.startRadio(song)
+                onSongClick?.invoke(song)
+            })
             HorizontalDivider(Modifier.padding(start = 88.dp, end = 20.dp), color = tuneColors.rule)
         }
     }
@@ -430,7 +441,7 @@ fun LazyListScope.topResults(top: YouTube.TopResults, query: String, onMore: ((S
 }
 
 @Composable
-private fun TopResultCard(artist: ArtistRef?, song: Song?) {
+private fun TopResultCard(artist: ArtistRef?, song: Song?, onSongClick: ((Song) -> Unit)? = null) {
     val nav = LocalNav.current
     val title = artist?.name ?: song?.title ?: return
     val subtitle = if (artist != null) "Artist" else "Song • ${song?.artist}"
@@ -443,7 +454,12 @@ private fun TopResultCard(artist: ArtistRef?, song: Song?) {
             .panel(RoundedCornerShape(12.dp), fill = tuneColors.surface)
             .background(Brush.horizontalGradient(listOf(glow.copy(alpha = 0.10f), Color.Transparent)))
             .clickable {
-                if (artist != null) nav.open(Route.Artist(artist)) else song?.let(PlayerConnection::startRadio)
+                if (artist != null) {
+                    nav.open(Route.Artist(artist))
+                } else song?.let { s ->
+                    PlayerConnection.startRadio(s)
+                    onSongClick?.invoke(s)
+                }
             }
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,

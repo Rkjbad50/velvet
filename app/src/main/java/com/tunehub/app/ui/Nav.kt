@@ -50,6 +50,8 @@ class Navigator(initial: NavState = NavState()) {
     }
 
     fun selectTab(i: Int) {
+        // Modal / utility routes (Settings, Equalizer, Import) should never stick as persistent tab destinations
+        stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import } }
         // tapping the current tab again pops back to its root
         if (i == tab) stacks[i].clear() else tab = i
     }
@@ -58,7 +60,10 @@ class Navigator(initial: NavState = NavState()) {
         when {
             nowPlayingOpen -> nowPlayingOpen = false
             stacks[tab].isNotEmpty() -> stacks[tab].removeAt(stacks[tab].lastIndex)
-            else -> tab = 0
+            else -> {
+                stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import } }
+                tab = 0
+            }
         }
     }
 

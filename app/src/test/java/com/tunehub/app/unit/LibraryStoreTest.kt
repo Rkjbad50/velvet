@@ -122,4 +122,19 @@ class LibraryStoreTest {
         assertTrue(library.data.value.pendingDownloads.isEmpty())
         assertEquals(1, library.data.value.downloads.size)
     }
+
+    @Test
+    fun crossfadeAndSeekbarStylePersistCorrectly() {
+        val library = Library(tmp.root)
+        assertEquals(0f, library.data.value.crossfadeSeconds)
+        assertEquals("MINIMAL", library.data.value.seekbarStyle)
+
+        library.setCrossfadeSeconds(4.5f)
+        library.setSeekbarStyle("DOT_MATRIX")
+        library.flushBlocking()
+
+        val loaded = (LibraryStore(tmp.root).load() as LoadResult.Loaded).data
+        assertEquals(4.5f, loaded.crossfadeSeconds)
+        assertEquals("DOT_MATRIX", loaded.seekbarStyle)
+    }
 }

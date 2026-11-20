@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +36,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.text.font.FontWeight
@@ -96,19 +99,19 @@ fun SettingsScreen(onBack: () -> Unit) {
         SettingsGroup("Appearance & Theme") {
             ToggleRow(
                 "Dark theme",
-                if (data.isDarkTheme) "Pitch AMOLED extreme black with glass blur" else "Light theme with frosted glass surfaces",
+                "",
                 data.isDarkTheme,
                 library::setDarkTheme,
             )
 
-            // Accent Color Chooser
+            // Accent Color Chooser (Horizontal scrollable with all 10 color swatches)
             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
                 Text("Accent color", style = MaterialTheme.typography.titleMedium)
                 Text("Choose your preferred theme accent", style = MaterialTheme.typography.bodySmall, color = tuneColors.muted)
                 Spacer(Modifier.size(10.dp))
                 Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     VelvetAccents.available.forEach { (name, color) ->
@@ -189,15 +192,14 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = tuneColors.rule)
 
-            // Seekbar Style selector (4 distinct styles)
+            // Seekbar Style selector (Minimal, Wide, DotMatrix)
             var seekbarDropdownOpen by remember { mutableStateOf(false) }
             val seekbarOptions = listOf(
-                "WATER_WAVE" to "Thick Water Wave (Fluid)",
-                "PIXEL_EXPRESSIVE" to "Pixel UI Material Expressive (Android 17)",
-                "APPLE_MUSIC" to "Apple Music Minimal",
-                "PLANE_FLIGHT" to "Flight Runway (Airplane ✈️)",
+                "MINIMAL" to "Minimal",
+                "WIDE" to "Wide",
+                "DOT_MATRIX" to "DotMatrix",
             )
-            val currentSeekbarLabel = seekbarOptions.find { it.first == data.seekbarStyle }?.second ?: "Thick Water Wave (Fluid)"
+            val currentSeekbarLabel = seekbarOptions.find { it.first == data.seekbarStyle }?.second ?: "Minimal"
 
             Box(Modifier.fillMaxWidth()) {
                 ActionRow(
@@ -272,6 +274,57 @@ fun SettingsScreen(onBack: () -> Unit) {
                 data.autoLyrics,
                 library::setAutoLyrics,
             )
+
+            // Crossfade automix (0.5s to 10.0s)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Crossfade automix", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (data.crossfadeSeconds > 0f) "${data.crossfadeSeconds}s automix during auto track transition" else "Off · Instant transition",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (data.crossfadeSeconds > 0f) tuneColors.accentText else tuneColors.muted,
+                        )
+                    }
+                    Switch(
+                        checked = data.crossfadeSeconds > 0f,
+                        onCheckedChange = { on ->
+                            library.setCrossfadeSeconds(if (on) 3.0f else 0f)
+                        },
+                        colors = SwitchDefaults.colors(checkedTrackColor = tuneColors.accent, checkedThumbColor = tuneColors.onAccent),
+                    )
+                }
+                if (data.crossfadeSeconds > 0f) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("0.5s", style = MaterialTheme.typography.labelSmall, color = tuneColors.muted)
+                        Slider(
+                            value = data.crossfadeSeconds,
+                            onValueChange = { raw ->
+                                val rounded = (Math.round(raw * 2) / 2.0f).coerceIn(0.5f, 10.0f)
+                                library.setCrossfadeSeconds(rounded)
+                            },
+                            valueRange = 0.5f..10.0f,
+                            steps = 18,
+                            modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = tuneColors.accentText,
+                                activeTrackColor = tuneColors.accent,
+                                inactiveTrackColor = tuneColors.track,
+                            ),
+                        )
+                        Text("10s", style = MaterialTheme.typography.labelSmall, color = tuneColors.muted)
+                    }
+                }
+            }
+
             ActionRow("Equalizer & ULT Bass", "Bass boost, 5-band EQ, 3D sound and loudness") { nav.open(Route.Equalizer) }
         }
 
@@ -380,7 +433,7 @@ private fun SettingsGroup(text: String, content: @Composable ColumnScope.() -> U
 }
 
 @Composable
-private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(title: String, subtitle: String = "", checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -390,7 +443,9 @@ private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChang
     ) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (subtitle.isNotBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Switch(
             checked = checked,

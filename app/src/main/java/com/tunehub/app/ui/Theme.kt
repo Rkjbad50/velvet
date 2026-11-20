@@ -45,6 +45,10 @@ object VelvetAccents {
     val Rose = Color(0xFFF43F5E)
     val Amber = Color(0xFFF59E0B)
     val Blue = Color(0xFF3B82F6)
+    val Sunset = Color(0xFFFF7A00)
+    val Lime = Color(0xFFA3E635)
+    val Indigo = Color(0xFF6366F1)
+    val Crimson = Color(0xFFFF1744)
 
     fun colorFor(name: String, dark: Boolean): Color = when (name.uppercase()) {
         "EMERALD" -> if (dark) Color(0xFF34D399) else Color(0xFF059669)
@@ -52,10 +56,25 @@ object VelvetAccents {
         "ROSE" -> if (dark) Color(0xFFFB7185) else Color(0xFFE11D48)
         "AMBER" -> if (dark) Color(0xFFFBBF24) else Color(0xFFD97706)
         "BLUE" -> if (dark) Color(0xFF60A5FA) else Color(0xFF2563EB)
+        "SUNSET" -> if (dark) Color(0xFFFF8A50) else Color(0xFFE65100)
+        "LIME" -> if (dark) Color(0xFFA3E635) else Color(0xFF65A30D)
+        "INDIGO" -> if (dark) Color(0xFF818CF8) else Color(0xFF4F46E5)
+        "CRIMSON" -> if (dark) Color(0xFFFF5252) else Color(0xFFDC2626)
         else -> if (dark) Color(0xFFC084FC) else Color(0xFF9333EA) // VELVET Signature Purple
     }
 
-    val available = listOf("VELVET" to Purple, "EMERALD" to Emerald, "CYAN" to Cyan, "ROSE" to Rose, "AMBER" to Amber, "BLUE" to Blue)
+    val available = listOf(
+        "VELVET" to Purple,
+        "EMERALD" to Emerald,
+        "CYAN" to Cyan,
+        "ROSE" to Rose,
+        "AMBER" to Amber,
+        "BLUE" to Blue,
+        "SUNSET" to Sunset,
+        "LIME" to Lime,
+        "INDIGO" to Indigo,
+        "CRIMSON" to Crimson,
+    )
 }
 
 @Immutable
