@@ -172,47 +172,38 @@ internal val EditorialSerif = FontFamily(
     variableFont(R.font.source_serif_4, FontWeight.Bold),
 )
 
-private val Inter = FontFamily(
-    variableFont(R.font.inter, FontWeight.Normal),
-    variableFont(R.font.inter, FontWeight.Medium),
-    variableFont(R.font.inter, FontWeight.SemiBold),
+internal val SacrificeFont = FontFamily(
+    Font(R.font.sacrifice, FontWeight.Bold),
+    Font(R.font.sacrifice, FontWeight.Normal),
 )
 
-private val Outfit = FontFamily(
-    Font(R.font.outfit, FontWeight.Normal),
-    Font(R.font.outfit, FontWeight.Medium),
-    Font(R.font.outfit, FontWeight.SemiBold),
-    Font(R.font.outfit, FontWeight.Bold),
-)
-
-private val SpaceGrotesk = FontFamily(
-    Font(R.font.space_grotesk, FontWeight.Normal),
-    Font(R.font.space_grotesk, FontWeight.Medium),
-    Font(R.font.space_grotesk, FontWeight.Bold),
-)
+private val CoolJazz = FontFamily(Font(R.font.cool_jazz))
+private val ChocoCooky = FontFamily(Font(R.font.choco_cooky))
+private val Rosemary = FontFamily(Font(R.font.rosemary))
 
 private val Silkscreen = FontFamily(Font(R.font.silkscreen))
 
 fun getFontFamily(fontName: String): FontFamily = when (fontName.uppercase()) {
-    "INTER" -> Inter
-    "OUTFIT" -> Outfit
-    "SPACE_GROTESK" -> SpaceGrotesk
     "SOURCE_SERIF" -> EditorialSerif
+    "MONOSPACE" -> FontFamily.Monospace
+    "COOL_JAZZ" -> CoolJazz
+    "CHOCO_COOKY" -> ChocoCooky
+    "ROSEMARY" -> Rosemary
     else -> FontFamily.Default
 }
 
-private fun createTypography(family: FontFamily) = Typography(
+private fun createTypography(family: FontFamily, isMonospace: Boolean = false) = Typography(
     displaySmall = TextStyle(fontFamily = family, fontSize = 42.sp, lineHeight = 46.sp, letterSpacing = (-1).sp, fontWeight = FontWeight.Bold),
     headlineMedium = TextStyle(fontFamily = family, fontSize = 30.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp, fontWeight = FontWeight.Bold),
-    headlineSmall = TextStyle(fontFamily = family, fontSize = 24.sp, lineHeight = 29.sp, fontWeight = FontWeight.SemiBold),
-    titleLarge = TextStyle(fontFamily = family, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
-    titleMedium = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
-    titleSmall = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
-    bodyLarge = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp),
-    bodyMedium = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 20.sp),
-    bodySmall = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 17.sp),
-    labelLarge = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
-    labelMedium = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium),
+    headlineSmall = TextStyle(fontFamily = family, fontSize = 24.sp, lineHeight = 29.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
+    titleLarge = TextStyle(fontFamily = family, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
+    titleMedium = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
+    titleSmall = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
+    bodyLarge = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
+    bodyMedium = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
+    bodySmall = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 17.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
+    labelLarge = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
+    labelMedium = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
     labelSmall = TextStyle(fontFamily = Silkscreen, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.6.sp),
 )
 
@@ -223,7 +214,8 @@ fun TuneHubTheme(content: @Composable () -> Unit) {
     val isDark = data.isDarkTheme
     val accent = VelvetAccents.colorFor(data.accentColor, isDark)
     val colors = if (isDark) createPitchAmoledColors(accent) else createLightGlassColors(accent)
-    val typography = createTypography(getFontFamily(data.fontPreference))
+    val fontName = data.fontPreference
+    val typography = createTypography(getFontFamily(fontName), isMonospace = fontName.equals("MONOSPACE", ignoreCase = true))
 
     CompositionLocalProvider(LocalTuneHubColors provides colors) {
         MaterialTheme(
@@ -244,6 +236,12 @@ object AppIcons {
         "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 " +
             "17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z",
     )
+    val SmartShuffle = icon(
+        "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 " +
+            "17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z " +
+            "M18 1.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z",
+    )
+    val Sparkles = icon("M12 3l1.5 3.5L17 8l-3.5 1.5L12 13l-1.5-3.5L7 8l3.5-1.5zM19 14l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z")
     val Repeat = icon("M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z")
     val RepeatOne = icon(
         "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z",

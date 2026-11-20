@@ -58,6 +58,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.tunehub.app.TuneHubApp
+import com.tunehub.app.data.AlbumRef
 import com.tunehub.app.data.BrowseItem
 import com.tunehub.app.data.Song
 import com.tunehub.app.data.YouTube
@@ -78,6 +79,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     var quickPicks by mutableStateOf<List<Song>>(emptyList())
         private set
     var trending by mutableStateOf<List<Song>>(emptyList())
+        private set
+    var moreForYou by mutableStateOf<List<AlbumRef>>(emptyList())
         private set
     private var historyIds = emptyList<String>()
     private var quickPicksJob: Job? = null
@@ -100,6 +103,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 songs to (snapshot["fetched_at"] as? Long ?: 0L)
             }
             trending = cached
+
+            // Fetch YouTube Music pre-made albums and playlists for "More for you"
+            launch(Dispatchers.IO) {
+                val playlists = runCatching {
+                    YouTube.Search("Top Hits", YouTube.FILTER_PLAYLISTS).loadNext()
+                        .filterIsInstance<BrowseItem.AlbumItem>()
+                        .map { it.album }
+                }.getOrDefault(emptyList())
+                val albums = runCatching {
+                    YouTube.Search("Trending", YouTube.FILTER_ALBUMS).loadNext()
+                        .filterIsInstance<BrowseItem.AlbumItem>()
+                        .map { it.album }
+                }.getOrDefault(emptyList())
+                val combined = (playlists.take(6) + albums.take(6)).distinctBy { it.url }
+                if (combined.isNotEmpty()) {
+                    moreForYou = combined
+                }
+            }
+
             val age = System.currentTimeMillis() - fetchedAt
             if (cached.isNotEmpty() && age in 0 until feedMaxAge) return@launch
 
@@ -178,6 +200,7 @@ fun HomeScreen(vm: HomeViewModel) {
     val recent = data.recent
     val quickPicks = vm.quickPicks
     val trending = vm.trending
+    val moreForYou = vm.moreForYou
     val openMenu = LocalSongMenu.current
 
     LaunchedEffect(recent) { vm.loadFor(recent) }
@@ -219,14 +242,15 @@ fun HomeScreen(vm: HomeViewModel) {
                 Icon(
                     painter = painterResource(R.drawable.ic_velvet_logo),
                     contentDescription = "VELVET Logo",
-                    tint = tuneColors.accentText,
-                    modifier = Modifier.size(30.dp),
+                    tint = Color.Unspecified,
+                    modifier = Modifier.size(36.dp),
                 )
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(12.dp))
                 Text(
                     "VELVET",
                     style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = SacrificeFont,
+                        fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp,
                     ),
                     color = tuneColors.text,
@@ -314,6 +338,18 @@ fun HomeScreen(vm: HomeViewModel) {
             item {
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     items(data.artists, key = { it.url }) { a -> ArtistCircle(a, 112.dp) { nav.open(Route.Artist(a)) } }
+                }
+            }
+        }
+
+        // YouTube Music pre-made albums and playlists recommendation section
+        if (moreForYou.isNotEmpty()) {
+            item { BrowseSection("More for you") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(moreForYou, key = { it.url }) { album ->
+                        AlbumCard(album) { nav.open(Route.Album(album)) }
+                    }
                 }
             }
         }

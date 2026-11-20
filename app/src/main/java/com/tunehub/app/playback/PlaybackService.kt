@@ -34,6 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.tunehub.app.R
 import com.tunehub.app.TuneHubApp
 import com.tunehub.app.data.StreamResolver
+import com.tunehub.app.data.isDuplicateOf
 import com.tunehub.app.data.isValidVideoId
 import com.tunehub.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
@@ -327,8 +328,8 @@ class PlaybackService : MediaSessionService() {
                 exo.repeatMode == Player.REPEAT_MODE_OFF &&
                 radioWanted()
             if (!stillValid) return@launch
-            val queued = (0 until exo.mediaItemCount).map { exo.getMediaItemAt(it).mediaId }.toSet()
-            val additions = related.filter { it.id !in queued }.take(RADIO_BATCH)
+            val queued = (0 until exo.mediaItemCount).map { exo.getMediaItemAt(it).toSong() }
+            val additions = related.filter { rel -> queued.none { q -> q.isDuplicateOf(rel) } }.take(RADIO_BATCH)
             if (additions.isEmpty()) return@launch
             val endedWhileWaiting = exo.playbackState == Player.STATE_ENDED && exo.playWhenReady
             exo.addMediaItems(additions.map { it.toMediaItem() })

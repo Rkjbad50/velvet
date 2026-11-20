@@ -28,7 +28,7 @@ object AudioFx {
     private var loudness: LoudnessEnhancer? = null
     private var current = EqSettings()
 
-    const val PRESET_ULTRA = "UltraTune"
+    const val PRESET_ULTRA = "ULT Bass"
     val presets = listOf("Flat", "Bass boost", "Vocal", "Treble", "Rock", "Pop", "Acoustic")
 
     @Synchronized

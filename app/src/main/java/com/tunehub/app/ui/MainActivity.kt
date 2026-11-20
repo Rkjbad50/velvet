@@ -7,12 +7,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -181,22 +187,32 @@ private fun AppRoot() {
                     .navigationBarsPadding()
                     .padding(bottom = bottomRoom),
             ) {
-                when (val route = nav.current) {
-                    null -> when (nav.tab) {
-                        0 -> HomeScreen(viewModel())
-                        1 -> SearchScreen(searchVm)
-                        else -> LibraryScreen()
+                AnimatedContent(
+                    targetState = Pair(nav.tab, nav.current),
+                    transitionSpec = {
+                        (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                            scaleIn(initialScale = 0.98f, animationSpec = tween(220, easing = FastOutSlowInEasing)))
+                            .togetherWith(fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)))
+                    },
+                    label = "screenTransition",
+                ) { (_, currentRoute) ->
+                    when (currentRoute) {
+                        null -> when (nav.tab) {
+                            0 -> HomeScreen(viewModel())
+                            1 -> SearchScreen(searchVm)
+                            else -> LibraryScreen()
+                        }
+                        Route.Liked -> LikedScreen(onBack = nav::back)
+                        Route.Recent -> RecentScreen(onBack = nav::back)
+                        Route.Downloads -> DownloadsScreen(onBack = nav::back)
+                        Route.Settings -> SettingsScreen(onBack = nav::back)
+                        Route.Equalizer -> EqualizerScreen(onBack = nav::back)
+                        Route.Import -> ImportScreen(onBack = nav::back)
+                        is Route.LocalPlaylist -> LocalPlaylistScreen(currentRoute.id, onBack = nav::back)
+                        is Route.Album -> AlbumScreen(currentRoute.album, onBack = nav::back)
+                        is Route.Artist -> ArtistScreen(currentRoute.artist, onBack = nav::back)
+                        is Route.Genre -> GenreScreen(currentRoute.name, onBack = nav::back)
                     }
-                    Route.Liked -> LikedScreen(onBack = nav::back)
-                    Route.Recent -> RecentScreen(onBack = nav::back)
-                    Route.Downloads -> DownloadsScreen(onBack = nav::back)
-                    Route.Settings -> SettingsScreen(onBack = nav::back)
-                    Route.Equalizer -> EqualizerScreen(onBack = nav::back)
-                    Route.Import -> ImportScreen(onBack = nav::back)
-                    is Route.LocalPlaylist -> LocalPlaylistScreen(route.id, onBack = nav::back)
-                    is Route.Album -> AlbumScreen(route.album, onBack = nav::back)
-                    is Route.Artist -> ArtistScreen(route.artist, onBack = nav::back)
-                    is Route.Genre -> GenreScreen(route.name, onBack = nav::back)
                 }
             }
 
@@ -212,8 +228,14 @@ private fun AppRoot() {
 
             AnimatedVisibility(
                 visible = nav.nowPlayingOpen && hasPlayer,
-                enter = slideInVertically(tween(240)) { it },
-                exit = slideOutVertically(tween(180)) { it },
+                enter = slideInVertically(
+                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    initialOffsetY = { it },
+                ) + fadeIn(animationSpec = tween(200)),
+                exit = slideOutVertically(
+                    animationSpec = tween(260, easing = FastOutSlowInEasing),
+                    targetOffsetY = { it },
+                ) + fadeOut(animationSpec = tween(160)),
             ) {
                 NowPlayingScreen(onClose = { nav.nowPlayingOpen = false })
             }

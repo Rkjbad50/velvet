@@ -85,6 +85,26 @@ fun totalDuration(songs: List<Song>): String {
     return if (h > 0) "$h hr $m min" else "$m min"
 }
 
+/** Check if two songs represent the same track (restricting duplicate entries in queue). */
+fun Song.isDuplicateOf(other: Song): Boolean {
+    if (this.id == other.id) return true
+    val t1 = this.title.normalizeSong()
+    val t2 = other.title.normalizeSong()
+    if (t1.isEmpty() || t2.isEmpty()) return false
+    if (t1 == t2) {
+        val a1 = this.artist.normalizeSong()
+        val a2 = other.artist.normalizeSong()
+        if (a1 == a2 || a1.contains(a2) || a2.contains(a1) || a1.isEmpty() || a2.isEmpty()) return true
+        if (this.durationSec > 0 && other.durationSec > 0 && Math.abs(this.durationSec - other.durationSec) <= 4) return true
+    }
+    return false
+}
+
+private fun String.normalizeSong(): String = this.lowercase()
+    .replace(Regex("""\((?:official|video|audio|lyric|remaster|hd|4k|8k|full|song|visualizer)[^)]*\)"""), "")
+    .replace(Regex("""\[(?:official|video|audio|lyric|remaster|hd|4k|8k|full|song|visualizer)[^\]]*\]"""), "")
+    .replace(Regex("""[^a-z0-9]"""), "")
+
 /**
  * The same artwork at about [px] pixels: list rows don't need the 544 px covers,
  * and smaller images download and decode much faster.

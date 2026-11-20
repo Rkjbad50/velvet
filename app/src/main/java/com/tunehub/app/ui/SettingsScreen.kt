@@ -27,9 +27,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -125,41 +128,52 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = tuneColors.rule)
 
-            // Font Chooser (2 professional, 2 vibe, 1 system default)
-            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Text("Typography & Font", style = MaterialTheme.typography.titleMedium)
-                Text("Select custom font or use Android system font", style = MaterialTheme.typography.bodySmall, color = tuneColors.muted)
-                Spacer(Modifier.size(10.dp))
+            // Compact Font Chooser Dropdown
+            var fontDropdownOpen by remember { mutableStateOf(false) }
+            val fontOptions = listOf(
+                "SYSTEM" to "System font (default)",
+                "SOURCE_SERIF" to "Source Serif (Editorial serif)",
+                "MONOSPACE" to "Monospace",
+                "COOL_JAZZ" to "Cool Jazz",
+                "CHOCO_COOKY" to "Choco Cooky",
+                "ROSEMARY" to "Rosemary",
+            )
+            val currentFontLabel = fontOptions.firstOrNull { it.first.equals(data.fontPreference, ignoreCase = true) }?.second ?: "System font (default)"
 
-                val fonts = listOf(
-                    "SYSTEM" to "Android System Font",
-                    "INTER" to "Inter (Professional Sans)",
-                    "SOURCE_SERIF" to "Source Serif (Editorial Serif)",
-                    "OUTFIT" to "Outfit (Modern Vibe)",
-                    "SPACE_GROTESK" to "Space Grotesk (Aesthetic Vibe)",
-                )
+            Box(Modifier.fillMaxWidth()) {
+                ActionRow(
+                    title = "Font style",
+                    subtitle = currentFontLabel,
+                    readout = "Select",
+                ) {
+                    fontDropdownOpen = true
+                }
 
-                fonts.forEach { (key, label) ->
-                    val isSelected = data.fontPreference.equals(key, ignoreCase = true)
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { library.setFontPreference(key) }
-                            .padding(vertical = 8.dp, horizontal = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
-                            ),
-                            color = if (isSelected) tuneColors.accentText else tuneColors.text,
-                            modifier = Modifier.weight(1f),
+                DropdownMenu(
+                    expanded = fontDropdownOpen,
+                    onDismissRequest = { fontDropdownOpen = false },
+                    modifier = Modifier.background(tuneColors.raised),
+                ) {
+                    fontOptions.forEach { (key, label) ->
+                        val isSelected = data.fontPreference.equals(key, ignoreCase = true)
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    ),
+                                    color = if (isSelected) tuneColors.accentText else tuneColors.text,
+                                )
+                            },
+                            trailingIcon = if (isSelected) {
+                                { Icon(Icons.Default.Check, null, tint = tuneColors.accentText, modifier = Modifier.size(18.dp)) }
+                            } else null,
+                            onClick = {
+                                library.setFontPreference(key)
+                                fontDropdownOpen = false
+                            },
                         )
-                        if (isSelected) {
-                            Icon(Icons.Default.Check, null, tint = tuneColors.accentText, modifier = Modifier.size(18.dp))
-                        }
                     }
                 }
             }
@@ -174,7 +188,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 data.autoLyrics,
                 library::setAutoLyrics,
             )
-            ActionRow("Equalizer & UltraTune", "Bass, treble, vocals, 3D sound and loudness") { nav.open(Route.Equalizer) }
+            ActionRow("Equalizer & ULT Bass", "Bass boost, 5-band EQ, 3D sound and loudness") { nav.open(Route.Equalizer) }
         }
 
         val lastBackup by TuneHubApp.backups.lastBackupAt.collectAsStateWithLifecycle()

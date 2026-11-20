@@ -311,6 +311,7 @@ fun SongActionsSheet(request: SongMenuRequest, onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = tuneColors.surface,
+        tonalElevation = 0.dp,
         scrimColor = Color(0x99000000),
     ) {
         Row(

@@ -17,6 +17,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -90,6 +91,7 @@ import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -159,12 +161,29 @@ fun MiniPlayer(onOpen: () -> Unit) {
     val duration = PlayerConnection.durationMs
     var dragX by remember { mutableFloatStateOf(0f) }
     val progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    val isDark = tuneColors.surface.luminance() < 0.5f
+    val artColor = rememberArtColor(song.thumb, fallback = tuneColors.accent)
+
+    val baseBg = tuneColors.raised
+    val gradientBrush = remember(artColor, isDark, baseBg) {
+        val subtleAlpha = if (isDark) 0.28f else 0.16f
+        Brush.horizontalGradient(
+            colors = listOf(
+                artColor.copy(alpha = subtleAlpha),
+                baseBg,
+                baseBg,
+            )
+        )
+    }
 
     Column(
         Modifier
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .fillMaxWidth()
-            .panel(RoundedCornerShape(14.dp), fill = TuneHubInk, stroke = Color.Transparent)
+            .clip(RoundedCornerShape(16.dp))
+            .background(baseBg)
+            .background(gradientBrush)
+            .border(1.dp, tuneColors.glassBorder, RoundedCornerShape(16.dp))
             .clickable(role = Role.Button, onClick = onOpen)
             .semantics { contentDescription = "Open now playing" }
             .swipeToSkip({ dragX }, { dragX = it }),
@@ -175,21 +194,21 @@ fun MiniPlayer(onOpen: () -> Unit) {
                 .graphicsLayer { translationX = dragX / 2 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Artwork(song.thumb, 42.dp, corner = 7.dp)
+            Artwork(song.thumb, 42.dp, corner = 8.dp)
             Crossfade(
                 targetState = song,
-                modifier = Modifier.weight(1f).padding(start = 10.dp),
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
                 animationSpec = tween(160),
                 label = "miniPlayerTrack",
             ) {
                 Column {
-                    Text(it.title, style = MaterialTheme.typography.titleSmall, color = LcdText, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(it.artist, style = MaterialTheme.typography.bodySmall, color = LcdMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(it.title, style = MaterialTheme.typography.titleSmall, color = tuneColors.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(it.artist, style = MaterialTheme.typography.bodySmall, color = tuneColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            DockButton(AppIcons.SkipPrevious, "Previous track", iconSize = 22, tint = LcdMuted, onClick = PlayerConnection::previous)
+            DockButton(AppIcons.SkipPrevious, "Previous track", iconSize = 22, tint = tuneColors.muted, onClick = PlayerConnection::previous)
             PlayPauseButton(size = 48)
-            DockButton(AppIcons.SkipNext, "Next track", iconSize = 22, tint = LcdMuted, onClick = PlayerConnection::next)
+            DockButton(AppIcons.SkipNext, "Next track", iconSize = 22, tint = tuneColors.muted, onClick = PlayerConnection::next)
         }
         Box(
             Modifier
@@ -198,22 +217,17 @@ fun MiniPlayer(onOpen: () -> Unit) {
                 .fillMaxWidth()
                 .height(3.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(LcdTrack),
+                .background(tuneColors.muted.copy(alpha = 0.2f)),
         ) {
             Box(
                 Modifier
                     .fillMaxWidth(progress)
                     .height(3.dp)
-                    .background(Brush.horizontalGradient(listOf(tuneColors.accent, TuneHubAmber))),
+                    .background(Brush.horizontalGradient(listOf(tuneColors.accent, artColor))),
             )
         }
     }
 }
-
-private val LcdText = Color(0xFFFAF9F5)
-private val LcdMuted = Color(0xFFC9C6B8)
-private val LcdTrack = Color(0xFF826F5D)
-private val LcdStroke = Color(0xFF50443A)
 
 /** Shows a spinner while the stream buffers. */
 @Composable
@@ -393,20 +407,23 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .panel(RoundedCornerShape(12.dp), fill = TuneHubInk, stroke = LcdStroke)
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(tuneColors.raised)
+                            .border(1.dp, tuneColors.glassBorder, RoundedCornerShape(16.dp))
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
                     ) {
-                        SegmentedSeekBar(
+                        WavySeekBar(
                             songId = song.id,
                             progress = progress,
+                            isPlaying = isPlaying,
                             modifier = Modifier.fillMaxWidth().height(36.dp),
                             playedColor = tuneColors.accent,
-                            playheadColor = TuneHubAmber,
-                            unplayedColor = LcdTrack,
+                            playheadColor = tuneColors.accent,
+                            unplayedColor = tuneColors.muted.copy(alpha = 0.25f),
                             onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
                             onSeekPreview = { seekPreview = it },
                         )
-                        Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp)) {
                             TimeLabel(seekPreview?.let { (it * duration).toLong() } ?: position)
                             Spacer(Modifier.weight(1f))
                             TimeLabel(duration)
@@ -461,7 +478,7 @@ private fun PlayerActionGrid(
                     active = ultra,
                     onClick = { TuneHubApp.library.updateEq { it.copy(ultra = !it.ultra) } },
                 ) {
-                    TileLabel("UltraTune")
+                    TileLabel("ULT Bass")
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(RemoteGap)) {
@@ -585,9 +602,18 @@ private fun ControlDock() {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val isSmart = PlayerConnection.isSmartShuffle
+        val isShuffle = PlayerConnection.shuffle
+        val shuffleIcon = if (isSmart) AppIcons.SmartShuffle else AppIcons.Shuffle
+        val shuffleTint = when {
+            isSmart -> tuneColors.accentText
+            isShuffle -> tuneColors.accentText
+            else -> tuneColors.muted
+        }
         DockButton(
-            AppIcons.Shuffle, "Shuffle",
-            tint = if (PlayerConnection.shuffle) tuneColors.accentText else tuneColors.muted,
+            shuffleIcon,
+            if (isSmart) "Smart Shuffle" else "Shuffle",
+            tint = shuffleTint,
             onClick = PlayerConnection::toggleShuffle,
         )
         DockButton(AppIcons.SkipPrevious, "Previous", iconSize = 32, onClick = PlayerConnection::previous)
@@ -618,7 +644,7 @@ private fun DockButton(icon: ImageVector, label: String, iconSize: Int = 24, tin
 
 @Composable
 private fun TimeLabel(ms: Long) {
-    Text(formatDuration(ms / 1000), style = MaterialTheme.typography.labelSmall, color = TuneHubAmber)
+    Text(formatDuration(ms / 1000), style = MaterialTheme.typography.labelSmall, color = tuneColors.muted)
 }
 
 @Composable
@@ -739,6 +765,7 @@ private fun SleepSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = tuneColors.surface,
+        tonalElevation = 0.dp,
         scrimColor = Color(0x99000000),
     ) {
         Text("Sleep timer", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 22.dp, bottom = 8.dp))
@@ -776,6 +803,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = tuneColors.surface,
+        tonalElevation = 0.dp,
         scrimColor = Color(0x99000000),
     ) {
         Row(

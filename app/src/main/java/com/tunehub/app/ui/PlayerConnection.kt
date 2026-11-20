@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -14,12 +15,20 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.tunehub.app.TuneHubApp
+import com.tunehub.app.data.BrowseItem
 import com.tunehub.app.data.Song
 import com.tunehub.app.data.StreamResolver
+import com.tunehub.app.data.YouTube
+import com.tunehub.app.data.isDuplicateOf
+import com.tunehub.app.data.isPureMusic
 import com.tunehub.app.playback.PlaybackService
 import com.tunehub.app.playback.PlaylistStart
 import com.tunehub.app.playback.toMediaItem
 import com.tunehub.app.playback.toSong
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The UI's handle on PlaybackService, mirrored into Compose state. */
 object PlayerConnection {
@@ -36,6 +45,10 @@ object PlayerConnection {
     var index by mutableIntStateOf(0)
         private set
     var shuffle by mutableStateOf(false)
+        private set
+    var isSmartShuffle by mutableStateOf(false)
+        private set
+    var currentPlaylistId by mutableStateOf<String?>(null)
         private set
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
         private set
@@ -138,11 +151,19 @@ object PlayerConnection {
 
     fun play(songs: List<Song>, startIndex: Int = 0, shuffled: Boolean = false, radio: Boolean = false, playlistId: String? = null) {
         if (songs.isEmpty()) return
+        currentPlaylistId = playlistId
+        isSmartShuffle = false
+        // Deduplicate incoming songs so no duplicate tracks exist in the initial queue
+        val uniqueSongs = mutableListOf<Song>()
+        songs.forEach { s ->
+            if (uniqueSongs.none { it.isDuplicateOf(s) }) uniqueSongs.add(s)
+        }
+        val safeIndex = startIndex.coerceIn(0, (uniqueSongs.size - 1).coerceAtLeast(0))
         val start = playlistId?.let { PlaylistStart(it, java.util.UUID.randomUUID().toString()) }
-        val items = songs.mapIndexed { i, song -> song.toMediaItem(radio = radio && i == 0, playlistStart = start) }
+        val items = uniqueSongs.mapIndexed { i, song -> song.toMediaItem(radio = radio && i == 0, playlistStart = start) }
         withController(replaces = true) { c ->
             c.shuffleModeEnabled = shuffled
-            c.setMediaItems(items, startIndex, 0)
+            c.setMediaItems(items, safeIndex, 0)
             c.prepare()
             c.play()
         }
@@ -151,13 +172,30 @@ object PlayerConnection {
     fun playNext(song: Song) = withController { c ->
         if (c.mediaItemCount == 0) {
             play(listOf(song))
+            return@withController
+        }
+        val currentQueue = queue
+        val existingIndex = currentQueue.indexOfFirst { it.isDuplicateOf(song) }
+        if (existingIndex >= 0) {
+            val target = (c.currentMediaItemIndex + 1).coerceAtMost(c.mediaItemCount - 1)
+            if (existingIndex != target) c.moveMediaItem(existingIndex, target)
+            appContext?.let { Toast.makeText(it, "\"${song.title}\" already in queue - moved next", Toast.LENGTH_SHORT).show() }
         } else {
             c.addMediaItem(c.currentMediaItemIndex + 1, song.toMediaItem())
         }
     }
 
     fun enqueue(song: Song) = withController { c ->
-        if (c.mediaItemCount == 0) play(listOf(song)) else c.addMediaItem(song.toMediaItem())
+        if (c.mediaItemCount == 0) {
+            play(listOf(song))
+            return@withController
+        }
+        val currentQueue = queue
+        if (currentQueue.any { it.isDuplicateOf(song) }) {
+            appContext?.let { Toast.makeText(it, "\"${song.title}\" already in queue", Toast.LENGTH_SHORT).show() }
+            return@withController
+        }
+        c.addMediaItem(song.toMediaItem())
     }
 
     fun togglePlay() = withController { c ->
@@ -206,7 +244,63 @@ object PlayerConnection {
     fun seekTo(ms: Long) = withController { it.seekTo(ms) }
     fun jumpTo(i: Int) = withController { it.seekTo(i, 0); it.play() }
     fun removeAt(i: Int) = withController { it.removeMediaItem(i) }
-    fun toggleShuffle() = withController { it.shuffleModeEnabled = !it.shuffleModeEnabled }
+
+    fun toggleShuffle() = withController { c ->
+        if (currentPlaylistId == null) {
+            // Disabled outside user playlist: standard toggle
+            c.shuffleModeEnabled = !c.shuffleModeEnabled
+            isSmartShuffle = false
+            return@withController
+        }
+
+        // Spotify-style Smart Shuffle for user playlists:
+        // Tap 1: Standard Shuffle ON
+        // Tap 2: Smart Shuffle ON ✨
+        // Tap 3: Shuffle OFF
+        when {
+            !c.shuffleModeEnabled && !isSmartShuffle -> {
+                c.shuffleModeEnabled = true
+                isSmartShuffle = false
+                appContext?.let { Toast.makeText(it, "Shuffle", Toast.LENGTH_SHORT).show() }
+            }
+            c.shuffleModeEnabled && !isSmartShuffle -> {
+                c.shuffleModeEnabled = true
+                isSmartShuffle = true
+                appContext?.let { Toast.makeText(it, "Smart Shuffle ✨", Toast.LENGTH_SHORT).show() }
+                injectSmartRecommendations(c)
+            }
+            else -> {
+                c.shuffleModeEnabled = false
+                isSmartShuffle = false
+                appContext?.let { Toast.makeText(it, "Shuffle off", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    private fun injectSmartRecommendations(c: MediaController) {
+        val playlistId = currentPlaylistId ?: return
+        val playlist = TuneHubApp.library.data.value.playlists.find { it.id == playlistId } ?: return
+        val artists = playlist.songs.map { it.artist }.distinct().filter { it.isNotBlank() }
+        if (artists.isEmpty()) return
+        CoroutineScope(Dispatchers.IO).launch {
+            val existing = queue
+            val newTracks = mutableListOf<Song>()
+            for (artist in artists.take(2)) {
+                val songs = runCatching {
+                    YouTube.Search(artist, YouTube.FILTER_SONGS).loadNext()
+                        .filterIsInstance<BrowseItem.SongItem>()
+                        .map { it.song }
+                        .filter { s -> s.isPureMusic() && existing.none { it.isDuplicateOf(s) } }
+                }.getOrDefault(emptyList())
+                newTracks.addAll(songs.take(2))
+            }
+            if (newTracks.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    newTracks.forEach { c.addMediaItem(it.toMediaItem()) }
+                }
+            }
+        }
+    }
 
     fun cycleRepeat() = withController {
         it.repeatMode = when (it.repeatMode) {

@@ -52,7 +52,7 @@ fun EqualizerScreen(onBack: () -> Unit) {
     ) {
         SettingsHeading("Sound", onBack)
 
-        // UltraTune: one tap for the boosted sound, overriding the manual settings below
+        // ULT Bass: one tap for the boosted sound, overriding the manual settings below
         Column(
             Modifier
                 .padding(20.dp)
@@ -63,7 +63,7 @@ fun EqualizerScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("UltraTune", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                Text("ULT Bass", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                 Switch(
                     checked = eq.ultra,
                     onCheckedChange = null,
@@ -90,7 +90,7 @@ fun EqualizerScreen(onBack: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("Equalizer", style = MaterialTheme.typography.titleLarge)
                     if (!manualEnabled) {
-                        Text("Turn off UltraTune to adjust the EQ.", style = MaterialTheme.typography.bodySmall, color = tuneColors.muted)
+                        Text("Turn off ULT Bass to adjust the EQ.", style = MaterialTheme.typography.bodySmall, color = tuneColors.muted)
                     }
                 }
                 Switch(

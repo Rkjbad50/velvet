@@ -1,5 +1,10 @@
 package com.tunehub.app.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,7 +36,11 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -118,6 +127,137 @@ fun FilterPill(
             text,
             style = MaterialTheme.typography.labelLarge,
             color = if (selected) tuneColors.onAccent else tuneColors.text,
+        )
+    }
+}
+
+/** OneUI-style wavy / squiggly seekbar with smooth undulating sine wave and circular playhead. */
+@Composable
+fun WavySeekBar(
+    songId: String,
+    progress: Float,
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier,
+    playedColor: Color,
+    playheadColor: Color,
+    unplayedColor: Color,
+    onSeek: (Float) -> Unit,
+    onSeekPreview: (Float?) -> Unit = {},
+) {
+    val currentOnSeek by rememberUpdatedState(onSeek)
+    val currentOnPreview by rememberUpdatedState(onSeekPreview)
+    var dragFraction by remember(songId) { mutableStateOf<Float?>(null) }
+    val shown = (dragFraction ?: progress).coerceIn(0f, 1f)
+
+    val transition = rememberInfiniteTransition(label = "wave")
+    val phase by if (isPlaying) {
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2 * Math.PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1400, easing = LinearEasing)
+            ),
+            label = "wavePhase"
+        )
+    } else {
+        remember { mutableStateOf(0f) }
+    }
+
+    Canvas(
+        modifier
+            .semantics {
+                contentDescription = "Seek bar"
+                progressBarRangeInfo = ProgressBarRangeInfo(progress, 0f..1f)
+                stateDescription = "${(progress * 100).toInt()}%"
+                setProgress { target ->
+                    currentOnSeek(target.coerceIn(0f, 1f))
+                    true
+                }
+            }
+            .pointerInput(songId) {
+                detectTapGestures { offset -> currentOnSeek((offset.x / size.width).coerceIn(0f, 1f)) }
+            }
+            .pointerInput(songId) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        dragFraction?.let(currentOnSeek)
+                        dragFraction = null
+                        currentOnPreview(null)
+                    },
+                    onDragCancel = {
+                        dragFraction = null
+                        currentOnPreview(null)
+                    },
+                ) { change, _ ->
+                    change.consume()
+                    val f = (change.position.x / size.width).coerceIn(0f, 1f)
+                    dragFraction = f
+                    currentOnPreview(f)
+                }
+            },
+    ) {
+        val width = size.width
+        val height = size.height
+        val centerY = height / 2f
+        val strokeWidth = 4.dp.toPx()
+        val thumbRadius = 6.dp.toPx()
+        val playheadX = (shown * width).coerceIn(0f, width)
+
+        // 1. Unplayed straight line
+        if (playheadX < width) {
+            drawLine(
+                color = unplayedColor,
+                start = Offset(playheadX, centerY),
+                end = Offset(width, centerY),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round
+            )
+        }
+
+        // 2. Played wavy line (OneUI sine wave)
+        if (playheadX > 0f) {
+            val wavePath = Path()
+            val wavelength = 26.dp.toPx()
+            val amplitude = 3.5.dp.toPx()
+
+            wavePath.moveTo(0f, centerY)
+            val step = 2.dp.toPx().coerceAtLeast(1f)
+            var x = 0f
+            while (x <= playheadX) {
+                val dampAtEdges = if (x < 10.dp.toPx()) {
+                    (x / 10.dp.toPx()).coerceIn(0f, 1f)
+                } else if (playheadX - x < 10.dp.toPx()) {
+                    ((playheadX - x) / 10.dp.toPx()).coerceIn(0f, 1f)
+                } else {
+                    1f
+                }
+                val waveY = centerY + (amplitude * dampAtEdges * kotlin.math.sin((x / wavelength) * 2 * Math.PI - phase)).toFloat()
+                wavePath.lineTo(x, waveY)
+                x += step
+            }
+            wavePath.lineTo(playheadX, centerY)
+
+            drawPath(
+                path = wavePath,
+                color = playedColor,
+                style = Stroke(
+                    width = strokeWidth,
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+        }
+
+        // 3. Playhead thumb
+        drawCircle(
+            color = playheadColor,
+            radius = thumbRadius,
+            center = Offset(playheadX, centerY)
+        )
+        drawCircle(
+            color = Color.White.copy(alpha = 0.9f),
+            radius = thumbRadius * 0.45f,
+            center = Offset(playheadX, centerY)
         )
     }
 }
