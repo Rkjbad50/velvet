@@ -69,12 +69,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.0-build-$BUILD_NUMBER"
+          TAG="v2.0"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_FILE" velvet.apk
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create "$TAG" velvet.apk \
             --repo "${{ github.repository }}" \
-            --title "VELVET v2.0 (Build $BUILD_NUMBER)" \
-            --notes "Direct download: **velvet.apk** below for Android devices." \
+            --title "Version 2.0" \
+            --notes "VELVET Version 2.0 Official Release. Direct download: **velvet.apk** below for Android devices." \
             --latest
