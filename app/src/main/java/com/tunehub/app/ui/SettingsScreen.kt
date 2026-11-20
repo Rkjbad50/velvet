@@ -132,6 +132,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+
+
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = tuneColors.rule)
 
             // Compact Font Chooser Dropdown
@@ -179,6 +181,55 @@ fun SettingsScreen(onBack: () -> Unit) {
                             onClick = {
                                 library.setFontPreference(key)
                                 fontDropdownOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = tuneColors.rule)
+
+            // Seekbar Style selector (4 distinct styles)
+            var seekbarDropdownOpen by remember { mutableStateOf(false) }
+            val seekbarOptions = listOf(
+                "WATER_WAVE" to "Thick Water Wave (Fluid)",
+                "PIXEL_EXPRESSIVE" to "Pixel UI Material Expressive (Android 17)",
+                "APPLE_MUSIC" to "Apple Music Minimal",
+                "PLANE_FLIGHT" to "Flight Runway (Airplane ✈️)",
+            )
+            val currentSeekbarLabel = seekbarOptions.find { it.first == data.seekbarStyle }?.second ?: "Thick Water Wave (Fluid)"
+
+            Box(Modifier.fillMaxWidth()) {
+                ActionRow(
+                    title = "Seekbar style",
+                    subtitle = currentSeekbarLabel,
+                ) {
+                    seekbarDropdownOpen = true
+                }
+
+                DropdownMenu(
+                    expanded = seekbarDropdownOpen,
+                    onDismissRequest = { seekbarDropdownOpen = false },
+                    modifier = Modifier.background(tuneColors.surface),
+                ) {
+                    seekbarOptions.forEach { (key, label) ->
+                        val isSelected = (data.seekbarStyle == key)
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    ),
+                                    color = if (isSelected) tuneColors.accentText else tuneColors.text,
+                                )
+                            },
+                            trailingIcon = if (isSelected) {
+                                { Icon(Icons.Default.Check, null, tint = tuneColors.accentText, modifier = Modifier.size(18.dp)) }
+                            } else null,
+                            onClick = {
+                                library.setSeekbarStyle(key)
+                                seekbarDropdownOpen = false
                             },
                         )
                     }

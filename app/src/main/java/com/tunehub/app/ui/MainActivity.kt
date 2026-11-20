@@ -11,12 +11,14 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
@@ -190,9 +192,22 @@ private fun AppRoot() {
                 AnimatedContent(
                     targetState = Pair(nav.tab, nav.current),
                     transitionSpec = {
-                        (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                            scaleIn(initialScale = 0.98f, animationSpec = tween(220, easing = FastOutSlowInEasing)))
-                            .togetherWith(fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)))
+                        val isTabSwitch = initialState.second == null && targetState.second == null
+                        if (isTabSwitch) {
+                            // Fluid butter-smooth tab transition with zero scale jerk
+                            fadeIn(animationSpec = tween(140, easing = LinearEasing))
+                                .togetherWith(fadeOut(animationSpec = tween(140, easing = LinearEasing)))
+                        } else if (targetState.second != null && initialState.second == null) {
+                            // Detail screen entrance: elegant subtle slide & fade
+                            (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                                slideInHorizontally(initialOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(220, easing = FastOutSlowInEasing)))
+                                .togetherWith(fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)))
+                        } else {
+                            // Detail screen exit: graceful retreat
+                            fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
+                                .togetherWith(fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)) +
+                                    slideOutHorizontally(targetOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(180, easing = FastOutSlowInEasing)))
+                        }
                     },
                     label = "screenTransition",
                 ) { (_, currentRoute) ->

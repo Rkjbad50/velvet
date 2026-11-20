@@ -59,6 +59,7 @@ data class LibraryData(
     val accentColor: String = "VELVET",
     val fontPreference: String = "SYSTEM",
     val musicLanguages: List<String> = listOf("Hindi", "English"),
+    val seekbarStyle: String = "WATER_WAVE",
 ) {
     companion object {
         const val CURRENT_VERSION = 2
@@ -280,6 +281,8 @@ class Library(dir: File) {
     fun setFontPreference(font: String) = update { it.copy(fontPreference = font) }
 
     fun setMusicLanguages(languages: List<String>) = update { it.copy(musicLanguages = languages) }
+
+    fun setSeekbarStyle(style: String) = update { it.copy(seekbarStyle = style) }
 
     fun setPlaylistSongs(playlistId: String, songs: List<Song>) = updatePlaylist(playlistId) { it.copy(songs = songs) }
 

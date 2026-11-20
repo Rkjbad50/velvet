@@ -336,6 +336,42 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                 .pointerInput(Unit) { detectTapGestures { } },
         ) {
             PaperBackground()
+            val isDark = tuneColors.surface.luminance() < 0.5f
+            val artColor = rememberArtColor(song.thumb, fallback = tuneColors.accent)
+
+            // 1. Subtle glowing color-bleeding ambient backdrop derived from cover art
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                artColor.copy(alpha = if (isDark) 0.38f else 0.22f),
+                                artColor.copy(alpha = if (isDark) 0.18f else 0.10f),
+                                Color.Transparent,
+                                Color.Transparent,
+                            ),
+                            startY = 0f,
+                            endY = 1350f,
+                        )
+                    )
+            )
+            // 2. Luminous ambient bloom centered behind the top album area
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(460.dp)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                artColor.copy(alpha = if (isDark) 0.32f else 0.16f),
+                                Color.Transparent,
+                            ),
+                            radius = 650f,
+                        )
+                    )
+            )
+
             val gap = if (maxHeight < 720.dp) 6.dp else 14.dp
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
                 Column(
@@ -371,7 +407,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                     alpha = 1f - (abs(artDrag) / 900f).coerceAtMost(0.5f)
                                 }
                                 .swipeToSkip({ artDrag }, { artDrag = it })
-                                .shadow(8.dp, RoundedCornerShape(16.dp))
+                                .shadow(24.dp, RoundedCornerShape(16.dp), spotColor = artColor.copy(alpha = 0.55f), ambientColor = artColor.copy(alpha = 0.35f))
                                 .panel(RoundedCornerShape(16.dp), fill = tuneColors.raised)
                                 .padding(8.dp),
                             contentAlignment = Alignment.Center,
@@ -416,6 +452,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             playedColor = tuneColors.accent,
                             playheadColor = tuneColors.accent,
                             unplayedColor = tuneColors.muted.copy(alpha = 0.28f),
+                            style = settings.seekbarStyle,
                             onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
                             onSeekPreview = { seekPreview = it },
                         )
