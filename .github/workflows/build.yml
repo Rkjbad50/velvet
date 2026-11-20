@@ -1,0 +1,80 @@
+name: Build VELVET APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Set build number
+        run: |
+          BUILD_NUMBER=${{ github.run_number }}
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Configure APK signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/velvet.jks"
+            echo "VELVET_KEYSTORE=$RUNNER_TEMP/velvet.jks" >> "$GITHUB_ENV"
+            echo "TUNEHUB_KEYSTORE=$RUNNER_TEMP/velvet.jks" >> "$GITHUB_ENV"
+            echo "is_signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_signed=false" >> "$GITHUB_OUTPUT"
+            echo "Using default debug signing."
+          fi
+
+      - name: Build release APK
+        env:
+          VELVET_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          VELVET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          VELVET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          TUNEHUB_KEYSTORE_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          TUNEHUB_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          TUNEHUB_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velvet-apk
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v2.0-build-$BUILD_NUMBER"
+          APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          cp "$APK_FILE" velvet.apk
+          gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
+          gh release create "$TAG" velvet.apk \
+            --repo "${{ github.repository }}" \
+            --title "VELVET v2.0 (Build $BUILD_NUMBER)" \
+            --notes "Direct download: **velvet.apk** below for Android devices." \
+            --latest

@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <!-- Velvet Stylized Brand V with Sound Wave Dynamics -->
+    <path
+        android:fillColor="#FFB066FE"
+        android:pathData="M6,6 L12,6 L16,18 L20,6 L26,6 L17.8,26 L14.2,26 Z" />
+    <path
+        android:fillColor="#80FFFFFF"
+        android:pathData="M11,10 L13.5,10 L16,17 L18.5,10 L21,10 L16.8,21 L15.2,21 Z" />
+    <path
+        android:fillColor="#FFB066FE"
+        android:pathData="M2,13 L4,13 L4,19 L2,19 Z" />
+    <path
+        android:fillColor="#FFB066FE"
+        android:pathData="M28,13 L30,13 L30,19 L28,19 Z" />
+</vector>

@@ -1,0 +1,21 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+.kotlin/
+.DS_Store
+
+# signing key and its passwords never go to git
+signing/
+*.jks
+*.keystore
+*.p12
+*.dpapi
+
+# scratch reference sources
+.ref/
+
+# design mockups
+.design/
