@@ -36,8 +36,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import com.tunehub.app.playback.QueueItem
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -818,8 +820,7 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
 @Composable
 private fun QueueSheet(onDismiss: () -> Unit) {
     val queue = PlayerConnection.queue
-    val current = PlayerConnection.index
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = current.coerceAtLeast(0))
+    val listState = rememberLazyListState()
     val openMenu = LocalSongMenu.current
     val context = androidx.compose.ui.platform.LocalContext.current
     var isQueueLocked by rememberSaveable { mutableStateOf(false) }
@@ -835,7 +836,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Queue", style = MaterialTheme.typography.headlineSmall)
+                Text("Queue", style = MaterialTheme.typography.headlineSmall, color = tuneColors.text)
                 Text(
                     if (isQueueLocked) "Queue locked" else "Swipe right on a song to play next",
                     style = MaterialTheme.typography.bodySmall,
@@ -858,78 +859,81 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             }
         }
         LazyColumn(state = listState, modifier = Modifier.padding(bottom = 16.dp)) {
-            itemsIndexed(queue, key = { i, s -> "$i-${s.id}" }) { i, song ->
+            items(queue, key = { it.qid }) { item ->
+                val isCurrent = item.qid == "current"
                 var offsetX by remember { mutableFloatStateOf(0f) }
-                val isUpcoming = i > current
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .offset { androidx.compose.ui.unit.IntOffset(offsetX.roundToInt(), 0) }
-                        .pointerInput(i, isQueueLocked, isUpcoming) {
-                            if (!isQueueLocked && isUpcoming && i > current + 1) {
-                                detectHorizontalDragGestures(
-                                    onDragEnd = {
-                                        if (offsetX > 100f) {
-                                            PlayerConnection.moveToTop(i)
-                                            android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                                        }
-                                        offsetX = 0f
-                                    },
-                                    onDragCancel = { offsetX = 0f },
-                                    onHorizontalDrag = { _, dragAmount ->
-                                        if (dragAmount > 0 || offsetX > 0) {
-                                            offsetX = (offsetX + dragAmount).coerceIn(0f, 250f)
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                        .combinedClickable(
-                            onClick = { PlayerConnection.jumpTo(i) },
-                            onLongClick = {
-                                if (isUpcoming && i > current + 1) {
-                                    if (!isQueueLocked) {
-                                        PlayerConnection.moveToTop(i)
-                                        android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        android.widget.Toast.makeText(context, "Queue is locked", android.widget.Toast.LENGTH_SHORT).show()
-                                    }
+                        .then(
+                            if (!isCurrent && !isQueueLocked) {
+                                Modifier.pointerInput(item.qid) {
+                                    detectHorizontalDragGestures(
+                                        onDragEnd = {
+                                            if (offsetX > 100f) {
+                                                PlayerConnection.moveToTop(item.qid)
+                                                android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                            offsetX = 0f
+                                        },
+                                        onDragCancel = { offsetX = 0f },
+                                        onHorizontalDrag = { _, dragAmount ->
+                                            if (dragAmount > 0 || offsetX > 0) {
+                                                offsetX = (offsetX + dragAmount).coerceIn(0f, 250f)
+                                            }
+                                        },
+                                    )
                                 }
-                                openMenu(SongMenuRequest(song))
+                            } else Modifier
+                        )
+                        .combinedClickable(
+                            onClick = {
+                                if (!isCurrent) {
+                                    PlayerConnection.jumpToQid(item.qid)
+                                }
+                            },
+                            onLongClick = {
+                                if (!isCurrent && !isQueueLocked) {
+                                    PlayerConnection.moveToTop(item.qid)
+                                    android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                                openMenu(SongMenuRequest(item.song))
                             },
                         )
                         .padding(start = 22.dp, top = 6.dp, bottom = 6.dp, end = 6.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Artwork(song.thumb, 46.dp, corner = 14.dp)
+                        Artwork(item.song.thumb, 46.dp, corner = 14.dp)
                         Column(
                             Modifier
                                 .weight(1f)
                                 .padding(horizontal = 14.dp),
                         ) {
                             Text(
-                                song.title,
+                                item.song.title,
                                 style = MaterialTheme.typography.titleSmall,
-                                color = if (i == current) tuneColors.accentText else tuneColors.text,
+                                color = if (isCurrent) tuneColors.accentText else tuneColors.text,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                if (i == current) "Now playing" else song.artist,
+                                if (isCurrent) "Now playing" else item.song.artist,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = tuneColors.muted,
+                                color = if (isCurrent) tuneColors.accentText else tuneColors.muted,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        if (isUpcoming && !isQueueLocked) {
-                            if (i > current + 1) {
-                                DockButton(Icons.Default.KeyboardArrowUp, "Move to Top", tint = tuneColors.accentText) {
-                                    PlayerConnection.moveToTop(i)
-                                }
+                        if (!isCurrent && !isQueueLocked) {
+                            DockButton(Icons.Default.KeyboardArrowUp, "Move to Top", tint = tuneColors.accentText) {
+                                PlayerConnection.moveToTop(item.qid)
+                                android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
                             }
-                            DockButton(Icons.Default.Close, "Remove", tint = tuneColors.muted) { PlayerConnection.removeAt(i) }
+                            DockButton(Icons.Default.Close, "Remove", tint = tuneColors.muted) {
+                                PlayerConnection.removeItem(item.qid)
+                            }
                         }
                     }
                 }

@@ -22,16 +22,21 @@ import com.tunehub.app.data.YouTube
 import com.tunehub.app.data.isDuplicateOf
 import com.tunehub.app.data.isPureMusic
 import com.tunehub.app.playback.PlaybackService
+import com.tunehub.app.playback.PlayerQueueManager
 import com.tunehub.app.playback.PlaylistStart
+import com.tunehub.app.playback.QueueItem
 import com.tunehub.app.playback.toMediaItem
 import com.tunehub.app.playback.toSong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 /** The UI's handle on PlaybackService, mirrored into Compose state. */
 object PlayerConnection {
+    val queueManager = PlayerQueueManager()
+
     var controller by mutableStateOf<MediaController?>(null)
         private set
     var current by mutableStateOf<Song?>(null)
@@ -40,35 +45,46 @@ object PlayerConnection {
         private set
     var isBuffering by mutableStateOf(false)
         private set
-    var queue by mutableStateOf<List<Song>>(emptyList())
-        private set
-    var index by mutableIntStateOf(0)
-        private set
-    var shuffle by mutableStateOf(false)
-        private set
-    var currentPlaylistId by mutableStateOf<String?>(null)
-        private set
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
         private set
     var durationMs by mutableLongStateOf(0L)
         private set
     var error by mutableStateOf<String?>(null)
+    var currentPlaylistId by mutableStateOf<String?>(null)
+        private set
 
+    /** Whether shuffle is currently on. */
+    var shuffle by mutableStateOf(false)
+        private set
+
+    /**
+     * What the queue sheet shows: current song first (highlighted), then
+     * user-queued items, then up-next. History is NEVER shown here.
+     */
+    var queue by mutableStateOf<List<QueueItem>>(emptyList())
+        private set
+
+    /** Always 0: the current item is always the first element of [queue]. */
+    val index: Int get() = 0
+
+    private fun syncQueueState() {
+        current = queueManager.current
+        shuffle = queueManager.shuffle
+        queue = queueManager.visibleQueue
+    }
+
+    // ── Connection plumbing ──────────────────────────────────────────────────
     private var appContext: Context? = null
     private var started = false
     private var future: ListenableFuture<MediaController>? = null
-
-    // commands issued before the controller connects, run in order once it does
     private val pending = ArrayDeque<(MediaController) -> Unit>()
 
-    /** Call from the Activity's onStart; reconnects by itself if the connection drops while started. */
     fun connect(context: Context) {
         appContext = context.applicationContext
         started = true
         ensureConnected()
     }
 
-    /** Call from the Activity's onStop. */
     fun disconnect() {
         started = false
         future?.let(MediaController::releaseFuture)
@@ -93,152 +109,251 @@ object PlayerConnection {
             .buildAsync()
         future = f
         f.addListener({
-            // a newer connect/disconnect happened while this one was in flight
-            if (future !== f) {
-                MediaController.releaseFuture(f)
-                return@addListener
-            }
+            if (future !== f) { MediaController.releaseFuture(f); return@addListener }
             val c = runCatching { f.get() }.getOrNull()
-            if (c == null) {
-                future = null
-                error = "Couldn't connect to the player"
-                return@addListener
-            }
+            if (c == null) { future = null; error = "Couldn't connect to the player"; return@addListener }
             c.addListener(listener)
             controller = c
-            sync(c, timelineChanged = true)
+            syncBasicState(c)
             while (pending.isNotEmpty()) pending.removeFirst().invoke(c)
         }, ContextCompat.getMainExecutor(context))
     }
 
     private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) =
-            sync(player, timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED))
-
-        override fun onPlayerError(error: PlaybackException) {
-            this@PlayerConnection.error = error.message
+        override fun onEvents(player: Player, events: Player.Events) = syncBasicState(player)
+        override fun onPlayerError(error: PlaybackException) { this@PlayerConnection.error = error.message }
+        override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+            // When ExoPlayer auto-advances (track finished naturally), pop from our queue
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                queueManager.advance()
+                syncQueueState()
+            }
         }
     }
 
-    private fun sync(p: Player, timelineChanged: Boolean) {
-        current = p.currentMediaItem?.toSong()
+    /** Syncs basic playback state (play/pause/buffer/duration/repeat) from ExoPlayer. */
+    private fun syncBasicState(p: Player) {
+        val exoCurrent = p.currentMediaItem?.toSong()
+        if (exoCurrent != null && exoCurrent.id != current?.id) {
+            if (queueManager.current?.id != exoCurrent.id) {
+                if (queueManager.userQueue.firstOrNull()?.song?.id == exoCurrent.id ||
+                    queueManager.upNext.firstOrNull()?.song?.id == exoCurrent.id) {
+                    queueManager.advance()
+                    syncQueueState()
+                } else {
+                    current = exoCurrent
+                }
+            }
+        }
         isPlaying = p.isPlaying
         isBuffering = p.playbackState == Player.STATE_BUFFERING
         durationMs = p.duration.coerceAtLeast(0)
-        shuffle = p.shuffleModeEnabled
         repeatMode = p.repeatMode
-        index = p.currentMediaItemIndex
-        // rebuilding the whole queue on every position or play/pause event is wasted work
-        if (timelineChanged) queue = (0 until p.mediaItemCount).map { p.getMediaItemAt(it).toSong() }
     }
 
-    /**
-     * Runs now if connected, otherwise once the controller is ready. A command that replaces the
-     * queue ([replaces]) drops pending ones, since they'd apply to a queue that's about to go.
-     */
     private fun withController(replaces: Boolean = false, action: (MediaController) -> Unit) {
         val c = controller
-        if (c != null) {
-            action(c)
-            return
-        }
+        if (c != null) { action(c); return }
         if (replaces) pending.clear()
         pending.addLast(action)
         ensureConnected()
     }
 
-    fun play(songs: List<Song>, startIndex: Int = 0, shuffled: Boolean = false, radio: Boolean = false, playlistId: String? = null) {
+    // ── Playback commands ────────────────────────────────────────────────────
+
+    fun play(
+        songs: List<Song>,
+        startIndex: Int = 0,
+        shuffled: Boolean = false,
+        radio: Boolean = false,
+        playlistId: String? = null,
+    ) {
         if (songs.isEmpty()) return
         currentPlaylistId = playlistId
-        val uniqueSongs = songs.distinctBy { it.id }
-        val safeIndex = startIndex.coerceIn(0, (uniqueSongs.size - 1).coerceAtLeast(0))
-        val start = playlistId?.let { PlaylistStart(it, java.util.UUID.randomUUID().toString()) }
-        val items = uniqueSongs.mapIndexed { i, song -> song.toMediaItem(radio = radio && i == 0, playlistStart = start) }
+        queueManager.start(songs, startIndex, shuffled)
+        syncQueueState()
+
+        val startSong = queueManager.current ?: return
+        val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
+        val allItems = listOf(startSong) + (queueManager.userQueue.map { it.song }) + (queueManager.upNext.map { it.song })
+        val mediaItems = allItems.mapIndexed { i, song ->
+            song.toMediaItem(radio = radio && i == 0, playlistStart = start)
+        }
         withController(replaces = true) { c ->
-            c.shuffleModeEnabled = shuffled
-            c.setMediaItems(items, safeIndex, 0)
+            c.shuffleModeEnabled = false // Handled directly in PlayerQueueManager
+            c.setMediaItems(mediaItems, 0, 0)
             c.prepare()
             c.play()
         }
     }
 
-    fun playNext(song: Song) = withController { c ->
-        if (c.mediaItemCount == 0) {
-            play(listOf(song))
-            return@withController
-        }
-        val currentQueue = queue
-        val existingIndex = currentQueue.indexOfFirst { it.isDuplicateOf(song) }
-        if (existingIndex >= 0) {
-            val target = (c.currentMediaItemIndex + 1).coerceAtMost(c.mediaItemCount - 1)
-            if (existingIndex != target) c.moveMediaItem(existingIndex, target)
-            appContext?.let { Toast.makeText(it, "\"${song.title}\" already in queue - moved next", Toast.LENGTH_SHORT).show() }
-        } else {
-            c.addMediaItem(c.currentMediaItemIndex + 1, song.toMediaItem())
+    /**
+     * Toggle shuffle. When turning ON: Fisher-Yates reshuffle of sourceList
+     * excluding current song and userQueue items. Current track is NOT interrupted.
+     * When turning OFF: restore linear order from sourceList after current position.
+     */
+    fun toggleShuffle() {
+        queueManager.toggleShuffle()
+        syncQueueState()
+        syncUpNextToExoPlayer()
+    }
+
+    /** Syncs our userQueue + upNext to ExoPlayer AFTER current track (without interrupting it). */
+    private fun syncUpNextToExoPlayer() {
+        withController { c ->
+            val currentIdx = c.currentMediaItemIndex
+            val after = currentIdx + 1
+            if (after < c.mediaItemCount) {
+                c.removeMediaItems(after, c.mediaItemCount)
+            }
+            val upcoming = (queueManager.userQueue + queueManager.upNext).map { it.song.toMediaItem() }
+            if (upcoming.isNotEmpty()) {
+                c.addMediaItems(upcoming)
+            }
         }
     }
 
-    fun enqueue(song: Song) = withController { c ->
-        if (c.mediaItemCount == 0) {
+    /** Add song to play immediately after current. */
+    fun playNext(song: Song) {
+        if (controller?.mediaItemCount == 0 || current == null) {
             play(listOf(song))
-            return@withController
+            return
         }
-        val currentQueue = queue
-        if (currentQueue.any { it.isDuplicateOf(song) }) {
+        queueManager.playNext(song)
+        syncQueueState()
+        syncUpNextToExoPlayer()
+        appContext?.let { Toast.makeText(it, "\"${song.title}\" will play next", Toast.LENGTH_SHORT).show() }
+    }
+
+    /** Add song to end of queue. */
+    fun enqueue(song: Song) {
+        if (controller?.mediaItemCount == 0 || current == null) {
+            play(listOf(song))
+            return
+        }
+        val added = queueManager.enqueue(song)
+        if (!added) {
             appContext?.let { Toast.makeText(it, "\"${song.title}\" already in queue", Toast.LENGTH_SHORT).show() }
-            return@withController
+            return
         }
-        c.addMediaItem(song.toMediaItem())
+        syncQueueState()
+        syncUpNextToExoPlayer()
+        appContext?.let { Toast.makeText(it, "Added to queue", Toast.LENGTH_SHORT).show() }
+    }
+
+    /** Move a queue item (by qid) to the top of the upcoming list (play next). */
+    fun moveToTop(qid: String) {
+        val moved = queueManager.moveToTop(qid)
+        if (moved) {
+            syncQueueState()
+            syncUpNextToExoPlayer()
+        }
+    }
+
+    /** Remove a queue item by qid. */
+    fun removeItem(qid: String) {
+        val removed = queueManager.removeItem(qid)
+        if (removed) {
+            syncQueueState()
+            syncUpNextToExoPlayer()
+        }
+    }
+
+    /** Jump to a specific queue item by qid. */
+    fun jumpToQid(qid: String) {
+        val targetSong = queueManager.jumpToQid(qid) ?: return
+        syncQueueState()
+        withController { c ->
+            val mediaItems = (listOf(targetSong) + (queueManager.userQueue + queueManager.upNext).map { it.song })
+                .map { it.toMediaItem() }
+            c.setMediaItems(mediaItems, 0, 0)
+            c.prepare()
+            c.play()
+        }
     }
 
     fun togglePlay() = withController { c ->
-        if (c.isPlaying) {
-            c.pause()
-        } else {
+        if (c.isPlaying) c.pause()
+        else {
             if (c.playbackState == Player.STATE_IDLE) c.prepare()
             if (c.playbackState == Player.STATE_ENDED) c.seekToDefaultPosition()
             c.play()
         }
     }
 
-    /**
-     * Plays the song now as the seed of a radio: the playback service keeps the queue going with
-     * related songs (it owns radio, so a stale lookup can never land on a newer queue).
-     */
     fun startRadio(song: Song) = play(listOf(song), radio = true)
 
-    fun clearUpcoming() = withController { c ->
-        val from = c.currentMediaItemIndex + 1
-        if (from < c.mediaItemCount) c.removeMediaItems(from, c.mediaItemCount)
+    fun clearUpcoming() {
+        queueManager.clearUpcoming()
+        syncQueueState()
+        syncUpNextToExoPlayer()
     }
 
     fun move(from: Int, to: Int) = withController { c ->
         if (from in 0 until c.mediaItemCount && to in 0 until c.mediaItemCount) c.moveMediaItem(from, to)
     }
 
-    /** Moves an item from anywhere in the upcoming queue directly to the topmost upcoming slot (play next). */
-    fun moveToTop(from: Int) = withController { c ->
-        val current = c.currentMediaItemIndex
-        val target = (current + 1).coerceAtMost(c.mediaItemCount - 1)
-        if (from in 0 until c.mediaItemCount && from != target) {
-            c.moveMediaItem(from, target)
-        }
-    }
-
-    /** Switches stream quality and reloads the current song at the same spot so it applies now. */
     fun setHiRes(on: Boolean) {
         TuneHubApp.library.setDataSaver(!on)
         StreamResolver.dataSaver = !on
         PlaybackService.reloadCurrent()
     }
 
-    fun next() = withController { it.seekToNext() }
-    fun previous() = withController { it.seekToPrevious() }
-    fun seekTo(ms: Long) = withController { it.seekTo(ms) }
-    fun jumpTo(i: Int) = withController { it.seekTo(i, 0); it.play() }
-    fun removeAt(i: Int) = withController { it.removeMediaItem(i) }
+    fun next() {
+        val nextSong = queueManager.advance()
+        if (nextSong != null) {
+            syncQueueState()
+            withController { c ->
+                val mediaItems = (listOf(nextSong) + (queueManager.userQueue + queueManager.upNext).map { it.song })
+                    .map { it.toMediaItem() }
+                c.setMediaItems(mediaItems, 0, 0)
+                c.prepare()
+                c.play()
+            }
+        }
+    }
 
-    fun toggleShuffle() = withController { it.shuffleModeEnabled = !it.shuffleModeEnabled }
+    fun previous() {
+        withController { c ->
+            if (c.currentPosition > 3000L) {
+                c.seekTo(0)
+            } else {
+                val prevSong = queueManager.previous()
+                if (prevSong != null) {
+                    syncQueueState()
+                    val mediaItems = (listOf(prevSong) + (queueManager.userQueue + queueManager.upNext).map { it.song })
+                        .map { it.toMediaItem() }
+                    c.setMediaItems(mediaItems, 0, 0)
+                    c.prepare()
+                    c.play()
+                } else {
+                    c.seekTo(0)
+                }
+            }
+        }
+    }
+
+    fun seekTo(ms: Long) = withController { it.seekTo(ms) }
+
+    // Legacy compat shims — delegate to qid-based API
+    fun jumpTo(i: Int) {
+        val item = queue.getOrNull(i) ?: return
+        if (item.qid == "current") return
+        jumpToQid(item.qid)
+    }
+
+    fun removeAt(i: Int) {
+        val item = queue.getOrNull(i) ?: return
+        if (item.qid == "current") return
+        removeItem(item.qid)
+    }
+
+    fun moveToTop(from: Int) {
+        val item = queue.getOrNull(from) ?: return
+        if (item.qid == "current") return
+        moveToTop(item.qid)
+    }
 
     fun cycleRepeat() = withController {
         it.repeatMode = when (it.repeatMode) {
