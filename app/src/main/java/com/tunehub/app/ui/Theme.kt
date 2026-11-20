@@ -177,14 +177,18 @@ internal val SacrificeFont = FontFamily(
     Font(R.font.sacrifice, FontWeight.Normal),
 )
 
+private val SpaceGrotesk = FontFamily(
+    variableFont(R.font.space_grotesk, FontWeight.Normal),
+    variableFont(R.font.space_grotesk, FontWeight.Bold),
+)
+
 private val CoolJazz = FontFamily(Font(R.font.cool_jazz))
 private val ChocoCooky = FontFamily(Font(R.font.choco_cooky))
 private val Rosemary = FontFamily(Font(R.font.rosemary))
 
-private val Silkscreen = FontFamily(Font(R.font.silkscreen))
-
 fun getFontFamily(fontName: String): FontFamily = when (fontName.uppercase()) {
     "SOURCE_SERIF" -> EditorialSerif
+    "SPACE_GROTESK" -> SpaceGrotesk
     "MONOSPACE" -> FontFamily.Monospace
     "COOL_JAZZ" -> CoolJazz
     "CHOCO_COOKY" -> ChocoCooky
@@ -204,7 +208,7 @@ private fun createTypography(family: FontFamily, isMonospace: Boolean = false) =
     bodySmall = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 17.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
     labelLarge = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
     labelMedium = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
-    labelSmall = TextStyle(fontFamily = Silkscreen, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.6.sp),
+    labelSmall = TextStyle(fontFamily = family, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.5.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.Medium),
 )
 
 @Composable

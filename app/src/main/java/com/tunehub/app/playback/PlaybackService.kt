@@ -239,6 +239,18 @@ class PlaybackService : MediaSessionService() {
             if (isPlaying) failuresInARow = 0
         }
 
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED) {
+                if (exo.hasNextMediaItem()) {
+                    exo.seekToNextMediaItem()
+                    exo.prepare()
+                    exo.play()
+                } else {
+                    extendQueueIfNeeded()
+                }
+            }
+        }
+
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) SleepTimer.onSongEndPause()
         }

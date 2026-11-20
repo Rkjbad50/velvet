@@ -407,10 +407,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(tuneColors.raised)
-                            .border(1.dp, tuneColors.glassBorder, RoundedCornerShape(16.dp))
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                            .padding(horizontal = 6.dp),
                     ) {
                         WavySeekBar(
                             songId = song.id,
@@ -419,11 +416,11 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             modifier = Modifier.fillMaxWidth().height(36.dp),
                             playedColor = tuneColors.accent,
                             playheadColor = tuneColors.accent,
-                            unplayedColor = tuneColors.muted.copy(alpha = 0.25f),
+                            unplayedColor = tuneColors.muted.copy(alpha = 0.28f),
                             onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
                             onSeekPreview = { seekPreview = it },
                         )
-                        Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp)) {
                             TimeLabel(seekPreview?.let { (it * duration).toLong() } ?: position)
                             Spacer(Modifier.weight(1f))
                             TimeLabel(duration)
@@ -602,18 +599,11 @@ private fun ControlDock() {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val isSmart = PlayerConnection.isSmartShuffle
         val isShuffle = PlayerConnection.shuffle
-        val shuffleIcon = if (isSmart) AppIcons.SmartShuffle else AppIcons.Shuffle
-        val shuffleTint = when {
-            isSmart -> tuneColors.accentText
-            isShuffle -> tuneColors.accentText
-            else -> tuneColors.muted
-        }
         DockButton(
-            shuffleIcon,
-            if (isSmart) "Smart Shuffle" else "Shuffle",
-            tint = shuffleTint,
+            AppIcons.Shuffle,
+            "Shuffle",
+            tint = if (isShuffle) tuneColors.accentText else tuneColors.muted,
             onClick = PlayerConnection::toggleShuffle,
         )
         DockButton(AppIcons.SkipPrevious, "Previous", iconSize = 32, onClick = PlayerConnection::previous)
@@ -731,9 +721,8 @@ private fun LyricsText(result: Lyrics.Result, position: Long) {
                 )
                 Text(
                     line.text.ifBlank { "♪" },
-                    fontFamily = EditorialSerif,
-                    fontSize = 27.sp,
-                    lineHeight = 35.sp,
+                    fontSize = 26.sp,
+                    lineHeight = 34.sp,
                     fontWeight = FontWeight.Bold,
                     color = color,
                     modifier = Modifier
@@ -746,9 +735,8 @@ private fun LyricsText(result: Lyrics.Result, position: Long) {
     } else {
         Text(
             result.plain,
-            fontFamily = EditorialSerif,
-            fontSize = 23.sp,
-            lineHeight = 33.sp,
+            fontSize = 22.sp,
+            lineHeight = 32.sp,
             modifier = Modifier
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
@@ -769,7 +757,7 @@ private fun SleepSheet(onDismiss: () -> Unit) {
         scrimColor = Color(0x99000000),
     ) {
         Text("Sleep timer", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 22.dp, bottom = 8.dp))
-        listOf(5, 15, 30, 45, 60).forEach { minutes ->
+        listOf(5, 15, 30, 45, 60, 90, 120).forEach { minutes ->
             SheetOption("$minutes minutes") { SleepTimer.start(minutes); onDismiss() }
         }
         SheetOption("End of song") { SleepTimer.endOfSong(); onDismiss() }

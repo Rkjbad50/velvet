@@ -167,7 +167,7 @@ object YouTube {
         var next = info.nextPage
         var pages = 0
         while (Page.isValid(next) && pages < MAX_PLAYLIST_PAGES) {
-            val more = PlaylistInfo.getMoreItems(service, normalized, next)
+            val more = runCatching { PlaylistInfo.getMoreItems(service, normalized, next) }.getOrNull() ?: break
             songs += more.items.mapNotNull { it.toSong() }
             next = more.nextPage
             pages++
@@ -258,5 +258,5 @@ object YouTube {
         url.replace(Regex("""=w\d+-h\d+[^/]*$"""), "=w544-h544-l90-rj")
             .replace(Regex("""=s\d+[^/]*$"""), "=s544")
 
-    private const val MAX_PLAYLIST_PAGES = 10
+    private const val MAX_PLAYLIST_PAGES = 100
 }

@@ -214,24 +214,25 @@ fun WavySeekBar(
             )
         }
 
-        // 2. Played wavy line (OneUI sine wave)
+        // 2. Played wavy line (Samsung OneUI 9.0 harmonic sea wave)
         if (playheadX > 0f) {
             val wavePath = Path()
-            val wavelength = 26.dp.toPx()
-            val amplitude = 3.5.dp.toPx()
+            val wavelength = 32.dp.toPx()
+            val amplitude = 4.2.dp.toPx()
 
             wavePath.moveTo(0f, centerY)
-            val step = 2.dp.toPx().coerceAtLeast(1f)
+            val step = 1.5.dp.toPx().coerceAtLeast(1f)
             var x = 0f
             while (x <= playheadX) {
-                val dampAtEdges = if (x < 10.dp.toPx()) {
-                    (x / 10.dp.toPx()).coerceIn(0f, 1f)
-                } else if (playheadX - x < 10.dp.toPx()) {
-                    ((playheadX - x) / 10.dp.toPx()).coerceIn(0f, 1f)
-                } else {
-                    1f
+                val dampAtEdges = when {
+                    x < 10.dp.toPx() -> (x / 10.dp.toPx()).coerceIn(0f, 1f)
+                    playheadX - x < 10.dp.toPx() -> ((playheadX - x) / 10.dp.toPx()).coerceIn(0f, 1f)
+                    else -> 1f
                 }
-                val waveY = centerY + (amplitude * dampAtEdges * kotlin.math.sin((x / wavelength) * 2 * Math.PI - phase)).toFloat()
+                // Harmonic sea wave equation (fundamental + 2nd harmonic) for authentic rolling ocean crests & troughs
+                val k = (x / wavelength) * 2 * Math.PI - phase
+                val waveHarmonic = 0.82 * kotlin.math.sin(k) + 0.32 * kotlin.math.sin(2 * k)
+                val waveY = centerY + (amplitude * dampAtEdges * waveHarmonic).toFloat()
                 wavePath.lineTo(x, waveY)
                 x += step
             }
@@ -248,15 +249,15 @@ fun WavySeekBar(
             )
         }
 
-        // 3. Playhead thumb
+        // 3. Playhead thumb (OneUI style glowing dual circle)
         drawCircle(
             color = playheadColor,
-            radius = thumbRadius,
+            radius = 7.dp.toPx(),
             center = Offset(playheadX, centerY)
         )
         drawCircle(
-            color = Color.White.copy(alpha = 0.9f),
-            radius = thumbRadius * 0.45f,
+            color = Color.White,
+            radius = 3.5.dp.toPx(),
             center = Offset(playheadX, centerY)
         )
     }

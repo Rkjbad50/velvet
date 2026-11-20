@@ -46,8 +46,6 @@ object PlayerConnection {
         private set
     var shuffle by mutableStateOf(false)
         private set
-    var isSmartShuffle by mutableStateOf(false)
-        private set
     var currentPlaylistId by mutableStateOf<String?>(null)
         private set
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
@@ -152,12 +150,7 @@ object PlayerConnection {
     fun play(songs: List<Song>, startIndex: Int = 0, shuffled: Boolean = false, radio: Boolean = false, playlistId: String? = null) {
         if (songs.isEmpty()) return
         currentPlaylistId = playlistId
-        isSmartShuffle = false
-        // Deduplicate incoming songs so no duplicate tracks exist in the initial queue
-        val uniqueSongs = mutableListOf<Song>()
-        songs.forEach { s ->
-            if (uniqueSongs.none { it.isDuplicateOf(s) }) uniqueSongs.add(s)
-        }
+        val uniqueSongs = songs.distinctBy { it.id }
         val safeIndex = startIndex.coerceIn(0, (uniqueSongs.size - 1).coerceAtLeast(0))
         val start = playlistId?.let { PlaylistStart(it, java.util.UUID.randomUUID().toString()) }
         val items = uniqueSongs.mapIndexed { i, song -> song.toMediaItem(radio = radio && i == 0, playlistStart = start) }
@@ -245,62 +238,7 @@ object PlayerConnection {
     fun jumpTo(i: Int) = withController { it.seekTo(i, 0); it.play() }
     fun removeAt(i: Int) = withController { it.removeMediaItem(i) }
 
-    fun toggleShuffle() = withController { c ->
-        if (currentPlaylistId == null) {
-            // Disabled outside user playlist: standard toggle
-            c.shuffleModeEnabled = !c.shuffleModeEnabled
-            isSmartShuffle = false
-            return@withController
-        }
-
-        // Spotify-style Smart Shuffle for user playlists:
-        // Tap 1: Standard Shuffle ON
-        // Tap 2: Smart Shuffle ON ✨
-        // Tap 3: Shuffle OFF
-        when {
-            !c.shuffleModeEnabled && !isSmartShuffle -> {
-                c.shuffleModeEnabled = true
-                isSmartShuffle = false
-                appContext?.let { Toast.makeText(it, "Shuffle", Toast.LENGTH_SHORT).show() }
-            }
-            c.shuffleModeEnabled && !isSmartShuffle -> {
-                c.shuffleModeEnabled = true
-                isSmartShuffle = true
-                appContext?.let { Toast.makeText(it, "Smart Shuffle ✨", Toast.LENGTH_SHORT).show() }
-                injectSmartRecommendations(c)
-            }
-            else -> {
-                c.shuffleModeEnabled = false
-                isSmartShuffle = false
-                appContext?.let { Toast.makeText(it, "Shuffle off", Toast.LENGTH_SHORT).show() }
-            }
-        }
-    }
-
-    private fun injectSmartRecommendations(c: MediaController) {
-        val playlistId = currentPlaylistId ?: return
-        val playlist = TuneHubApp.library.data.value.playlists.find { it.id == playlistId } ?: return
-        val artists = playlist.songs.map { it.artist }.distinct().filter { it.isNotBlank() }
-        if (artists.isEmpty()) return
-        CoroutineScope(Dispatchers.IO).launch {
-            val existing = queue
-            val newTracks = mutableListOf<Song>()
-            for (artist in artists.take(2)) {
-                val songs = runCatching {
-                    YouTube.Search(artist, YouTube.FILTER_SONGS).loadNext()
-                        .filterIsInstance<BrowseItem.SongItem>()
-                        .map { it.song }
-                        .filter { s -> s.isPureMusic() && existing.none { it.isDuplicateOf(s) } }
-                }.getOrDefault(emptyList())
-                newTracks.addAll(songs.take(2))
-            }
-            if (newTracks.isNotEmpty()) {
-                withContext(Dispatchers.Main) {
-                    newTracks.forEach { c.addMediaItem(it.toMediaItem()) }
-                }
-            }
-        }
-    }
+    fun toggleShuffle() = withController { it.shuffleModeEnabled = !it.shuffleModeEnabled }
 
     fun cycleRepeat() = withController {
         it.repeatMode = when (it.repeatMode) {

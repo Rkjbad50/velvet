@@ -27,11 +27,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -132,6 +138,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             var fontDropdownOpen by remember { mutableStateOf(false) }
             val fontOptions = listOf(
                 "SYSTEM" to "System font (default)",
+                "SPACE_GROTESK" to "Space Grotesk",
                 "SOURCE_SERIF" to "Source Serif (Editorial serif)",
                 "MONOSPACE" to "Monospace",
                 "COOL_JAZZ" to "Cool Jazz",
@@ -176,6 +183,32 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                     }
                 }
+            }
+
+            HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = tuneColors.rule)
+
+            // Multiple choice music listening languages
+            var languagesDialogOpen by remember { mutableStateOf(false) }
+            val currentLangs = data.musicLanguages.ifEmpty { listOf("Hindi", "English") }
+            val langsSummary = currentLangs.joinToString(", ")
+
+            ActionRow(
+                title = "Listening languages",
+                subtitle = langsSummary,
+                readout = "${currentLangs.size} active",
+            ) {
+                languagesDialogOpen = true
+            }
+
+            if (languagesDialogOpen) {
+                MusicLanguagesDialog(
+                    selected = currentLangs,
+                    onDismiss = { languagesDialogOpen = false },
+                    onSave = { updated ->
+                        library.setMusicLanguages(updated)
+                        languagesDialogOpen = false
+                    }
+                )
             }
         }
 
@@ -340,5 +373,96 @@ private fun ActionRow(
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = tuneColors.muted)
         }
     }
+}
+
+@Composable
+private fun MusicLanguagesDialog(
+    selected: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (List<String>) -> Unit,
+) {
+    val allLanguages = listOf(
+        "Hindi",
+        "English",
+        "Punjabi",
+        "Bhojpuri",
+        "Haryanvi",
+        "Bengali",
+        "Tamil",
+        "Telugu",
+        "Malayalam",
+        "Marathi",
+        "Gujarati",
+        "Kannada",
+    )
+    val chosen = remember { mutableStateListOf<String>().apply { addAll(selected) } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = tuneColors.surface,
+        title = {
+            Text("Listening languages", style = MaterialTheme.typography.titleLarge, color = tuneColors.text, fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Choose one or more languages for your personalized 'More for you' recommendations:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tuneColors.muted,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                allLanguages.forEach { lang ->
+                    val isChecked = lang in chosen
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                if (isChecked) {
+                                    if (chosen.size > 1) chosen.remove(lang)
+                                } else {
+                                    chosen.add(lang)
+                                }
+                            }
+                            .padding(vertical = 10.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            lang,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (isChecked) tuneColors.accentText else tuneColors.text,
+                            fontWeight = if (isChecked) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                        Checkbox(
+                            checked = isChecked,
+                            onCheckedChange = { check ->
+                                if (check) chosen.add(lang) else if (chosen.size > 1) chosen.remove(lang)
+                            },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = tuneColors.accent,
+                                checkmarkColor = Color.White,
+                                uncheckedColor = tuneColors.muted,
+                            ),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(chosen.toList()) }) {
+                Text("Save", color = tuneColors.accentText, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = tuneColors.muted)
+            }
+        },
+    )
 }
 

@@ -105,22 +105,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             trending = cached
 
             // Fetch YouTube Music pre-made albums and playlists for "More for you"
-            launch(Dispatchers.IO) {
-                val playlists = runCatching {
-                    YouTube.Search("Top Hits", YouTube.FILTER_PLAYLISTS).loadNext()
-                        .filterIsInstance<BrowseItem.AlbumItem>()
-                        .map { it.album }
-                }.getOrDefault(emptyList())
-                val albums = runCatching {
-                    YouTube.Search("Trending", YouTube.FILTER_ALBUMS).loadNext()
-                        .filterIsInstance<BrowseItem.AlbumItem>()
-                        .map { it.album }
-                }.getOrDefault(emptyList())
-                val combined = (playlists.take(6) + albums.take(6)).distinctBy { it.url }
-                if (combined.isNotEmpty()) {
-                    moreForYou = combined
-                }
-            }
+            loadMoreForYou(emptyList())
 
             val age = System.currentTimeMillis() - fetchedAt
             if (cached.isNotEmpty() && age in 0 until feedMaxAge) return@launch
@@ -181,6 +166,42 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }.distinctBy { it.id }.take(10)
         }
     }
+
+    /** Refresh More For You albums and playlists dynamically using chosen languages and periodic rotation */
+    fun loadMoreForYou(languages: List<String>) {
+        val langs = languages.ifEmpty { listOf("Hindi", "English") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val variants = listOf("Top Hits", "Trending Now", "Viral Hits", "New Releases", "Essentials", "Party Hits")
+            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            val variant = variants[(hour / 3) % variants.size]
+
+            val collected = mutableListOf<AlbumRef>()
+            for (lang in langs.take(3)) {
+                val query1 = "$lang $variant"
+                val playlists = runCatching {
+                    YouTube.Search(query1, YouTube.FILTER_PLAYLISTS).loadNext()
+                        .filterIsInstance<BrowseItem.AlbumItem>()
+                        .map { it.album }
+                }.getOrDefault(emptyList())
+
+                val query2 = "$lang Hits"
+                val albums = runCatching {
+                    YouTube.Search(query2, YouTube.FILTER_ALBUMS).loadNext()
+                        .filterIsInstance<BrowseItem.AlbumItem>()
+                        .map { it.album }
+                }.getOrDefault(emptyList())
+
+                collected.addAll(playlists.take(4))
+                collected.addAll(albums.take(4))
+            }
+            val finalItems = collected.distinctBy { it.url }
+            if (finalItems.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    moreForYou = finalItems
+                }
+            }
+        }
+    }
 }
 
 private fun List<Song>.rankMusic() = distinctBy { it.id }.sortedByDescending { it.preferredMusicSource }
@@ -201,9 +222,11 @@ fun HomeScreen(vm: HomeViewModel) {
     val quickPicks = vm.quickPicks
     val trending = vm.trending
     val moreForYou = vm.moreForYou
+    val languages = data.musicLanguages
     val openMenu = LocalSongMenu.current
 
     LaunchedEffect(recent) { vm.loadFor(recent) }
+    LaunchedEffect(languages) { vm.loadMoreForYou(languages) }
 
     // User's playlists for top shortcuts (Liked Songs is now exclusively in Library, Recently Played in History button)
     val userPlaylists = data.playlists.homePlaylists()
@@ -216,9 +239,13 @@ fun HomeScreen(vm: HomeViewModel) {
     // one radio per artist you actually listen to, each shown with that artist's song cover
     val mixes = (recent + data.liked).distinctBy { it.artist.lowercase() }.take(8)
 
-    // Speed Dial songs: combines recent listens, quick picks, and pure trending music
-    val speedDialSongs = remember(recent, quickPicks, trending) {
-        (recent + quickPicks + trending).distinctBy { it.id }.filter { it.isPureMusic() }.take(9)
+    // Speed Dial songs: 2-3 tracks from recent/favorites + 6-7 fresh discovery tracks closely related to listening habits
+    val speedDialSongs = remember(recent, data.liked, quickPicks, trending) {
+        val userPicks = (recent + data.liked).distinctBy { it.id }.filter { it.isPureMusic() }.take(3)
+        val freshDiscovery = (quickPicks + trending).distinctBy { it.id }
+            .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
+            .take(6)
+        (userPicks + freshDiscovery).take(9)
     }
 
     val greeting = remember {
@@ -243,9 +270,9 @@ fun HomeScreen(vm: HomeViewModel) {
                     painter = painterResource(R.drawable.ic_velvet_logo),
                     contentDescription = "VELVET Logo",
                     tint = Color.Unspecified,
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(46.dp),
                 )
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(14.dp))
                 Text(
                     "VELVET",
                     style = MaterialTheme.typography.headlineMedium.copy(
