@@ -34,10 +34,10 @@
 }
 
 ## Our saved library (kotlinx.serialization)
--keep,includedescriptorclasses class com.tunehub.app.**$$serializer { *; }
--keepclassmembers class com.tunehub.app.** {
+-keep,includedescriptorclasses class com.velvet.app.**$$serializer { *; }
+-keepclassmembers class com.velvet.app.** {
     *** Companion;
 }
--keepclasseswithmembers class com.tunehub.app.** {
+-keepclasseswithmembers class com.velvet.app.** {
     kotlinx.serialization.KSerializer serializer(...);
 }

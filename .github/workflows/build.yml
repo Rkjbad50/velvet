@@ -43,7 +43,6 @@ jobs:
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/velvet.jks"
             echo "VELVET_KEYSTORE=$RUNNER_TEMP/velvet.jks" >> "$GITHUB_ENV"
-            echo "TUNEHUB_KEYSTORE=$RUNNER_TEMP/velvet.jks" >> "$GITHUB_ENV"
             echo "is_signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_signed=false" >> "$GITHUB_OUTPUT"
@@ -55,9 +54,6 @@ jobs:
           VELVET_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           VELVET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           VELVET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          TUNEHUB_KEYSTORE_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          TUNEHUB_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          TUNEHUB_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle testReleaseUnitTest assembleRelease --stacktrace
 
       - uses: actions/upload-artifact@v4

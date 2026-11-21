@@ -9,15 +9,15 @@ plugins {
 
 // CI passes the build number so every build installs as an update over the previous one
 val buildNumber = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 2
-val upstreamBuildNumber = System.getenv("VELVET_UPSTREAM_BUILD")?.toIntOrNull() ?: System.getenv("TUNEHUB_UPSTREAM_BUILD")?.toIntOrNull() ?: 51
-val keystorePath: String? = System.getenv("VELVET_KEYSTORE") ?: System.getenv("TUNEHUB_KEYSTORE")
+val upstreamBuildNumber = System.getenv("VELVET_UPSTREAM_BUILD")?.toIntOrNull() ?: 51
+val keystorePath: String? = System.getenv("VELVET_KEYSTORE")
 val releaseUrl = System.getenv("VELVET_RELEASES_URL")
-    ?: System.getenv("TUNEHUB_RELEASES_URL")
+
     ?: System.getenv("GITHUB_REPOSITORY")?.let { "https://github.com/$it/releases/latest" }
     ?: "https://github.com/Rkjbad50/velvet/releases/latest"
 
 android {
-    namespace = "com.tunehub.app"
+    namespace = "com.velvet.app"
     compileSdk = 35
 
     defaultConfig {
@@ -34,9 +34,9 @@ android {
         if (keystorePath != null) {
             create("release") {
                 storeFile = file(keystorePath)
-                storePassword = System.getenv("VELVET_KEYSTORE_PASSWORD") ?: System.getenv("TUNEHUB_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("VELVET_KEY_ALIAS") ?: System.getenv("TUNEHUB_KEY_ALIAS")
-                keyPassword = System.getenv("VELVET_KEY_PASSWORD") ?: System.getenv("TUNEHUB_KEY_PASSWORD")
+                storePassword = System.getenv("VELVET_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("VELVET_KEY_ALIAS")
+                keyPassword = System.getenv("VELVET_KEY_PASSWORD")
             }
         }
     }
