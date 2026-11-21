@@ -389,7 +389,7 @@ class PlaybackService : MediaSessionService() {
         crossfadeMonitorJob?.cancel()
         crossfadeMonitorJob = scope.launch {
             while (isActive) {
-                delay(100)
+                delay(50)
                 if (!::exo.isInitialized || !exo.isPlaying) continue
                 val crossfadeSec = TuneHubApp.library.data.value.crossfadeSeconds
                 if (crossfadeSec <= 0f) {
@@ -409,8 +409,9 @@ class PlaybackService : MediaSessionService() {
 
                 if (remainingMs in 1..fadeMs && exo.hasNextMediaItem()) {
                     isFadingOut = true
-                    val progress = (remainingMs.toFloat() / fadeMs.toFloat()).coerceIn(0.05f, 1f)
-                    exo.volume = progress
+                    val progress = (remainingMs.toFloat() / fadeMs.toFloat()).coerceIn(0.01f, 1f)
+                    val smoothVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0.01f, 1f)
+                    exo.volume = smoothVol
                 } else if (isFadingOut && remainingMs > fadeMs) {
                     isFadingOut = false
                     exo.volume = 1.0f
@@ -423,12 +424,13 @@ class PlaybackService : MediaSessionService() {
         fadeInJob?.cancel()
         fadeInJob = scope.launch {
             isFadingOut = false
-            val fadeDurationMs = (crossfadeSec * 600L).toLong().coerceIn(300L, 3000L)
-            val steps = 25
-            val stepDelay = (fadeDurationMs / steps).coerceAtLeast(10L)
+            val fadeDurationMs = (crossfadeSec * 800L).toLong().coerceIn(400L, 4000L)
+            val steps = 30
+            val stepDelay = (fadeDurationMs / steps).coerceAtLeast(15L)
             for (i in 0..steps) {
-                val vol = (i.toFloat() / steps).coerceIn(0f, 1f)
-                exo.volume = vol
+                val progress = (i.toFloat() / steps).coerceIn(0f, 1f)
+                val smoothVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0.05f, 1f)
+                exo.volume = smoothVol
                 delay(stepDelay)
             }
             exo.volume = 1.0f

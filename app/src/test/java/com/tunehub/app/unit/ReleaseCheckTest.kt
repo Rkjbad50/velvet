@@ -25,6 +25,11 @@ class ReleaseCheckTest {
         assertTrue(ReleaseCheck.isNewer("""{"tag_name":"v3.0","name":"Version 3.0"}""", 0, "2.0"))
         assertFalse(ReleaseCheck.isNewer("""{"tag_name":"v2.0","name":"Version 2.0"}""", 0, "2.0"))
         assertFalse(ReleaseCheck.isNewer("""{"tag_name":"v1.9","name":"Version 1.9"}""", 0, "2.0"))
+
+        // Version 2.1 active checks
+        assertFalse(ReleaseCheck.isNewer("""{"tag_name":"v2.1","name":"Version 2.1"}""", 0, "2.1"))
+        assertTrue(ReleaseCheck.isNewer("""{"tag_name":"v2.2","name":"Version 2.2"}""", 0, "2.1"))
+        assertFalse(ReleaseCheck.isNewer("""{"tag_name":"v2.0","name":"Version 2.0"}""", 0, "2.1"))
     }
 
     @Test(expected = IOException::class)

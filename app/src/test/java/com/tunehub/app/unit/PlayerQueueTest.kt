@@ -286,4 +286,26 @@ class PlayerQueueTest {
         assertFalse(manager.shuffle)
         assertTrue(manager.upNext.none { it.isSmartRecommended })
     }
+
+    @Test
+    fun testAppendRadioSongsAutoplayQueueExtension() {
+        val songs = makeSongs(1)
+        val manager = PlayerQueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+
+        assertEquals(1, manager.visibleQueue.size)
+        assertTrue(manager.upNext.isEmpty())
+
+        // Autoplay extensions arrives
+        val autoplaySongs = makeSongs(5).drop(1)
+        manager.appendRadioSongs(autoplaySongs)
+
+        assertEquals(4, manager.upNext.size)
+        assertEquals(5, manager.visibleQueue.size)
+
+        // Advance to next autoplay song
+        val next = manager.advance()
+        assertEquals(autoplaySongs[0].id, next?.id)
+        assertEquals(3, manager.upNext.size)
+    }
 }

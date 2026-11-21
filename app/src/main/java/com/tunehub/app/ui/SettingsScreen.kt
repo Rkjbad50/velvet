@@ -46,6 +46,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -292,12 +294,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                             color = if (data.crossfadeSeconds > 0f) tuneColors.accentText else tuneColors.muted,
                         )
                     }
-                    Switch(
+                    VelvetSwitch(
                         checked = data.crossfadeSeconds > 0f,
                         onCheckedChange = { on ->
                             library.setCrossfadeSeconds(if (on) 3.0f else 0f)
                         },
-                        colors = SwitchDefaults.colors(checkedTrackColor = tuneColors.accent, checkedThumbColor = tuneColors.onAccent),
                     )
                 }
                 if (data.crossfadeSeconds > 0f) {
@@ -437,6 +438,46 @@ private fun SettingsGroup(text: String, content: @Composable ColumnScope.() -> U
 }
 
 @Composable
+private fun VelvetSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val isDark = tuneColors.surface.luminance() < 0.5f
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier,
+        thumbContent = {
+            if (checked) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(SwitchDefaults.IconSize),
+                    tint = tuneColors.onAccent,
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .background(if (isDark) Color(0xFF6E6E7A) else Color(0xFF9E9EA8), CircleShape)
+                )
+            }
+        },
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = tuneColors.onAccent,
+            checkedTrackColor = tuneColors.accent,
+            checkedBorderColor = tuneColors.accent,
+            checkedIconColor = tuneColors.accent,
+            uncheckedThumbColor = if (isDark) Color(0xFFE2E2E8) else Color(0xFFFFFFFF),
+            uncheckedTrackColor = if (isDark) Color(0xFF232328) else Color(0xFFD6D6DE),
+            uncheckedBorderColor = if (isDark) Color(0xFF45454F) else Color(0xFFA8A8B5),
+            uncheckedIconColor = if (isDark) Color(0xFF71717A) else Color(0xFF8E8E93),
+        ),
+    )
+}
+
+@Composable
 private fun ToggleRow(title: String, subtitle: String = "", checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
@@ -451,10 +492,9 @@ private fun ToggleRow(title: String, subtitle: String = "", checked: Boolean, on
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Switch(
+        VelvetSwitch(
             checked = checked,
             onCheckedChange = null,
-            colors = SwitchDefaults.colors(checkedTrackColor = tuneColors.accent, checkedThumbColor = tuneColors.onAccent),
         )
     }
 }

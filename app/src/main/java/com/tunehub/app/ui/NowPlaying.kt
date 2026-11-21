@@ -383,12 +383,15 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, bottom = gap),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                    Box(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     ) {
-                        PanelIconButton(Icons.Default.KeyboardArrowDown, "Close", onClick = onClose)
-                        Spacer(Modifier.weight(1f))
+                        PanelIconButton(
+                            Icons.Default.KeyboardArrowDown,
+                            "Close",
+                            modifier = Modifier.align(Alignment.CenterStart),
+                            onClick = onClose,
+                        )
                         Text(
                             "NOW PLAYING",
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -396,18 +399,23 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 fontWeight = FontWeight.Bold,
                             ),
                             color = tuneColors.muted,
+                            modifier = Modifier.align(Alignment.Center),
                         )
-                        Spacer(Modifier.weight(1f))
-                        PanelIconButton(
-                            AppIcons.Lyrics,
-                            "Lyrics",
-                            tint = if (showLyrics) tuneColors.accentText else tuneColors.text,
+                        Row(
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            showLyrics = true
-                            if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
+                            PanelIconButton(
+                                AppIcons.Lyrics,
+                                "Lyrics",
+                                tint = if (showLyrics) tuneColors.accentText else tuneColors.text,
+                            ) {
+                                showLyrics = true
+                                if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            PanelIconButton(Icons.Default.MoreVert, "More") { openMenu(SongMenuRequest(song, null)) }
                         }
-                        Spacer(Modifier.width(8.dp))
-                        PanelIconButton(Icons.Default.MoreVert, "More") { openMenu(SongMenuRequest(song, null)) }
                     }
 
                     Spacer(Modifier.height(gap))

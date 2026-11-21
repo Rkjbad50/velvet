@@ -54,6 +54,9 @@ object PlayerConnection {
     var error by mutableStateOf<String?>(null)
     var currentPlaylistId by mutableStateOf<String?>(null)
         private set
+    var isRadioActive by mutableStateOf(false)
+        private set
+    private var isExtendingAutoplay = false
 
     /** Whether shuffle is currently on. */
     var shuffle by mutableStateOf(false)
@@ -133,6 +136,7 @@ object PlayerConnection {
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
                 queueManager.advance()
                 syncQueueState()
+                checkAndExtendAutoplay()
             }
         }
     }
@@ -150,6 +154,20 @@ object PlayerConnection {
                     current = exoCurrent
                 }
             }
+        }
+        // Absorb any items added to ExoPlayer by background service
+        if (queueManager.upNext.isEmpty() && p.mediaItemCount > p.currentMediaItemIndex + 1) {
+            val remainingInExo = (p.currentMediaItemIndex + 1 until p.mediaItemCount).mapNotNull {
+                p.getMediaItemAt(it).toSong()
+            }
+            if (remainingInExo.isNotEmpty()) {
+                queueManager.appendRadioSongs(remainingInExo)
+                syncQueueState()
+            }
+        }
+        val isAutoplayOn = TuneHubApp.library.data.value.autoplay || isRadioActive
+        if (isAutoplayOn && queueManager.upNext.size < 4) {
+            checkAndExtendAutoplay()
         }
         isPlaying = p.isPlaying
         isBuffering = p.playbackState == Player.STATE_BUFFERING
@@ -176,6 +194,7 @@ object PlayerConnection {
     ) {
         if (songs.isEmpty()) return
         currentPlaylistId = playlistId
+        isRadioActive = radio
         queueManager.start(songs, startIndex, shuffled)
         syncQueueState()
 
@@ -190,6 +209,11 @@ object PlayerConnection {
             c.setMediaItems(mediaItems, 0, 0)
             c.prepare()
             c.play()
+        }
+
+        val isAutoplayOn = TuneHubApp.library.data.value.autoplay || radio
+        if (isAutoplayOn && queueManager.upNext.isEmpty()) {
+            checkAndExtendAutoplay(startSong.id)
         }
     }
 
@@ -369,6 +393,54 @@ object PlayerConnection {
                 c.setMediaItems(mediaItems, 0, 0)
                 c.prepare()
                 c.play()
+            }
+            checkAndExtendAutoplay()
+        } else {
+            val cur = current
+            if (cur != null) {
+                checkAndExtendAutoplay(cur.id, autoPlayNext = true)
+            }
+        }
+    }
+
+    fun checkAndExtendAutoplay(seedId: String? = null, autoPlayNext: Boolean = false) {
+        val currentSong = current ?: return
+        val targetSeed = seedId ?: currentSong.id
+        val isAutoplayEnabled = TuneHubApp.library.data.value.autoplay || isRadioActive
+        if (!isAutoplayEnabled) return
+        if (queueManager.upNext.size >= 6 && !autoPlayNext) return
+        if (isExtendingAutoplay) return
+
+        isExtendingAutoplay = true
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val related = StreamResolver.related(targetSeed)
+                    .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
+                    .sortedByDescending { it.preferredMusicSource }
+
+                withContext(Dispatchers.Main) {
+                    if (related.isNotEmpty()) {
+                        if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
+                            val first = related.first()
+                            val rest = related.drop(1)
+                            queueManager.start(listOf(first) + rest, 0, false)
+                            syncQueueState()
+                            withController { c ->
+                                val mediaItems = (listOf(first) + rest).map { it.toMediaItem() }
+                                c.setMediaItems(mediaItems, 0, 0)
+                                c.prepare()
+                                c.play()
+                            }
+                        } else {
+                            queueManager.appendRadioSongs(related)
+                            syncQueueState()
+                            syncUpNextToExoPlayer()
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                isExtendingAutoplay = false
             }
         }
     }
