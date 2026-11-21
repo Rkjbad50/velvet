@@ -93,16 +93,6 @@ object PlayerConnection {
     /** Standby hook for crossfade or preloading engines when next item changes. */
     var onNextItemChangedListener: ((QueueItem?) -> Unit)? = null
 
-    /** Standby hook for manual quick crossfade transitions. */
-    var onManualTransition: ((Song) -> Unit)? = null
-
-    /** Called by CrossfadeEngine when an auto crossfade transition occurs. */
-    fun onAutoTransitionTrack(nextSong: Song) {
-        queueManager.advance(manual = false)
-        syncQueueState()
-        checkAndExtendAutoplay()
-    }
-
     private fun getNextItem(): QueueItem? =
         queueManager.userQueue.firstOrNull() ?: queueManager.upNext.firstOrNull()
 
@@ -504,13 +494,7 @@ object PlayerConnection {
     fun jumpToQid(qid: String) {
         val targetSong = queueManager.jumpToQid(qid) ?: return
         syncQueueState()
-        val handled = onManualTransition?.let {
-            it(targetSong)
-            true
-        } ?: false
-        if (!handled) {
-            syncToExoPlayer()
-        }
+        syncToExoPlayer()
     }
 
     fun togglePlay() = withController { c ->
@@ -550,13 +534,7 @@ object PlayerConnection {
         val nextSong = queueManager.advance(manual = true)
         if (nextSong != null) {
             syncQueueState()
-            val handled = onManualTransition?.let {
-                it(nextSong)
-                true
-            } ?: false
-            if (!handled) {
-                syncToExoPlayer()
-            }
+            syncToExoPlayer()
             checkAndExtendAutoplay()
         } else {
             val cur = current
@@ -614,13 +592,7 @@ object PlayerConnection {
                 val prevSong = queueManager.previous(c.currentPosition)
                 if (prevSong != null) {
                     syncQueueState()
-                    val handled = onManualTransition?.let {
-                        it(prevSong)
-                        true
-                    } ?: false
-                    if (!handled) {
-                        syncToExoPlayer()
-                    }
+                    syncToExoPlayer()
                 } else {
                     c.seekTo(0)
                 }

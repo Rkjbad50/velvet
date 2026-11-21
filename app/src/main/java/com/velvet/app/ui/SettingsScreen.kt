@@ -340,7 +340,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Column(Modifier.weight(1f).padding(end = 12.dp)) {
                         Text("Crossfade automix", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            if (data.crossfadeSeconds > 0f) "${data.crossfadeSeconds}s crossfade (equal-power)" else "Off · Gapless (0s)",
+                            if (data.crossfadeSeconds > 0f) "${data.crossfadeSeconds}s automix during auto track transition" else "Off · Instant transition",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (data.crossfadeSeconds > 0f) velvetColors.accentText else velvetColors.muted,
                         )
@@ -348,7 +348,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     VelvetSwitch(
                         checked = data.crossfadeSeconds > 0f,
                         onCheckedChange = { on ->
-                            library.setCrossfadeSeconds(if (on) 5.0f else 0f)
+                            library.setCrossfadeSeconds(if (on) 3.0f else 0f)
                         },
                     )
                 }
@@ -362,11 +362,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                         Slider(
                             value = data.crossfadeSeconds,
                             onValueChange = { raw ->
-                                val rounded = (Math.round(raw * 2) / 2.0f).coerceIn(0.5f, 12.0f)
+                                val rounded = (Math.round(raw * 2) / 2.0f).coerceIn(0.5f, 10.0f)
                                 library.setCrossfadeSeconds(rounded)
                             },
-                            valueRange = 0.5f..12.0f,
-                            steps = 22,
+                            valueRange = 0.5f..10.0f,
+                            steps = 18,
                             modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
                             colors = SliderDefaults.colors(
                                 thumbColor = velvetColors.accentText,
@@ -374,7 +374,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 inactiveTrackColor = velvetColors.track,
                             ),
                         )
-                        Text("12s", style = MaterialTheme.typography.labelSmall, color = velvetColors.muted)
+                        Text("10s", style = MaterialTheme.typography.labelSmall, color = velvetColors.muted)
                     }
                 }
             }
