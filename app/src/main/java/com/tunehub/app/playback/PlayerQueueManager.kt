@@ -2,6 +2,7 @@ package com.tunehub.app.playback
 
 import com.tunehub.app.data.Song
 import com.tunehub.app.data.isDuplicateOf
+import com.tunehub.app.data.isSameTrackAs
 import java.util.UUID
 
 /**
@@ -159,27 +160,74 @@ class PlayerQueueManager {
 
     /**
      * Injects smart recommended songs in-between upcoming tracks.
+     * Enforces strict de-duplication:
+     * - Rejects any track matching existing playlist songs (by ID or cleaned title, regardless of creator/uploader)
+     * - Rejects duplicates within the recommended set itself
+     * - Enforces the 2-4 recommended songs per 5-10 playlist songs ratio
+     * - Disperses recommendations across randomized positions between playlist songs
      */
     fun injectSmartRecommendations(recommendations: List<Song>) {
         if (shuffleMode != ShuffleMode.SMART || recommendations.isEmpty()) return
-        val existingIds = (_history.map { it.id } +
-            listOfNotNull(current?.id) +
-            _userQueue.map { it.song.id } +
-            _upNext.map { it.song.id }).toSet()
-        val fresh = recommendations.filter { it.id !in existingIds }
-        if (fresh.isEmpty()) return
 
-        val result = mutableListOf<QueueItem>()
-        var recIdx = 0
-        for (i in _upNext.indices) {
-            result.add(_upNext[i])
-            if ((i % 2 == 1 || i == _upNext.lastIndex) && recIdx < fresh.size) {
-                result.add(QueueItem(song = fresh[recIdx++], isSmartRecommended = true))
+        // 1. Gather all existing songs from the source playlist, history, current song, and user queue
+        val existingSongs = (_sourceList + _history + listOfNotNull(current) + _userQueue.map { it.song })
+        
+        // 2. Filter recommendations: strictly distinct from playlist and from each other
+        val fresh = mutableListOf<Song>()
+        for (candidate in recommendations) {
+            val existsInPlaylistOrQueue = existingSongs.any { it.isSameTrackAs(candidate) }
+            val alreadyInFresh = fresh.any { it.isSameTrackAs(candidate) }
+            if (!existsInPlaylistOrQueue && !alreadyInFresh) {
+                fresh.add(candidate)
             }
         }
-        while (recIdx < fresh.size) {
-            result.add(QueueItem(song = fresh[recIdx++], isSmartRecommended = true))
+        if (fresh.isEmpty()) return
+
+        // 3. Clean any existing smart recommendations from upNext so we start with clean playlist tracks
+        val baseItems = _upNext.filter { !it.isSmartRecommended }
+        if (baseItems.isEmpty()) {
+            _upNext.clear()
+            _upNext.addAll(fresh.take(3).map { QueueItem(it, isSmartRecommended = true) })
+            return
         }
+
+        // 4. Calculate target count matching 2-4 recommendations per 5-10 playlist songs ratio
+        val n = baseItems.size
+        val targetCount = when {
+            n <= 2 -> minOf(1, fresh.size)
+            n in 3..5 -> minOf(2, fresh.size)
+            n in 6..8 -> minOf(3, fresh.size)
+            n in 9..12 -> minOf(4, fresh.size)
+            else -> minOf(((n * 35) / 100).coerceAtLeast(2), fresh.size)
+        }
+
+        val toInject = fresh.take(targetCount)
+        if (toInject.isEmpty()) return
+
+        // 5. Randomly disperse recommended tracks into upNext across evenly spaced segments
+        val result = baseItems.toMutableList()
+        val step = result.size.toFloat() / toInject.size.toFloat()
+        val rng = java.util.Random()
+        val insertPositions = mutableListOf<Int>()
+        for (i in toInject.indices) {
+            val minPos = (i * step).toInt() + 1
+            val maxPos = minOf(((i + 1) * step).toInt(), result.size)
+            val pos = if (maxPos > minPos) {
+                minPos + rng.nextInt(maxPos - minPos + 1)
+            } else {
+                minOf(minPos, result.size)
+            }
+            insertPositions.add(pos)
+        }
+
+        // Insert in reverse order so earlier insertion indices remain valid
+        val sortedDesc = insertPositions.sortedDescending()
+        for (i in sortedDesc.indices) {
+            val targetPos = sortedDesc[i].coerceIn(0, result.size)
+            val song = toInject[toInject.size - 1 - i]
+            result.add(targetPos, QueueItem(song = song, isSmartRecommended = true))
+        }
+
         _upNext.clear()
         _upNext.addAll(result)
     }

@@ -1,15 +1,25 @@
 package com.tunehub.app.ui
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -17,11 +27,17 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -50,11 +66,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tunehub.app.TuneHubApp
 import com.tunehub.app.data.AlbumRef
 import com.tunehub.app.data.ArtistRef
+import com.tunehub.app.data.Playlist
 import com.tunehub.app.data.Song
 import com.tunehub.app.data.YouTube
 import com.tunehub.app.data.totalDuration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
 
 internal fun songCountLabel(count: Int): String = if (count == 1) "1 song" else "$count songs"
 
@@ -239,6 +258,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
 
     var isEditing by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showCoverPicker by remember { mutableStateOf(false) }
     var draftSongs by remember(playlist.id, isEditing) { mutableStateOf(playlist.songs) }
     var recentlyRemoved by remember { mutableStateOf<Pair<Int, Song>?>(null) }
     var showUndoToast by remember { mutableStateOf(false) }
@@ -253,7 +273,36 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     subtitle = if (isEditing) "Editing playlist (${draftSongs.size} tracks)" else "",
                     meta = "Playlist • " + songMeta(activeSongs),
                     tint = rememberArtColor(activeSongs.firstOrNull()?.thumb),
-                    art = { PlaylistCover(activeSongs, if (activeSongs.size <= 1) 156.dp else 230.dp, corner = 28.dp) },
+                    art = {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(28.dp))
+                                .clickable { showCoverPicker = true },
+                        ) {
+                            PlaylistCover(
+                                activeSongs,
+                                if (activeSongs.size <= 1) 156.dp else 230.dp,
+                                corner = 28.dp,
+                                customCover = playlist.customCover,
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(8.dp)
+                                    .size(36.dp)
+                                    .background(tuneColors.surface.copy(alpha = 0.90f), CircleShape)
+                                    .border(1.dp, tuneColors.rule, CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    AppIcons.Palette,
+                                    contentDescription = "Change cover art",
+                                    tint = tuneColors.accentText,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    },
                     artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
                     playEnabled = activeSongs.isNotEmpty() && !isEditing,
                     onPlay = { PlayerConnection.play(activeSongs, playlistId = id) },
@@ -264,6 +313,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                                 draftSongs = playlist.songs
                                 isEditing = true
                             }
+                            PanelIconButton(AppIcons.Palette, "Change cover art") { showCoverPicker = true }
                             PanelIconButton(AppIcons.Sort, "Sort") { showSortMenu = true }
                             PanelIconButton(Icons.Default.Delete, "Delete playlist") {
                                 confirm = ConfirmRequest(
@@ -453,6 +503,181 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     if (renaming) {
         NamePlaylistDialog("Rename playlist", initial = playlist.name, onDismiss = { renaming = false }) {
             library.renamePlaylist(playlist.id, it)
+        }
+    }
+
+    if (showCoverPicker) {
+        PlaylistCoverPickerSheet(playlist = playlist, onDismiss = { showCoverPicker = false })
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistCoverPickerSheet(
+    playlist: Playlist,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val library = TuneHubApp.library
+
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            try {
+                val dir = File(context.filesDir, "playlist_covers")
+                if (!dir.exists()) dir.mkdirs()
+                val targetFile = File(dir, "cover_${playlist.id}.jpg")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                library.setPlaylistCover(playlist.id, "file://${targetFile.absolutePath}")
+                Toast.makeText(context, "Cover art updated from gallery", Toast.LENGTH_SHORT).show()
+                onDismiss()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to load image: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = tuneColors.surface,
+        tonalElevation = 0.dp,
+        scrimColor = Color(0x99000000),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text(
+                "Change Playlist Cover",
+                style = MaterialTheme.typography.headlineSmall,
+                color = tuneColors.text,
+            )
+            Text(
+                "Pick an in-built gradient preset or upload a custom image",
+                style = MaterialTheme.typography.bodySmall,
+                color = tuneColors.muted,
+                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
+            )
+
+            Text(
+                "10 IN-BUILT PRESETS",
+                style = MaterialTheme.typography.labelSmall,
+                color = tuneColors.accentText,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val rows = PlaylistCoverPresets.presets.chunked(5)
+                rows.forEach { rowPresets ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        rowPresets.forEach { preset ->
+                            val isSelected = playlist.customCover == "preset:${preset.id}"
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        library.setPlaylistCover(playlist.id, "preset:${preset.id}")
+                                        Toast.makeText(context, "Cover updated: ${preset.name}", Toast.LENGTH_SHORT).show()
+                                        onDismiss()
+                                    },
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(preset.gradient)
+                                        .then(
+                                            if (isSelected) Modifier.border(2.5.dp, Color.White, RoundedCornerShape(14.dp))
+                                            else Modifier.border(1.dp, tuneColors.rule, RoundedCornerShape(14.dp))
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        preset.icon,
+                                        contentDescription = preset.name,
+                                        tint = preset.iconTint,
+                                        modifier = Modifier.fillMaxSize(0.42f),
+                                    )
+                                    if (isSelected) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(3.dp)
+                                                .size(14.dp)
+                                                .background(Color.White, CircleShape),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color.Black,
+                                                modifier = Modifier.size(10.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    preset.name,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isSelected) tuneColors.accentText else tuneColors.text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            HorizontalDivider(color = tuneColors.rule)
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = { galleryLauncher.launch("image/*") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = tuneColors.raised),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    Icon(AppIcons.Palette, contentDescription = null, tint = tuneColors.accentText)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Upload from Gallery / Files",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = tuneColors.text,
+                    )
+                }
+            }
+
+            if (playlist.customCover != null) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(
+                    onClick = {
+                        library.setPlaylistCover(playlist.id, null)
+                        Toast.makeText(context, "Reset to default song collage", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Reset to default collage", color = tuneColors.danger)
+                }
+            }
         }
     }
 }

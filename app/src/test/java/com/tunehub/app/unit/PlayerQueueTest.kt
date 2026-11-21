@@ -1,6 +1,7 @@
 package com.tunehub.app.unit
 
 import com.tunehub.app.data.Song
+import com.tunehub.app.data.isSameTrackAs
 import com.tunehub.app.playback.PlayerQueueManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -307,5 +308,79 @@ class PlayerQueueTest {
         val next = manager.advance()
         assertEquals(autoplaySongs[0].id, next?.id)
         assertEquals(3, manager.upNext.size)
+    }
+
+    @Test
+    fun testSongIsSameTrackAs_strictDeduplicationAcrossCreators() {
+        val s1 = makeSong("id1", "Chikni Chameli", "Ajay-Atul")
+        val s2 = makeSong("id2", "Chikni Chameli (Official Music Video)", "Sony Music India")
+        val s3 = makeSong("id3", "Chikni Chameli [Full Video Song]", "T-Series")
+        val s4 = makeSong("id4", "Afghan Jalebi", "Asrar")
+
+        // Must match same title across channels/uploaders
+        assertTrue(s1.isSameTrackAs(s2))
+        assertTrue(s1.isSameTrackAs(s3))
+        assertTrue(s2.isSameTrackAs(s3))
+
+        // Different song must NOT match
+        assertFalse(s1.isSameTrackAs(s4))
+    }
+
+    @Test
+    fun testSmartShuffle_deduplicationAgainstPlaylistAndWithinRecommendations() {
+        val playlist = listOf(
+            makeSong("p1", "Kesariya"),
+            makeSong("p2", "Apna Bana Le"),
+            makeSong("p3", "Deva Deva"),
+            makeSong("p4", "Rasiya"),
+            makeSong("p5", "Dance Ka Bhoot"),
+        )
+        val manager = PlayerQueueManager()
+        manager.start(playlist, startIndex = 0, shuffled = true)
+        manager.cycleShuffleMode() // STANDARD
+        manager.cycleShuffleMode() // SMART
+
+        // Recommendations contain a duplicate of "Kesariya (Official Video)" by a different creator,
+        // and two duplicates of "Tum Hi Ho", plus unique songs
+        val recs = listOf(
+            makeSong("r1", "Kesariya (Official Video)", "Sony"),
+            makeSong("r2", "Tum Hi Ho", "T-Series"),
+            makeSong("r3", "Tum Hi Ho [Full Song]", "Arijit"),
+            makeSong("r4", "Raabta", "Pritam"),
+            makeSong("r5", "Shayad", "Pritam"),
+        )
+        manager.injectSmartRecommendations(recs)
+
+        val smartItems = manager.upNext.filter { it.isSmartRecommended }
+        // Kesariya must be rejected because it exists in the playlist
+        assertTrue(smartItems.none { it.song.title.contains("Kesariya") })
+        // Tum Hi Ho must appear at most once (no duplicate recommendations)
+        val tumHiHoCount = smartItems.count { it.song.title.contains("Tum Hi Ho") }
+        assertTrue(tumHiHoCount <= 1)
+    }
+
+    @Test
+    fun testSmartShuffle_injectionRatioPer5To10Songs() {
+        // Test with 5 songs in playlist (4 upNext): should inject 2 recommendations (2 per 5)
+        val playlist5 = makeSongs(5)
+        val manager5 = PlayerQueueManager()
+        manager5.start(playlist5, startIndex = 0, shuffled = false)
+        manager5.cycleShuffleMode() // STANDARD
+        manager5.cycleShuffleMode() // SMART
+
+        val recs = (100..120).map { makeSong("rec_$it", "Fresh Song #$it") }
+        manager5.injectSmartRecommendations(recs)
+        val smart5 = manager5.upNext.filter { it.isSmartRecommended }
+        assertEquals("For 5 playlist songs, must inject exactly 2 recommendations", 2, smart5.size)
+
+        // Test with 10 songs in playlist (9 upNext): should inject 3 or 4 recommendations (2-4 per 5-10)
+        val playlist10 = makeSongs(10)
+        val manager10 = PlayerQueueManager()
+        manager10.start(playlist10, startIndex = 0, shuffled = false)
+        manager10.cycleShuffleMode() // STANDARD
+        manager10.cycleShuffleMode() // SMART
+        manager10.injectSmartRecommendations(recs)
+        val smart10 = manager10.upNext.filter { it.isSmartRecommended }
+        assertTrue("For 10 playlist songs, must inject 3 or 4 recommendations", smart10.size in 3..4)
     }
 }

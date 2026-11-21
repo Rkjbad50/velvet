@@ -23,6 +23,7 @@ data class Playlist(
     val addedAt: Long = 0,
     val playCount: Long = 0,
     val lastPlayedAt: Long = 0,
+    val customCover: String? = null,
 )
 
 internal fun List<Playlist>.homePlaylists(): List<Playlist> = asSequence()
@@ -100,10 +101,38 @@ fun Song.isDuplicateOf(other: Song): Boolean {
     return false
 }
 
-private fun String.normalizeSong(): String = this.lowercase()
-    .replace(Regex("""\((?:official|video|audio|lyric|remaster|hd|4k|8k|full|song|visualizer)[^)]*\)"""), "")
-    .replace(Regex("""\[(?:official|video|audio|lyric|remaster|hd|4k|8k|full|song|visualizer)[^\]]*\]"""), "")
+/**
+ * Strict track equality check for Smart Shuffle and queue deduplication.
+ * Rejects tracks with matching normalized titles regardless of channel/uploader/creator differences,
+ * ensuring no duplicate versions of the same song appear in the playlist or recommendations.
+ */
+fun Song.isSameTrackAs(other: Song): Boolean {
+    if (this.id == other.id) return true
+    val c1 = this.title.cleanSongTitle()
+    val c2 = other.title.cleanSongTitle()
+    if (c1.isNotEmpty() && c2.isNotEmpty()) {
+        if (c1 == c2) return true
+        val minLen = minOf(c1.length, c2.length)
+        val maxLen = maxOf(c1.length, c2.length)
+        if (minLen >= 5 && (c1.startsWith(c2) || c2.startsWith(c1) || c1.contains(c2) || c2.contains(c1))) {
+            if (minLen.toFloat() / maxLen.toFloat() >= 0.70f) return true
+        }
+    }
+    return this.isDuplicateOf(other)
+}
+
+fun String.cleanSongTitle(): String = this.lowercase()
+    .replace(Regex("""\((?:official|video|audio|lyric|lyrics|remaster|remastered|hd|4k|8k|full|song|visualizer|from|feat|ft|ost|film version|original|music video)[^)]*\)"""), "")
+    .replace(Regex("""\[(?:official|video|audio|lyric|lyrics|remaster|remastered|hd|4k|8k|full|song|visualizer|from|feat|ft|ost|film version|original|music video)[^\]]*\]"""), "")
+    .replace("official video", "")
+    .replace("full video song", "")
+    .replace("video song", "")
+    .replace("full song", "")
+    .replace("lyrical song", "")
+    .replace("audio song", "")
     .replace(Regex("""[^a-z0-9]"""), "")
+
+private fun String.normalizeSong(): String = this.cleanSongTitle()
 
 /**
  * The same artwork at about [px] pixels: list rows don't need the 544 px covers,

@@ -2,7 +2,11 @@ package com.tunehub.app.ui
 
 import android.annotation.SuppressLint
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.offset
@@ -681,12 +685,8 @@ private fun ControlDock() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val shuffleMode = PlayerConnection.shuffleMode
-        val isSmartShuffle = shuffleMode == ShuffleMode.SMART
-        val isShuffleOn = shuffleMode != ShuffleMode.OFF
-        DockButton(
-            if (isSmartShuffle) AppIcons.SmartShuffle else AppIcons.Shuffle,
-            if (isSmartShuffle) "Smart Shuffle" else "Shuffle",
-            tint = if (isShuffleOn) tuneColors.accentText else tuneColors.muted,
+        ShuffleModeButton(
+            mode = shuffleMode,
             onClick = { PlayerConnection.cycleShuffle(context) },
         )
         DockButton(AppIcons.SkipPrevious, "Previous", iconSize = 32, onClick = PlayerConnection::previous)
@@ -699,6 +699,90 @@ private fun ControlDock() {
             tint = if (mode == Player.REPEAT_MODE_OFF) tuneColors.muted else tuneColors.accentText,
             onClick = PlayerConnection::cycleRepeat,
         )
+    }
+}
+
+@Composable
+private fun ShuffleModeButton(
+    mode: ShuffleMode,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedContent(
+            targetState = mode,
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 0.75f))
+                    .togetherWith(fadeOut(animationSpec = tween(180)) + scaleOut(targetScale = 0.75f))
+            },
+            label = "ShuffleModeAnim",
+        ) { targetMode ->
+            when (targetMode) {
+                ShuffleMode.OFF -> {
+                    Icon(
+                        AppIcons.Shuffle,
+                        contentDescription = "Shuffle off",
+                        tint = tuneColors.muted,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+                ShuffleMode.STANDARD -> {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            AppIcons.Shuffle,
+                            contentDescription = "Shuffle on",
+                            tint = tuneColors.accentText,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Box(
+                            Modifier
+                                .size(4.dp)
+                                .background(tuneColors.accent, CircleShape),
+                        )
+                    }
+                }
+                ShuffleMode.SMART -> {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(tuneColors.accent.copy(alpha = 0.20f), RoundedCornerShape(12.dp))
+                            .border(1.5.dp, tuneColors.accentText, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            AppIcons.Shuffle,
+                            contentDescription = "Smart Shuffle on",
+                            tint = tuneColors.accentText,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 3.dp, y = (-3).dp)
+                                .size(14.dp)
+                                .background(tuneColors.accent, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                AppIcons.Sparkles,
+                                contentDescription = null,
+                                tint = tuneColors.onAccent,
+                                modifier = Modifier.size(9.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

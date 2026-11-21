@@ -69,12 +69,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.1"
+          TAG="v2.2"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_FILE" velvet.apk
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create "$TAG" velvet.apk \
             --repo "${{ github.repository }}" \
-            --title "Version 2.1" \
-            --notes "VELVET Version 2.1 Official Release. Direct download: **velvet.apk** below for Android devices." \
+            --title "Version 2.2" \
+            --notes "VELVET Version 2.2 Official Release. Features: Distinct Smart Shuffle animated button, strictly non-repetitive smart recommendations with 2-4 per 5-10 ratio, and custom playlist cover art with 10 built-in gradient presets & gallery upload. Direct download: **velvet.apk** below for Android devices." \
             --latest

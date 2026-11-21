@@ -232,7 +232,7 @@ fun HomeScreen(vm: HomeViewModel) {
     val userPlaylists = data.playlists.homePlaylists()
     val shortcuts = buildList {
         userPlaylists.forEach { p ->
-            add(Shortcut(p.name, { PlaylistCover(p.songs, 58.dp, corner = 16.dp) }) { nav.open(Route.LocalPlaylist(p.id)) })
+            add(Shortcut(p.name, { PlaylistCover(p.songs, 58.dp, corner = 16.dp, customCover = p.customCover) }) { nav.open(Route.LocalPlaylist(p.id)) })
         }
     }
 

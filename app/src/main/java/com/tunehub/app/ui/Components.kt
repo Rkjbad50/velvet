@@ -123,9 +123,127 @@ fun Artwork(
     }
 }
 
-/** 2×2 collage of the first four distinct covers, or a single cover when there are fewer. */
+data class CoverPreset(
+    val id: Int,
+    val name: String,
+    val gradient: Brush,
+    val icon: ImageVector,
+    val iconTint: Color = Color.White,
+)
+
+object PlaylistCoverPresets {
+    val presets = listOf(
+        CoverPreset(
+            id = 0,
+            name = "Sunset Glow",
+            gradient = Brush.linearGradient(listOf(Color(0xFFFF512F), Color(0xFFDD2476), Color(0xFF4A00E0))),
+            icon = AppIcons.QueueMusic,
+        ),
+        CoverPreset(
+            id = 1,
+            name = "Cyberpunk Neon",
+            gradient = Brush.linearGradient(listOf(Color(0xFF00F2FE), Color(0xFF4FACFE), Color(0xFF7F00FF))),
+            icon = AppIcons.Sparkles,
+        ),
+        CoverPreset(
+            id = 2,
+            name = "Velvet Rose",
+            gradient = Brush.linearGradient(listOf(Color(0xFFED213A), Color(0xFF93291E))),
+            icon = Icons.Default.Favorite,
+        ),
+        CoverPreset(
+            id = 3,
+            name = "Deep Ocean",
+            gradient = Brush.linearGradient(listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364))),
+            icon = AppIcons.Radio,
+        ),
+        CoverPreset(
+            id = 4,
+            name = "Golden Hour",
+            gradient = Brush.linearGradient(listOf(Color(0xFFF7971E), Color(0xFFFFD200))),
+            icon = AppIcons.Sparkles,
+            iconTint = Color(0xFF2A1500),
+        ),
+        CoverPreset(
+            id = 5,
+            name = "Emerald Flow",
+            gradient = Brush.linearGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D))),
+            icon = AppIcons.PlaylistAdd,
+        ),
+        CoverPreset(
+            id = 6,
+            name = "Nordic Aurora",
+            gradient = Brush.linearGradient(listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0), Color(0xFF00C9FF))),
+            icon = AppIcons.Sparkles,
+        ),
+        CoverPreset(
+            id = 7,
+            name = "AMOLED Prism",
+            gradient = Brush.linearGradient(listOf(Color(0xFF18181B), Color(0xFF27272A), Color(0xFF09090B))),
+            icon = AppIcons.Library,
+            iconTint = Color(0xFFA855F7),
+        ),
+        CoverPreset(
+            id = 8,
+            name = "Midnight Groove",
+            gradient = Brush.linearGradient(listOf(Color(0xFF1A2980), Color(0xFF26D0CE))),
+            icon = AppIcons.Repeat,
+        ),
+        CoverPreset(
+            id = 9,
+            name = "Pastel Dream",
+            gradient = Brush.linearGradient(listOf(Color(0xFFFF9A8B), Color(0xFFFF6A88), Color(0xFFFF99AC))),
+            icon = Icons.Default.Favorite,
+        ),
+    )
+
+    @Composable
+    fun RenderPreset(presetId: Int, size: Dp, corner: Dp) {
+        val preset = presets.getOrNull(presetId) ?: presets[0]
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(corner))
+                .background(preset.gradient),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                preset.icon,
+                contentDescription = preset.name,
+                tint = preset.iconTint,
+                modifier = Modifier.fillMaxSize(0.42f),
+            )
+        }
+    }
+}
+
+/** 2×2 collage of the first four distinct covers, preset gradient/icon, or custom uploaded image. */
 @Composable
-fun PlaylistCover(songs: List<Song>, size: Dp, corner: Dp = 14.dp) {
+fun PlaylistCover(
+    songs: List<Song>,
+    size: Dp,
+    corner: Dp = 14.dp,
+    customCover: String? = null,
+) {
+    if (customCover != null) {
+        if (customCover.startsWith("preset:")) {
+            val presetId = customCover.removePrefix("preset:").toIntOrNull() ?: 0
+            PlaylistCoverPresets.RenderPreset(presetId, size, corner)
+            return
+        } else if (customCover.startsWith("file://") || customCover.startsWith("/")) {
+            val model = if (customCover.startsWith("file://")) customCover else "file://$customCover"
+            AsyncImage(
+                model = model,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(size)
+                    .clip(RoundedCornerShape(corner)),
+            )
+            return
+        }
+    }
+
     val thumbs = songs.mapNotNull { it.thumb }.distinct().take(4)
     if (thumbs.size < 4) {
         Artwork(thumbs.firstOrNull(), size, corner = corner, placeholder = AppIcons.QueueMusic)
@@ -391,7 +509,7 @@ private fun ColumnScope.PlaylistPicker(song: Song, onDone: () -> Unit) {
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PlaylistCover(p.songs, 46.dp)
+                PlaylistCover(p.songs, 46.dp, customCover = p.customCover)
                 Column(Modifier.padding(start = 14.dp)) {
                     Text(p.name, style = MaterialTheme.typography.titleMedium)
                     Text(

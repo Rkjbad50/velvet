@@ -22,6 +22,7 @@ import com.tunehub.app.data.YouTube
 import com.tunehub.app.data.isDuplicateOf
 import com.tunehub.app.data.isOriginalMusicAudio
 import com.tunehub.app.data.isPureMusic
+import com.tunehub.app.data.isSameTrackAs
 import com.tunehub.app.playback.PlaybackService
 import com.tunehub.app.playback.PlayerQueueManager
 import com.tunehub.app.playback.PlaylistStart
@@ -234,7 +235,7 @@ object PlayerConnection {
                 (context ?: appContext)?.let { Toast.makeText(it, "Shuffle is on", Toast.LENGTH_SHORT).show() }
             }
             ShuffleMode.SMART -> {
-                (context ?: appContext)?.let { Toast.makeText(it, "Smart Shuffle is on ✨", Toast.LENGTH_SHORT).show() }
+                (context ?: appContext)?.let { Toast.makeText(it, "Smart Shuffle is on ✨ (Mixing in fresh matching songs)", Toast.LENGTH_SHORT).show() }
                 loadSmartShuffleRecommendations()
             }
         }
@@ -251,11 +252,12 @@ object PlayerConnection {
 
     /**
      * Loads algorithmic smart recommendations that match the genre, tempo, era, and style
-     * of the currently playing track/playlist, filtering strictly for original source audio.
+     * of the currently playing track/playlist, filtering strictly for original source audio
+     * and ensuring zero duplicates from the playlist or different creators of the same song.
      */
     fun loadSmartShuffleRecommendations() {
         val currentSong = current ?: return
-        val seeds = (listOf(currentSong) + queueManager.sourceList.take(3)).distinctBy { it.id }
+        val seeds = (listOf(currentSong) + queueManager.sourceList.shuffled().take(4)).distinctBy { it.id }
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -264,15 +266,37 @@ object PlayerConnection {
                     val related = runCatching { StreamResolver.related(seed.id) }.getOrDefault(emptyList())
                     candidates.addAll(related)
                 }
-                val filtered = candidates
-                    .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
-                    .distinctBy { it.id }
+
+                // Collect all current songs from playlist, queue, history and current track
+                val allExistingSongs = (
+                    queueManager.sourceList +
+                    queueManager.history +
+                    listOfNotNull(queueManager.current) +
+                    queueManager.userQueue.map { it.song }
+                )
+
+                val distinctFresh = mutableListOf<Song>()
+                for (item in candidates) {
+                    if (!item.isPureMusic() || !item.isOriginalMusicAudio()) continue
+                    
+                    // Reject any song that is already in playlist or queue (by ID or cleaned title)
+                    val inPlaylistOrQueue = allExistingSongs.any { it.isSameTrackAs(item) }
+                    if (inPlaylistOrQueue) continue
+
+                    // Reject any duplicate within the new recommendations set itself
+                    val alreadyInFresh = distinctFresh.any { it.isSameTrackAs(item) }
+                    if (alreadyInFresh) continue
+
+                    distinctFresh.add(item)
+                }
+
+                val sorted = distinctFresh
                     .sortedByDescending { it.preferredMusicSource }
-                    .take(8)
+                    .take(12)
 
                 withContext(Dispatchers.Main) {
-                    if (queueManager.shuffleMode == ShuffleMode.SMART) {
-                        queueManager.injectSmartRecommendations(filtered)
+                    if (queueManager.shuffleMode == ShuffleMode.SMART && sorted.isNotEmpty()) {
+                        queueManager.injectSmartRecommendations(sorted)
                         syncQueueState()
                         syncUpNextToExoPlayer()
                     }
