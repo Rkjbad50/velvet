@@ -67,11 +67,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.text.font.FontFamily
 import com.velvet.app.BuildConfig
 import com.velvet.app.VelvetApp
+import com.velvet.app.data.AppUpdater
 import com.velvet.app.data.ReleaseCheck
+import com.velvet.app.data.SemVer
 import com.velvet.app.data.UPSTREAM_RELEASES_URL
 import com.velvet.app.data.UpdateInfo
+import com.velvet.app.data.UpdateInstallResult
+import com.velvet.app.data.UpdateTrigger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -96,15 +103,26 @@ fun SettingsScreen(onBack: () -> Unit) {
         toast.show()
     }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateDialogInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadStatusText by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     HistoryDialog(confirm) { confirm = null }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(data.includePrereleases) {
         withContext(Dispatchers.IO) {
+            val upstreamBuild = if (BuildConfig.APPLICATION_ID == "com.spitify.app") {
+                BuildConfig.VERSION_CODE
+            } else {
+                BuildConfig.UPSTREAM_BUILD_NUMBER
+            }
             val info = ReleaseCheck.checkUpdate(
-                VelvetApp.http,
-                BuildConfig.UPSTREAM_BUILD_NUMBER,
-                BuildConfig.VERSION_NAME
+                http = VelvetApp.http,
+                upstreamBuild = upstreamBuild,
+                currentVersionName = BuildConfig.VERSION_NAME,
+                includePrereleases = data.includePrereleases,
             )
             withContext(Dispatchers.Main) {
                 updateInfo = info
@@ -406,7 +424,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                         .clickable {
-                            openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
+                            updateDialogInfo = updateInfo
+                            showUpdateDialog = true
                         }
                 ) {
                     Row(
@@ -422,7 +441,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                text = "Version ${updateInfo?.latestVersion} is ready to install. Tap to download APK.",
+                                text = "Version ${updateInfo?.latestVersion} is ready to install. Tap to review.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                             )
@@ -430,7 +449,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         Spacer(modifier = Modifier.width(8.dp))
                         FilledTonalButton(
                             onClick = {
-                                openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
+                                updateDialogInfo = updateInfo
+                                showUpdateDialog = true
                             },
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
@@ -441,6 +461,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                         }
                     }
                 }
+            }
+
+            ToggleRow(
+                "Check for updates automatically",
+                "Checks once every 24 hours on Wi-Fi and notifies silently",
+                data.autoUpdateCheck,
+            ) { enabled ->
+                library.setAutoUpdateCheck(enabled)
+                if (enabled) {
+                    com.velvet.app.data.UpdateCheckJobService.schedule(context)
+                } else {
+                    com.velvet.app.data.UpdateCheckJobService.cancel(context)
+                }
+            }
+
+            ToggleRow(
+                "Include pre-releases",
+                "Check for alpha, beta, and release candidate builds",
+                data.includePrereleases,
+            ) { include ->
+                library.setIncludePrereleases(include)
+                ReleaseCheck.clearCache()
             }
 
             ActionRow("Developer", "Narayan") {
@@ -473,7 +515,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 title = "Check for updates",
                 subtitle = when {
                     checkingVersion -> "Checking GitHub…"
-                    updateInfo?.hasUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to download"
+                    updateInfo?.hasUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to review"
                     updateInfo != null -> "Already on the latest version"
                     else -> "Check for a newer release"
                 },
@@ -481,10 +523,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 enabled = !checkingVersion,
             ) {
                 if (!checkingVersion) {
-                    if (updateInfo?.hasUpdate == true) {
-                        openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
-                        return@ActionRow
-                    }
                     checkingVersion = true
                     scope.launch {
                         try {
@@ -494,14 +532,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 BuildConfig.UPSTREAM_BUILD_NUMBER
                             }
                             val info = withContext(Dispatchers.IO) {
-                                ReleaseCheck.checkUpdate(VelvetApp.http, upstreamBuild, BuildConfig.VERSION_NAME)
+                                ReleaseCheck.checkUpdate(
+                                    http = VelvetApp.http,
+                                    upstreamBuild = upstreamBuild,
+                                    currentVersionName = BuildConfig.VERSION_NAME,
+                                    includePrereleases = data.includePrereleases,
+                                    forceRefresh = true,
+                                )
                             }
                             updateInfo = info
-                            if (info?.hasUpdate == true) {
-                                openReleases(context, info.downloadUrl)
-                            } else {
-                                showToast("Already on the latest version", Toast.LENGTH_SHORT)
-                            }
+                            updateDialogInfo = info
+                            showUpdateDialog = true
                         } catch (e: CancellationException) {
                             throw e
                         } catch (_: Exception) {
@@ -535,6 +576,227 @@ fun SettingsScreen(onBack: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(16.dp),
+        )
+    }
+
+    if (showUpdateDialog && updateDialogInfo != null) {
+        val info = updateDialogInfo!!
+        AlertDialog(
+            onDismissRequest = {
+                if (!isDownloading) {
+                    showUpdateDialog = false
+                }
+            },
+            title = {
+                Text(
+                    text = if (info.hasUpdate) "Update Available" else "App is Up to Date",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = velvetColors.text,
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // Version comparisons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("VELVET App:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = velvetColors.text)
+                        Text(
+                            "v${info.bundledVersion} → v${info.latestVersion}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (SemVer.isNewer(info.latestVersion, info.bundledVersion)) velvetColors.accentText else velvetColors.text,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("NewPipeExtractor:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = velvetColors.text)
+                        Text(
+                            "${info.bundledExtractorVersion} → ${info.latestExtractorVersion}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (SemVer.isNewer(info.latestExtractorVersion, info.bundledExtractorVersion)) velvetColors.accentText else velvetColors.text,
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    val triggerDesc = when (info.trigger) {
+                        UpdateTrigger.APP -> "New VELVET application release available"
+                        UpdateTrigger.EXTRACTOR -> "New TeamNewPipe/NewPipeExtractor release available"
+                        UpdateTrigger.BOTH -> "Both VELVET and NewPipeExtractor updates available"
+                        UpdateTrigger.NONE -> "You are on the latest release."
+                    }
+                    Text(
+                        triggerDesc,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = velvetColors.muted,
+                    )
+
+                    if (info.isRateLimited) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "GitHub API rate limit reached. Cached info shown.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFE5A93C),
+                        )
+                    } else if (info.isOffline) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Network offline. Cached info shown.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFE5A93C),
+                        )
+                    }
+
+                    if (info.expectedSha256 != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "SHA-256: ${info.expectedSha256.take(16)}...",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = velvetColors.muted,
+                        )
+                    }
+
+                    if (info.releaseNotes.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "Release Notes:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = velvetColors.text,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = velvetColors.raised,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp)
+                        ) {
+                            Text(
+                                text = info.releaseNotes,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = velvetColors.text,
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .verticalScroll(rememberScrollState()),
+                            )
+                        }
+                    }
+
+                    if (isDownloading) {
+                        Spacer(Modifier.height(16.dp))
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = velvetColors.accent,
+                            trackColor = velvetColors.track,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = downloadStatusText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = velvetColors.accentText,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (info.hasUpdate) {
+                    FilledTonalButton(
+                        enabled = !isDownloading,
+                        onClick = {
+                            if (!info.downloadUrl.endsWith(".apk", ignoreCase = true)) {
+                                openReleases(context, info.downloadUrl)
+                                showUpdateDialog = false
+                                return@FilledTonalButton
+                            }
+                            isDownloading = true
+                            downloadProgress = 0f
+                            downloadStatusText = "Connecting..."
+                            scope.launch(Dispatchers.IO) {
+                                val apkFile = AppUpdater.getUpdateFile(context)
+                                try {
+                                    AppUpdater.downloadApk(
+                                        http = VelvetApp.http,
+                                        downloadUrl = info.downloadUrl,
+                                        destinationFile = apkFile,
+                                    ) { downloaded, total ->
+                                        if (total > 0) {
+                                            downloadProgress = (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                                            val mbDown = downloaded / (1024 * 1024f)
+                                            val mbTot = total / (1024 * 1024f)
+                                            downloadStatusText = "Downloading: %.1f MB / %.1f MB (%.0f%%)".format(mbDown, mbTot, downloadProgress * 100)
+                                        } else {
+                                            val mbDown = downloaded / (1024 * 1024f)
+                                            downloadStatusText = "Downloading: %.1f MB".format(mbDown)
+                                        }
+                                    }
+                                    downloadStatusText = "Verifying SHA-256..."
+                                    AppUpdater.verifySha256(apkFile, info.expectedSha256)
+
+                                    downloadStatusText = "Verifying signing certificate..."
+                                    AppUpdater.verifySigningCertificate(context, apkFile)
+
+                                    withContext(Dispatchers.Main) {
+                                        downloadStatusText = "Installing..."
+                                        when (val result = AppUpdater.installApk(context, apkFile)) {
+                                            is UpdateInstallResult.PromptLaunched -> {
+                                                showToast("Installing update...", Toast.LENGTH_SHORT)
+                                                showUpdateDialog = false
+                                            }
+                                            is UpdateInstallResult.PermissionRequired -> {
+                                                showToast("Please allow Velvet to install unknown apps, then tap Install again", Toast.LENGTH_LONG)
+                                            }
+                                            is UpdateInstallResult.Failure -> {
+                                                showToast("Install error: ${result.reason}", Toast.LENGTH_LONG)
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        showToast(e.message ?: "Update failed", Toast.LENGTH_LONG)
+                                    }
+                                } finally {
+                                    withContext(Dispatchers.Main) {
+                                        isDownloading = false
+                                    }
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = velvetColors.accent,
+                            contentColor = Color.Black,
+                        ),
+                    ) {
+                        Text(if (isDownloading) "Downloading..." else "Download & Install")
+                    }
+                } else {
+                    TextButton(onClick = { showUpdateDialog = false }) {
+                        Text("OK", color = velvetColors.accentText)
+                    }
+                }
+            },
+            dismissButton = {
+                if (info.hasUpdate) {
+                    TextButton(
+                        enabled = !isDownloading,
+                        onClick = { showUpdateDialog = false }
+                    ) {
+                        Text("Later", color = velvetColors.muted)
+                    }
+                }
+            }
         )
     }
 }
