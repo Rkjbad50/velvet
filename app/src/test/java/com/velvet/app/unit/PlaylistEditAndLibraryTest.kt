@@ -159,11 +159,11 @@ class PlaylistEditAndLibraryTest {
         assertEquals(0, library.data.value.liked.size)
         assertEquals(0, library.data.value.downloads.size)
 
-        library.like(song1)
-        library.like(song2)
+        library.toggleLike(song1)
+        library.toggleLike(song2)
         assertEquals(2, library.data.value.liked.size)
 
-        library.unlike(song1.id)
+        library.toggleLike(song1) // toggling again unlikes it
         assertEquals(1, library.data.value.liked.size)
     }
 
