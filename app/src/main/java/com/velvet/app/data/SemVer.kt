@@ -10,7 +10,7 @@ package com.velvet.app.data
  * - Build numbers (e.g. build-100)
  */
 object SemVer {
-    private val prefixRegex = Regex("""^(?:v|Version\s*)""", RegexOption.IGNORE_CASE)
+    private val prefixRegex = Regex("""^(?:Version\s*|v)""", RegexOption.IGNORE_CASE)
     private val buildRegex = Regex("""^build-(\d+)$""", RegexOption.IGNORE_CASE)
 
     data class ParsedVersion(

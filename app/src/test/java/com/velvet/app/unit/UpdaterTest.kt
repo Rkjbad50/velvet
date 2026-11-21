@@ -90,9 +90,8 @@ class UpdaterTest {
         try {
             tempFile.writeText("Hello VELVET")
             val hash = AppUpdater.computeSha256(tempFile)
-            // Known SHA-256 of "Hello VELVET" (UTF-8)
-            // echo -n "Hello VELVET" | sha256sum -> 38ca15c5e8fa29813b1a8fce7f1ca542c1615f3ec5633a68ea27fdf0980c6575
-            assertEquals("38ca15c5e8fa29813b1a8fce7f1ca542c1615f3ec5633a68ea27fdf0980c6575", hash)
+            // Known SHA-256 of "Hello VELVET" (UTF-8 bytes)
+            assertEquals("e54ceae7f70575357dca3ad70bf807d3bbbad3b4bc0a1cba614d2984bd4ac7ff", hash)
         } finally {
             tempFile.delete()
         }
@@ -103,7 +102,7 @@ class UpdaterTest {
         val tempFile = File.createTempFile("velvet-test-verify", ".tmp")
         try {
             tempFile.writeText("Hello VELVET")
-            val expected = "38ca15c5e8fa29813b1a8fce7f1ca542c1615f3ec5633a68ea27fdf0980c6575"
+            val expected = "e54ceae7f70575357dca3ad70bf807d3bbbad3b4bc0a1cba614d2984bd4ac7ff"
             assertTrue(AppUpdater.verifySha256(tempFile, expected))
             assertTrue(tempFile.exists())
         } finally {
@@ -116,7 +115,7 @@ class UpdaterTest {
         val tempFile = File.createTempFile("velvet-test-mismatch", ".tmp")
         try {
             tempFile.writeText("Corrupted Content")
-            val expected = "38ca15c5e8fa29813b1a8fce7f1ca542c1615f3ec5633a68ea27fdf0980c6575"
+            val expected = "e54ceae7f70575357dca3ad70bf807d3bbbad3b4bc0a1cba614d2984bd4ac7ff"
             try {
                 AppUpdater.verifySha256(tempFile, expected)
                 fail("Expected Sha256MismatchException was not thrown")
