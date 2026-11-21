@@ -116,7 +116,7 @@ class PlaylistRenameTest {
                     id = "pl-123",
                     name = "Midnight Jazz",
                     description = "Late night chill & lo-fi sounds",
-                    createdAt = 1000L,
+                    addedAt = 1000L,
                     updatedAt = 2000L,
                 ),
             ),
