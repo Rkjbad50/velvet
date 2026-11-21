@@ -62,6 +62,13 @@ object PlayerConnection {
         private set
     private var isExtendingAutoplay = false
 
+    /**
+     * Whether playback originated from a user-created local playlist.
+     * Smart Shuffle is strictly restricted to user-created playlists only.
+     */
+    val isUserPlaylistActive: Boolean
+        get() = currentPlaylistId != null && TuneHubApp.library.data.value.playlists.any { it.id == currentPlaylistId }
+
     /** Pure single source of truth queue state. */
     var queueState by mutableStateOf(queueManager.state)
         private set
@@ -206,8 +213,14 @@ object PlayerConnection {
         if (songs.isEmpty()) return
         currentPlaylistId = playlistId
         isRadioActive = radio
+        val isUserPlaylist = playlistId != null && TuneHubApp.library.data.value.playlists.any { it.id == playlistId }
         val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
+
         queueManager.start(songs, startIndex, shuffled)
+        // Strictly disallow Smart Shuffle when playing outside a user-created playlist
+        if (!isUserPlaylist && queueManager.shuffleMode == ShuffleMode.SMART) {
+            queueManager.setShuffleMode(if (shuffled) ShuffleMode.STANDARD else ShuffleMode.OFF, allowSmartShuffle = false)
+        }
         syncQueueState()
         syncToExoPlayer(playlistStart = start, isRadio = radio)
 
@@ -218,11 +231,14 @@ object PlayerConnection {
     }
 
     /**
-     * Cycle through all shuffle modes: OFF -> STANDARD -> SMART -> OFF.
-     * Displays clean toasts and triggers smart recommendation loading when SMART is activated.
+     * Cycle shuffle mode.
+     * When playing from a user-created playlist: OFF -> STANDARD -> SMART -> OFF.
+     * Everywhere else (standalone songs, search results, artist, albums): SMART is disabled,
+     * so it cycles strictly between OFF <-> STANDARD (ON).
      */
     fun cycleShuffle(context: Context? = null) {
-        val newMode = queueManager.cycleShuffleMode()
+        val allowSmart = isUserPlaylistActive
+        val newMode = queueManager.cycleShuffleMode(allowSmartShuffle = allowSmart)
         syncQueueState()
         syncToExoPlayer()
 
@@ -251,10 +267,10 @@ object PlayerConnection {
 
     /**
      * Loads algorithmic smart recommendations that match the genre, tempo, era, and style
-     * of the currently playing track/playlist, filtering strictly for original source audio
-     * and ensuring zero duplicates from the playlist or different creators of the same song.
+     * of the currently playing playlist, strictly restricted to user-created playlists only.
      */
     fun loadSmartShuffleRecommendations() {
+        if (!isUserPlaylistActive) return
         val currentSong = current ?: return
         val seeds = (listOf(currentSong) + queueManager.sourceList.shuffled().take(4)).distinctBy { it.id }
 

@@ -157,18 +157,18 @@ class QueueManager(initialState: QueueState = QueueState()) {
         update { Companion.reorderUpNext(it, fromIndex, toIndex) }
     }
 
-    fun setShuffleMode(mode: ShuffleMode, rng: Random = Random()): ShuffleMode {
-        update { Companion.setShuffleMode(it, mode, rng) }
+    fun setShuffleMode(mode: ShuffleMode, allowSmartShuffle: Boolean = true, rng: Random = Random()): ShuffleMode {
+        update { Companion.setShuffleMode(it, mode, allowSmartShuffle, rng) }
         return state.shuffleMode
     }
 
-    fun toggleShuffle(rng: Random = Random()): Boolean {
-        update { Companion.toggleShuffle(it, rng) }
+    fun toggleShuffle(allowSmartShuffle: Boolean = true, rng: Random = Random()): Boolean {
+        update { Companion.toggleShuffle(it, allowSmartShuffle, rng) }
         return state.shuffle
     }
 
-    fun cycleShuffleMode(rng: Random = Random()): ShuffleMode {
-        update { Companion.cycleShuffleMode(it, rng) }
+    fun cycleShuffleMode(allowSmartShuffle: Boolean = true, rng: Random = Random()): ShuffleMode {
+        update { Companion.cycleShuffleMode(it, allowSmartShuffle, rng) }
         return state.shuffleMode
     }
 
@@ -478,11 +478,17 @@ class QueueManager(initialState: QueueState = QueueState()) {
          * - When turning OFF: upNext = sourceList items positioned AFTER current's position in sourceList.
          * - When SMART: after Fisher-Yates, spread same-artist tracks apart.
          */
-        fun setShuffleMode(state: QueueState, mode: ShuffleMode, rng: Random = Random()): QueueState {
-            val currentItem = state.current ?: return state.copy(shuffleMode = mode)
+        fun setShuffleMode(
+            state: QueueState,
+            mode: ShuffleMode,
+            allowSmartShuffle: Boolean = true,
+            rng: Random = Random(),
+        ): QueueState {
+            val targetMode = if (mode == ShuffleMode.SMART && !allowSmartShuffle) ShuffleMode.STANDARD else mode
+            val currentItem = state.current ?: return state.copy(shuffleMode = targetMode)
             val userQueueSongIds = state.userQueue.map { it.song.id }.toSet()
 
-            return when (mode) {
+            return when (targetMode) {
                 ShuffleMode.OFF -> {
                     val currentPos = state.sourceList.indexOfFirst { it.song.id == currentItem.song.id }
                     val remaining = if (currentPos >= 0) {
@@ -534,18 +540,18 @@ class QueueManager(initialState: QueueState = QueueState()) {
             }
         }
 
-        fun toggleShuffle(state: QueueState, rng: Random = Random()): QueueState {
+        fun toggleShuffle(state: QueueState, allowSmartShuffle: Boolean = true, rng: Random = Random()): QueueState {
             val nextMode = if (state.shuffleMode == ShuffleMode.OFF) ShuffleMode.STANDARD else ShuffleMode.OFF
-            return setShuffleMode(state, nextMode, rng)
+            return setShuffleMode(state, nextMode, allowSmartShuffle, rng)
         }
 
-        fun cycleShuffleMode(state: QueueState, rng: Random = Random()): QueueState {
+        fun cycleShuffleMode(state: QueueState, allowSmartShuffle: Boolean = true, rng: Random = Random()): QueueState {
             val nextMode = when (state.shuffleMode) {
                 ShuffleMode.OFF -> ShuffleMode.STANDARD
-                ShuffleMode.STANDARD -> ShuffleMode.SMART
+                ShuffleMode.STANDARD -> if (allowSmartShuffle) ShuffleMode.SMART else ShuffleMode.OFF
                 ShuffleMode.SMART -> ShuffleMode.OFF
             }
-            return setShuffleMode(state, nextMode, rng)
+            return setShuffleMode(state, nextMode, allowSmartShuffle, rng)
         }
 
         fun setRepeatMode(state: QueueState, mode: RepeatMode): QueueState =

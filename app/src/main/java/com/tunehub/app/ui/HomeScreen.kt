@@ -228,13 +228,19 @@ fun HomeScreen(vm: HomeViewModel) {
     LaunchedEffect(recent) { vm.loadFor(recent) }
     LaunchedEffect(languages) { vm.loadMoreForYou(languages) }
 
-    // User's playlists for top shortcuts (Liked Songs is now exclusively in Library, Recently Played in History button)
-    val userPlaylists = data.playlists.homePlaylists()
+    // User's playlists and albums for top shortcuts (dynamic 2x2 matrix up to 4 items)
+    val userPlaylists = data.playlists.homePlaylists(4)
+    val savedAlbums = data.albums.sortedByDescending { it.addedAt }
     val shortcuts = buildList {
         userPlaylists.forEach { p ->
             add(Shortcut(p.name, { PlaylistCover(p.songs, 58.dp, corner = 16.dp, customCover = p.customCover) }) { nav.open(Route.LocalPlaylist(p.id)) })
         }
-    }
+        if (size < 4) {
+            savedAlbums.take(4 - size).forEach { a ->
+                add(Shortcut(a.title, { Artwork(a.thumb, 58.dp, corner = 16.dp, placeholder = AppIcons.Album) }) { nav.open(Route.Album(a)) })
+            }
+        }
+    }.take(4)
 
     // one radio per artist you actually listen to, each shown with that artist's song cover
     val mixes = (recent + data.liked).distinctBy { it.artist.lowercase() }.take(8)

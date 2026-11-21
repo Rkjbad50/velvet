@@ -289,6 +289,32 @@ class PlayerQueueTest {
     }
 
     @Test
+    fun testCycleShuffleMode_whenSmartShuffleDisabled_onlyTogglesBetweenOffAndStandard() {
+        val songs = makeSongs(5)
+        val manager = PlayerQueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+
+        assertEquals(com.tunehub.app.playback.ShuffleMode.OFF, manager.shuffleMode)
+
+        // 1. Cycle with allowSmartShuffle = false -> STANDARD
+        val mode1 = manager.cycleShuffleMode(allowSmartShuffle = false)
+        assertEquals(com.tunehub.app.playback.ShuffleMode.STANDARD, mode1)
+        assertTrue(manager.shuffle)
+        assertFalse(manager.isSmartShuffle)
+
+        // 2. Cycle again with allowSmartShuffle = false -> strictly OFF, never SMART
+        val mode2 = manager.cycleShuffleMode(allowSmartShuffle = false)
+        assertEquals(com.tunehub.app.playback.ShuffleMode.OFF, mode2)
+        assertFalse(manager.shuffle)
+        assertFalse(manager.isSmartShuffle)
+
+        // 3. Explicit set to SMART when disabled falls back to STANDARD
+        val mode3 = manager.setShuffleMode(com.tunehub.app.playback.ShuffleMode.SMART, allowSmartShuffle = false)
+        assertEquals(com.tunehub.app.playback.ShuffleMode.STANDARD, mode3)
+        assertFalse(manager.isSmartShuffle)
+    }
+
+    @Test
     fun testAppendRadioSongsAutoplayQueueExtension() {
         val songs = makeSongs(1)
         val manager = PlayerQueueManager()

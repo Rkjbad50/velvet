@@ -69,12 +69,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.2"
+          TAG="v2.3"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_FILE" velvet.apk
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create "$TAG" velvet.apk \
             --repo "${{ github.repository }}" \
-            --title "Version 2.2" \
-            --notes "VELVET Version 2.2 Official Release. Features: Distinct Smart Shuffle animated button, strictly non-repetitive smart recommendations with 2-4 per 5-10 ratio, and custom playlist cover art with 10 built-in gradient presets & gallery upload. Direct download: **velvet.apk** below for Android devices." \
+            --title "Version 2.3" \
+            --notes "VELVET Version 2.3 Official Release. Features: Pure Spotify queue architecture with zero duplicates, Smart Shuffle strictly restricted to user-created playlists, dynamic 2x2 home screen shortcuts for up to 4 recently played playlists & albums, and pure single source of truth playback state. Direct download: **velvet.apk** below for Android devices." \
             --latest

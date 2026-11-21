@@ -26,10 +26,10 @@ data class Playlist(
     val customCover: String? = null,
 )
 
-internal fun List<Playlist>.homePlaylists(): List<Playlist> = asSequence()
+internal fun List<Playlist>.homePlaylists(limit: Int = 4): List<Playlist> = asSequence()
     .filter { it.songs.isNotEmpty() }
     .sortedWith(compareByDescending<Playlist> { it.playCount }.thenByDescending { it.lastPlayedAt }.thenByDescending { it.addedAt })
-    .take(2)
+    .take(limit)
     .toList()
 
 /** A YouTube Music artist (a YouTube channel). */
