@@ -1,16 +1,14 @@
 package com.velvet.app.ui
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.material.icons.filled.Person
-import com.velvet.app.data.ContextRecentsManager
-import com.velvet.app.data.PlaybackContext
-import com.velvet.app.data.RecentItem
-import com.velvet.app.data.RecentType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,40 +22,61 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import kotlinx.coroutines.delay
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,12 +85,25 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.AlbumRef
 import com.velvet.app.data.ArtistRef
+import com.velvet.app.data.ContextRecentsManager
+import com.velvet.app.data.CoverMode
+import com.velvet.app.data.PlaybackContext
 import com.velvet.app.data.Playlist
+import com.velvet.app.data.PlaylistCoverManager
+import com.velvet.app.data.PlaylistEntry
+import com.velvet.app.data.PlaylistSorter
+import com.velvet.app.data.RecentItem
+import com.velvet.app.data.RecentType
 import com.velvet.app.data.Song
+import com.velvet.app.data.SortDirection
+import com.velvet.app.data.SortKey
 import com.velvet.app.data.YouTube
 import com.velvet.app.data.totalDuration
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 internal fun songCountLabel(count: Int): String = if (count == 1) "1 song" else "$count songs"
@@ -371,34 +403,43 @@ fun DownloadsScreen(onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     val library = VelvetApp.library
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val data by library.data.collectAsStateWithLifecycle()
-    var renaming by remember { mutableStateOf(false) }
+
+    var showEditSheet by remember { mutableStateOf(false) }
+    var showSortSheet by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     ConfirmDialog(confirm) { confirm = null }
+
     val playlist = data.playlists.find { it.id == id }
     if (playlist == null) {
-        // deleted while open
         LaunchedEffect(Unit) { onBack() }
         return
     }
 
-    var isEditing by remember { mutableStateOf(false) }
-    var draftSongs by remember(playlist.id, isEditing) { mutableStateOf(playlist.songs) }
-    var recentlyRemoved by remember { mutableStateOf<Pair<Int, Song>?>(null) }
+    // Sort entries using pure PlaylistSorter engine
+    val activeEntries = remember(playlist.entries, playlist.songs, playlist.sortKey, playlist.sortDirection) {
+        PlaylistSorter.sort(playlist.resolvedEntries(), playlist.sortKey, playlist.sortDirection)
+    }
+    val activeSongs = remember(activeEntries) {
+        activeEntries.map { it.song }
+    }
+
+    var recentlyRemoved by remember { mutableStateOf<Pair<Int, PlaylistEntry>?>(null) }
     var showUndoToast by remember { mutableStateOf(false) }
 
-    val activeSongs = if (isEditing) draftSongs else playlist.songs
-    val trackCountText = "${activeSongs.size} ${if (activeSongs.size == 1) "track" else "tracks"}"
+    val songCountStr = songCountLabel(activeEntries.size)
     val playbackContext = PlaybackContext(
         id = playlist.id,
         type = RecentType.LOCAL_PLAYLIST,
         title = playlist.name,
-        subtitle = trackCountText,
+        subtitle = songCountStr,
         artworkUrl = activeSongs.firstOrNull()?.thumb ?: playlist.customCover,
     )
 
@@ -407,116 +448,133 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
             item {
                 CollectionHeader(
                     title = playlist.name,
-                    subtitle = if (isEditing) "Editing playlist ($trackCountText)" else playlist.description.orEmpty(),
-                    meta = "$trackCountText • " + songMeta(activeSongs),
+                    subtitle = playlist.description.orEmpty(),
+                    meta = listOf(songCountStr, totalDuration(activeSongs)).filter { it.isNotBlank() }.joinToString(" • "),
                     tint = rememberArtColor(activeSongs.firstOrNull()?.thumb),
-                    onTitleClick = { if (!isEditing) renaming = true },
-                    onTitleLongClick = { if (!isEditing) renaming = true },
+                    onTitleClick = { showEditSheet = true },
+                    onTitleLongClick = { showEditSheet = true },
                     art = {
-                        PlaylistCover(
-                            activeSongs,
-                            if (activeSongs.size <= 1) 156.dp else 230.dp,
-                            corner = 28.dp,
-                            customCover = playlist.customCover,
-                            coverMode = playlist.coverMode,
-                            coverRef = playlist.coverRef,
-                        )
+                        Box(
+                            modifier = Modifier
+                                .shadow(12.dp, RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { showEditSheet = true },
+                        ) {
+                            PlaylistCover(
+                                activeSongs,
+                                if (activeSongs.size <= 1) 156.dp else 230.dp,
+                                corner = 12.dp,
+                                customCover = playlist.customCover,
+                                coverMode = playlist.coverMode,
+                                coverRef = playlist.coverRef,
+                            )
+                        }
                     },
                     artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
-                    playEnabled = activeSongs.isNotEmpty() && !isEditing,
+                    playEnabled = activeSongs.isNotEmpty(),
                     onPlay = { PlayerConnection.play(activeSongs, playlistId = id, context = playbackContext) },
                     onShuffle = { shuffle(activeSongs, playlistId = id, context = playbackContext) },
                     topActions = {
-                        if (!isEditing) {
-                            PanelIconButton(AppIcons.Pencil, "Edit playlist") { renaming = true }
-                            PanelIconButton(Icons.Default.Delete, "Delete playlist") {
-                                confirm = ConfirmRequest(
-                                    "Delete \"${playlist.name}\"?",
-                                    "This playlist and its ${playlist.songs.size} songs will be removed from your library. This can't be undone.",
-                                    "Delete",
-                                ) { library.deletePlaylist(playlist.id) }
-                            }
-                        } else {
-                            PanelIconButton(Icons.Default.Check, "Save") {
-                                library.setPlaylistSongs(playlist.id, draftSongs)
-                                isEditing = false
-                                Toast.makeText(context, "Playlist updated & saved", Toast.LENGTH_SHORT).show()
-                            }
-                            PanelIconButton(Icons.Default.Close, "Cancel") {
-                                draftSongs = playlist.songs
-                                isEditing = false
+                        PanelIconButton(AppIcons.Pencil, "Edit playlist") { showEditSheet = true }
+                        Box {
+                            PanelIconButton(Icons.Default.MoreVert, "More options") { showOverflowMenu = true }
+                            DropdownMenu(
+                                expanded = showOverflowMenu,
+                                onDismissRequest = { showOverflowMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Edit playlist") },
+                                    leadingIcon = { Icon(AppIcons.Pencil, null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        showEditSheet = true
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Duplicate playlist") },
+                                    leadingIcon = { Icon(Icons.Default.Share, null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        val newId = library.duplicatePlaylist(playlist.id)
+                                        if (newId != null) {
+                                            Toast.makeText(context, "Playlist duplicated", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete playlist", color = velvetColors.danger) },
+                                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = velvetColors.danger) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        confirm = ConfirmRequest(
+                                            "Delete \"${playlist.name}\"?",
+                                            "This playlist and its ${playlist.songs.size} songs will be removed from your library. This can't be undone.",
+                                            "Delete",
+                                        ) {
+                                            library.deletePlaylist(playlist.id)
+                                            onBack()
+                                        }
+                                    },
+                                )
                             }
                         }
                     },
                     actions = {
-                        if (isEditing) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Button(
-                                    onClick = {
-                                        library.setPlaylistSongs(playlist.id, draftSongs)
-                                        isEditing = false
-                                        Toast.makeText(context, "Playlist updated & saved", Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = velvetColors.accentText),
-                                    shape = RoundedCornerShape(20.dp),
-                                ) {
-                                    Icon(Icons.Default.Check, "Save", tint = Color.White)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Save changes", color = Color.White)
-                                }
+                        Surface(
+                            onClick = { showSortSheet = true },
+                            shape = RoundedCornerShape(20.dp),
+                            color = velvetColors.raised,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    AppIcons.Sort,
+                                    contentDescription = "Sort playlist",
+                                    tint = velvetColors.accentText,
+                                    modifier = Modifier.size(16.dp),
+                                )
                                 Spacer(Modifier.width(8.dp))
-                                TextButton(onClick = {
-                                    draftSongs = playlist.songs
-                                    isEditing = false
-                                }) {
-                                    Text("Cancel", color = velvetColors.muted)
-                                }
+                                Text(
+                                    PlaylistSorter.getSortLabel(playlist.sortKey, playlist.sortDirection),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = velvetColors.text,
+                                )
                             }
-                        } else {
-                            DownloadAllButton(activeSongs)
                         }
+                        Spacer(Modifier.width(8.dp))
+                        DownloadAllButton(activeSongs)
                     },
                 )
             }
 
-
-            if (activeSongs.isEmpty()) {
-                item { EmptyHint("No songs in this playlist.") }
-            }
-            itemsIndexed(activeSongs, key = { _, s -> s.id }) { i, song ->
-                if (isEditing) {
-                    Row(
-                        Modifier
+            if (playlist.sortKey != SortKey.CUSTOM && activeEntries.isNotEmpty()) {
+                item {
+                    Text(
+                        "Switch to Custom order to rearrange",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = velvetColors.muted,
+                        modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Artwork(song.thumb, 50.dp, corner = 12.dp)
-                        Column(
-                            Modifier
-                                .weight(1f)
-                                .padding(horizontal = 14.dp),
-                        ) {
-                            Text(song.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                            Text(song.artist, style = MaterialTheme.typography.bodySmall, color = velvetColors.muted, maxLines = 1)
-                        }
-                        IconButton(onClick = {
-                            val idx = draftSongs.indexOf(song)
-                            recentlyRemoved = idx to song
-                            draftSongs = draftSongs.filterNot { it.id == song.id }
-                            showUndoToast = true
-                            scope.launch {
-                                delay(2000)
-                                showUndoToast = false
-                                recentlyRemoved = null
-                            }
-                        }) {
-                            Icon(Icons.Default.Close, "Remove track", tint = velvetColors.danger)
-                        }
-                    }
-                } else {
-                    SongRow(song, onClick = { PlayerConnection.play(activeSongs, i, playlistId = id, context = playbackContext) }, playlistId = id)
+                        textAlign = TextAlign.Center,
+                    )
                 }
+            }
+
+            if (activeEntries.isEmpty()) {
+                item { EmptyHint("No songs in this playlist.") }
+            }
+
+            itemsIndexed(activeEntries, key = { _, entry -> entry.entryId }) { index, entry ->
+                SongRow(
+                    song = entry.song,
+                    onClick = {
+                        PlayerConnection.play(activeSongs, index, playlistId = id, context = playbackContext)
+                    },
+                    playlistId = id,
+                )
             }
         }
 
@@ -541,9 +599,9 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                         TextButton(onClick = {
                             val removed = recentlyRemoved
                             if (removed != null) {
-                                val list = draftSongs.toMutableList()
-                                list.add(removed.first.coerceAtMost(list.size), removed.second)
-                                draftSongs = list
+                                val currentEntries = playlist.resolvedEntries().toMutableList()
+                                currentEntries.add(removed.first.coerceAtMost(currentEntries.size), removed.second)
+                                library.setPlaylistEntries(playlist.id, currentEntries)
                                 showUndoToast = false
                                 recentlyRemoved = null
                             }
@@ -556,19 +614,540 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
         }
     }
 
-    if (renaming) {
-        NamePlaylistDialog(
-            title = "Rename playlist",
-            initial = playlist.name,
-            initialDescription = playlist.description.orEmpty(),
-            currentPlaylistId = playlist.id,
+    if (showEditSheet) {
+        EditPlaylistSheet(
+            playlist = playlist,
             existingPlaylists = data.playlists,
-            allowDescription = true,
-            onDismiss = { renaming = false },
-            onConfirmWithDescription = { newName, newDesc ->
+            onDismiss = { showEditSheet = false },
+            onSave = { newName, newDesc, newCoverMode, newCoverRef ->
                 library.updatePlaylistDetails(playlist.id, newName, newDesc)
+                library.setPlaylistCover(playlist.id, newCoverMode, newCoverRef)
+                showEditSheet = false
+                Toast.makeText(context, "Playlist updated", Toast.LENGTH_SHORT).show()
             },
         )
+    }
+
+    if (showSortSheet) {
+        PlaylistSortSheet(
+            playlist = playlist,
+            activeEntries = activeEntries,
+            onDismiss = { showSortSheet = false },
+            onSelectSort = { newKey, newDir ->
+                library.setPlaylistSort(playlist.id, newKey, newDir)
+            },
+            onSaveAsCustom = { sortedEntries ->
+                library.savePlaylistOrder(playlist.id, sortedEntries)
+                Toast.makeText(context, "Order saved as Custom", Toast.LENGTH_SHORT).show()
+                showSortSheet = false
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditPlaylistSheet(
+    playlist: Playlist,
+    existingPlaylists: List<Playlist>,
+    onDismiss: () -> Unit,
+    onSave: (newName: String, newDesc: String?, newCoverMode: CoverMode, newCoverRef: String?) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var name by rememberSaveable { mutableStateOf(playlist.name) }
+    var description by rememberSaveable { mutableStateOf(playlist.description.orEmpty()) }
+    var coverMode by rememberSaveable { mutableStateOf(playlist.coverMode) }
+    var coverRef by rememberSaveable { mutableStateOf(playlist.coverRef) }
+
+    var showCoverPicker by remember { mutableStateOf(false) }
+    var showDiscardConfirm by remember { mutableStateOf(false) }
+
+    val trimmedName = name.trim()
+    val isNameBlank = trimmedName.isEmpty()
+    val isNameTooLong = name.length > 80
+    val isDescTooLong = description.length > 300
+    val isDuplicate = existingPlaylists.any { it.id != playlist.id && it.name.trim().equals(trimmedName, ignoreCase = true) }
+    val canSave = !isNameBlank && !isNameTooLong && !isDescTooLong
+
+    val isDirty = name != playlist.name ||
+        description != playlist.description.orEmpty() ||
+        coverMode != playlist.coverMode ||
+        coverRef != playlist.coverRef
+
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val bytes = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    }.getOrNull()
+                }
+                if (bytes != null && bytes.isNotEmpty()) {
+                    val fileName = withContext(Dispatchers.IO) {
+                        PlaylistCoverManager.processAndSaveCover(context, playlist.id, bytes)
+                    }
+                    if (fileName != null) {
+                        coverMode = CoverMode.CUSTOM_IMAGE
+                        coverRef = fileName
+                        Toast.makeText(context, "Cover photo updated", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Could not process image", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(context, "Could not read image file", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    if (showDiscardConfirm) {
+        ConfirmDialog(
+            ConfirmRequest(
+                title = "Discard unsaved changes?",
+                message = "You have unsaved changes. Discard them?",
+                confirmLabel = "Discard",
+                danger = true,
+                onConfirm = {
+                    showDiscardConfirm = false
+                    onDismiss()
+                },
+            ),
+        ) {
+            showDiscardConfirm = false
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            if (isDirty) showDiscardConfirm = true else onDismiss()
+        },
+        containerColor = velvetColors.surface,
+        tonalElevation = 0.dp,
+        scrimColor = Color(0x99000000),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = {
+                    if (isDirty) showDiscardConfirm = true else onDismiss()
+                }) {
+                    Text("Cancel", color = velvetColors.muted)
+                }
+                Text("Edit Playlist", style = MaterialTheme.typography.titleMedium, color = velvetColors.text)
+                Button(
+                    onClick = {
+                        if (canSave) {
+                            onSave(trimmedName, description.trim().ifEmpty { null }, coverMode, coverRef)
+                        }
+                    },
+                    enabled = canSave,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = velvetColors.accentText,
+                        disabledContainerColor = velvetColors.raised,
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text("Save", color = if (canSave) Color.White else velvetColors.muted)
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Cover preview with 12dp rounded corners and soft shadow
+            Box(
+                modifier = Modifier
+                    .size(130.dp)
+                    .shadow(8.dp, RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                PlaylistCover(
+                    songs = playlist.songs,
+                    size = 130.dp,
+                    corner = 12.dp,
+                    coverMode = coverMode,
+                    coverRef = coverRef,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Three cover action buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { showCoverPicker = true }) {
+                    Icon(AppIcons.Palette, contentDescription = null, modifier = Modifier.size(18.dp), tint = velvetColors.accentText)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Choose cover", color = velvetColors.accentText, style = MaterialTheme.typography.labelMedium)
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = {
+                    galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp), tint = velvetColors.accentText)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Upload", color = velvetColors.accentText, style = MaterialTheme.typography.labelMedium)
+                }
+                if (coverMode != CoverMode.AUTO) {
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = {
+                        coverMode = CoverMode.AUTO
+                        coverRef = null
+                    }) {
+                        Text("Revert", color = velvetColors.danger, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Name field
+            OutlinedTextField(
+                value = name,
+                onValueChange = { if (it.length <= 80) name = it },
+                label = { Text("Playlist name *") },
+                singleLine = true,
+                isError = isNameBlank || isNameTooLong,
+                supportingText = {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        if (isDuplicate) {
+                            Text("A playlist with this name already exists", color = velvetColors.accentText)
+                        } else {
+                            Spacer(Modifier.width(1.dp))
+                        }
+                        Text("${name.length}/80", color = if (isNameTooLong) velvetColors.danger else velvetColors.muted)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = velvetColors.accentText,
+                    unfocusedBorderColor = velvetColors.rule,
+                    focusedTextColor = velvetColors.text,
+                    unfocusedTextColor = velvetColors.text,
+                ),
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // Description field
+            OutlinedTextField(
+                value = description,
+                onValueChange = { if (it.length <= 300) description = it },
+                label = { Text("Description (optional)") },
+                maxLines = 3,
+                isError = isDescTooLong,
+                supportingText = {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Text("${description.length}/300", color = if (isDescTooLong) velvetColors.danger else velvetColors.muted)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = velvetColors.accentText,
+                    unfocusedBorderColor = velvetColors.rule,
+                    focusedTextColor = velvetColors.text,
+                    unfocusedTextColor = velvetColors.text,
+                ),
+            )
+        }
+    }
+
+    if (showCoverPicker) {
+        ChooseCoverPickerSheet(
+            playlist = playlist,
+            selectedMode = coverMode,
+            selectedRef = coverRef,
+            onDismiss = { showCoverPicker = false },
+            onSelect = { mode, ref ->
+                coverMode = mode
+                coverRef = ref
+                showCoverPicker = false
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChooseCoverPickerSheet(
+    playlist: Playlist,
+    selectedMode: CoverMode,
+    selectedRef: String?,
+    onDismiss: () -> Unit,
+    onSelect: (CoverMode, String) -> Unit,
+) {
+    var selectedTab by remember { mutableStateOf(0) }
+    val trackThumbs = remember(playlist.songs) {
+        playlist.songs.mapNotNull { it.thumb }.distinct()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = velvetColors.surface,
+        tonalElevation = 0.dp,
+        scrimColor = Color(0x99000000),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp),
+        ) {
+            Text("Choose Cover Art", style = MaterialTheme.typography.titleLarge, color = velvetColors.text)
+            Spacer(Modifier.height(12.dp))
+
+            TabRow(
+                selectedTabIndex = selectedTab,
+                containerColor = velvetColors.surface,
+                contentColor = velvetColors.accentText,
+            ) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = { Text("From songs (${trackThumbs.size})") },
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = { Text("Presets (12)") },
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            if (selectedTab == 0) {
+                if (trackThumbs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("No track artworks in this playlist yet.", color = velvetColors.muted)
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(trackThumbs) { thumbUrl ->
+                            val isSelected = selectedMode == CoverMode.TRACK_ART && selectedRef == thumbUrl
+                            Box(
+                                modifier = Modifier
+                                    .aspectRatio(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) velvetColors.accentText else velvetColors.rule,
+                                        shape = RoundedCornerShape(12.dp),
+                                    )
+                                    .clickable {
+                                        onSelect(CoverMode.TRACK_ART, thumbUrl)
+                                    },
+                            ) {
+                                Artwork(thumbUrl, 100.dp, corner = 12.dp)
+                                if (isSelected) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(4.dp)
+                                            .size(20.dp)
+                                            .background(velvetColors.accentText, CircleShape),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(280.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(PlaylistCoverPresets.presets) { preset ->
+                        val isSelected = selectedMode == CoverMode.PRESET && selectedRef == preset.id.toString()
+                        Column(
+                            modifier = Modifier
+                                .clickable {
+                                    onSelect(CoverMode.PRESET, preset.id.toString())
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .aspectRatio(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(preset.gradient)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) Color.White else velvetColors.rule,
+                                        shape = RoundedCornerShape(12.dp),
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(preset.icon, contentDescription = null, tint = preset.iconTint, modifier = Modifier.size(32.dp))
+                                if (isSelected) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(4.dp)
+                                            .size(20.dp)
+                                            .background(Color.White, CircleShape),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(Icons.Default.Check, null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(preset.name, style = MaterialTheme.typography.labelSmall, color = velvetColors.text, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistSortSheet(
+    playlist: Playlist,
+    activeEntries: List<PlaylistEntry>,
+    onDismiss: () -> Unit,
+    onSelectSort: (SortKey, SortDirection) -> Unit,
+    onSaveAsCustom: (List<PlaylistEntry>) -> Unit,
+) {
+    var confirmCustom by remember { mutableStateOf(false) }
+
+    if (confirmCustom) {
+        ConfirmDialog(
+            ConfirmRequest(
+                title = "Save as Custom Order?",
+                message = "This will save the current sorted list as the permanent custom order for \"${playlist.name}\".",
+                confirmLabel = "Save order",
+                onConfirm = {
+                    confirmCustom = false
+                    onSaveAsCustom(activeEntries)
+                },
+            ),
+        ) {
+            confirmCustom = false
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = velvetColors.surface,
+        tonalElevation = 0.dp,
+        scrimColor = Color(0x99000000),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+        ) {
+            Text("Sort Playlist", style = MaterialTheme.typography.titleLarge, color = velvetColors.text)
+            Text(
+                "Active: ${PlaylistSorter.getSortLabel(playlist.sortKey, playlist.sortDirection)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = velvetColors.muted,
+                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
+            )
+
+            val options = listOf(
+                SortKey.CUSTOM to "Custom order",
+                SortKey.TITLE to "Title",
+                SortKey.ARTIST to "Artist",
+                SortKey.ALBUM to "Album",
+                SortKey.DATE_ADDED to "Recently added",
+                SortKey.DURATION to "Duration",
+            )
+
+            options.forEach { (key, label) ->
+                val isSelected = playlist.sortKey == key
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (key == SortKey.CUSTOM) {
+                                onSelectSort(SortKey.CUSTOM, SortDirection.ASC)
+                            } else if (isSelected) {
+                                // Toggle direction if already selected
+                                val newDir = if (playlist.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
+                                onSelectSort(key, newDir)
+                            } else {
+                                val defaultDir = if (key == SortKey.DATE_ADDED) SortDirection.DESC else SortDirection.ASC
+                                onSelectSort(key, defaultDir)
+                            }
+                        }
+                        .padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (isSelected) velvetColors.accentText else velvetColors.text,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isSelected && key != SortKey.CUSTOM) {
+                            Text(
+                                if (playlist.sortDirection == SortDirection.ASC) "ASC" else "DESC",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = velvetColors.accentText,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                        }
+                        if (isSelected) {
+                            Icon(Icons.Default.Check, contentDescription = "Selected", tint = velvetColors.accentText)
+                        }
+                    }
+                }
+                HorizontalDivider(color = velvetColors.rule.copy(alpha = 0.5f))
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            if (playlist.sortKey != SortKey.CUSTOM) {
+                Button(
+                    onClick = { confirmCustom = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = velvetColors.raised),
+                ) {
+                    Text("Save this order as custom order", color = velvetColors.accentText)
+                }
+            }
+        }
     }
 }
 
