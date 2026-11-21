@@ -100,6 +100,8 @@ class PlaylistRenameTest {
         assertEquals("Updated Name", updated.name)
         assertEquals("New description", updated.description)
 
+        library.flushBlocking()
+
         // Verify persistence across new Library instance on same dir
         val reloaded = Library(dir)
         val fromDisk = reloaded.data.value.playlists.first { it.id == id }
