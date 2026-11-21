@@ -26,7 +26,7 @@ data class Playlist(
     val customCover: String? = null,
 )
 
-internal fun List<Playlist>.homePlaylists(limit: Int = 4): List<Playlist> = asSequence()
+internal fun List<Playlist>.homePlaylists(limit: Int = 2): List<Playlist> = asSequence()
     .filter { it.songs.isNotEmpty() }
     .sortedWith(compareByDescending<Playlist> { it.playCount }.thenByDescending { it.lastPlayedAt }.thenByDescending { it.addedAt })
     .take(limit)
