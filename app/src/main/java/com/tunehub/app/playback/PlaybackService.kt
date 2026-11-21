@@ -65,11 +65,10 @@ class PlaybackService : MediaSessionService() {
     private val requestNumber = AtomicLong()
 
     private var retriedId: String? = null
-    private var radioSeedId: String? = null
     private var failuresInARow = 0
     private var announcedSessionId = C.AUDIO_SESSION_ID_UNSET
 
-    /** Bumped whenever the queue is replaced, so slow radio lookups for an old queue are dropped. */
+    /** Bumped whenever the queue is replaced. */
     private var queueGeneration = 0
 
     // Crossfade automix state
@@ -234,13 +233,11 @@ class PlaybackService : MediaSessionService() {
             mediaItem ?: return
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
                 queueGeneration++
-                radioSeedId = null
             }
             if (mediaItem.mediaId != retriedId) retriedId = null
             TuneHubApp.library.addRecent(mediaItem.toSong())
             trimPlayedHistory()
             prefetchNext()
-            extendQueueIfNeeded()
 
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
@@ -259,9 +256,7 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
-        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-            extendQueueIfNeeded()
-        }
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {}
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) failuresInARow = 0
@@ -273,8 +268,6 @@ class PlaybackService : MediaSessionService() {
                     exo.seekToNextMediaItem()
                     exo.prepare()
                     exo.play()
-                } else {
-                    extendQueueIfNeeded()
                 }
             }
         }
@@ -345,45 +338,7 @@ class PlaybackService : MediaSessionService() {
         if (index > HISTORY_KEPT + 10) exo.removeMediaItems(0, index - HISTORY_KEPT)
     }
 
-    /**
-     * Radio and autoplay: when the queue is about to run out, append songs related to the current
-     * one. Runs for every queue when autoplay is on, and for "song radio" queues always. The
-     * result is only used if the queue it was fetched for is still the one playing.
-     */
-    private fun extendQueueIfNeeded() {
-        if (exo.repeatMode != Player.REPEAT_MODE_OFF || exo.mediaItemCount == 0) return
-        if (exo.currentMediaItemIndex < exo.mediaItemCount - 2) return
-        if (!radioWanted()) return
-        val seed = exo.currentMediaItem?.mediaId ?: return
-        if (seed == radioSeedId) return
-        radioSeedId = seed
-        val generation = queueGeneration
 
-        scope.launch {
-            val related = withContext(Dispatchers.IO) {
-                runCatching { StreamResolver.related(seed) }.getOrDefault(emptyList())
-            }
-            val stillValid = generation == queueGeneration &&
-                exo.currentMediaItem?.mediaId == seed &&
-                exo.repeatMode == Player.REPEAT_MODE_OFF &&
-                radioWanted()
-            if (!stillValid) return@launch
-            val queued = (0 until exo.mediaItemCount).map { exo.getMediaItemAt(it).toSong() }
-            val additions = related.filter { rel -> queued.none { q -> q.isDuplicateOf(rel) } }.take(RADIO_BATCH)
-            if (additions.isEmpty()) return@launch
-            val endedWhileWaiting = exo.playbackState == Player.STATE_ENDED && exo.playWhenReady
-            exo.addMediaItems(additions.map { it.toMediaItem() })
-            // the last song finished before the related songs arrived: carry on, as the user expects
-            if (endedWhileWaiting) {
-                exo.seekToNextMediaItem()
-                exo.prepare()
-                exo.play()
-            }
-        }
-    }
-
-    private fun radioWanted() =
-        TuneHubApp.library.data.value.autoplay || (exo.mediaItemCount > 0 && exo.getMediaItemAt(0).isRadio())
 
     private fun monitorCrossfade() {
         crossfadeMonitorJob?.cancel()
@@ -439,7 +394,6 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         private val POST_BODY = byteArrayOf(0x78, 0)
-        private const val RADIO_BATCH = 10
         private const val HISTORY_KEPT = 50
         private const val MAX_FAILURES_IN_A_ROW = 3
         private const val CACHE_KEY_VERSION = "v2"

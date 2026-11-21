@@ -383,4 +383,85 @@ class PlayerQueueTest {
         val smart10 = manager10.upNext.filter { it.isSmartRecommended }
         assertTrue("For 10 playlist songs, must inject 3 or 4 recommendations", smart10.size in 3..4)
     }
+
+    @Test
+    fun testPureQueueStateTransformations() {
+        val songs = makeSongs(5)
+        var state = com.tunehub.app.playback.QueueManager.start(
+            com.tunehub.app.playback.QueueState(),
+            songs,
+            startIndex = 0,
+            shuffled = false,
+        )
+
+        assertEquals("song_0", state.current?.song?.id)
+        assertEquals(4, state.upNext.size)
+        assertTrue(state.history.isEmpty())
+        assertTrue(state.userQueue.isEmpty())
+
+        // PlayNext
+        val nextSong = makeSong("priority_1", "Priority Track")
+        state = com.tunehub.app.playback.QueueManager.playNext(state, nextSong)
+        assertEquals(1, state.userQueue.size)
+        assertEquals("priority_1", state.userQueue.first().song.id)
+
+        // Advance: priority_1 should become current, song_0 goes to history
+        state = com.tunehub.app.playback.QueueManager.advance(state)
+        assertEquals("priority_1", state.current?.song?.id)
+        assertEquals(1, state.history.size)
+        assertEquals("song_0", state.history.first().song.id)
+        assertTrue(state.userQueue.isEmpty())
+
+        // Previous: since position is 0, should go back to song_0
+        val (prevState, restarted) = com.tunehub.app.playback.QueueManager.previous(state, positionMs = 0L)
+        assertFalse(restarted)
+        assertEquals("song_0", prevState.current?.song?.id)
+        assertTrue(prevState.history.isEmpty())
+        // priority_1 moved to upNext
+        assertEquals("priority_1", prevState.upNext.first().song.id)
+    }
+
+    @Test
+    fun testRepeatModeTransformations() {
+        val songs = makeSongs(2)
+        var state = com.tunehub.app.playback.QueueManager.start(
+            com.tunehub.app.playback.QueueState(),
+            songs,
+            startIndex = 1,
+            shuffled = false,
+        )
+
+        // repeat ONE
+        state = com.tunehub.app.playback.QueueManager.setRepeatMode(state, com.tunehub.app.playback.RepeatMode.ONE)
+        val stateAfterAdvanceOne = com.tunehub.app.playback.QueueManager.advance(state)
+        assertEquals(state.current?.song?.id, stateAfterAdvanceOne.current?.song?.id)
+
+        // repeat ALL: when upNext is empty, loops back to sourceList
+        state = com.tunehub.app.playback.QueueManager.setRepeatMode(state, com.tunehub.app.playback.RepeatMode.ALL)
+        val stateAfterAdvanceAll = com.tunehub.app.playback.QueueManager.advance(state)
+        assertEquals(songs[0].id, stateAfterAdvanceAll.current?.song?.id)
+
+        // repeat OFF: when queue exhausted, current becomes null
+        state = com.tunehub.app.playback.QueueManager.setRepeatMode(state, com.tunehub.app.playback.RepeatMode.OFF)
+        val stateAfterAdvanceOff = com.tunehub.app.playback.QueueManager.advance(state)
+        assertEquals(null, stateAfterAdvanceOff.current)
+    }
+
+    @Test
+    fun testReorderingQueues() {
+        val songs = makeSongs(4)
+        val manager = com.tunehub.app.playback.QueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+
+        // upNext is [song_1, song_2, song_3]
+        assertEquals("song_1", manager.upNext[0].song.id)
+        assertEquals("song_2", manager.upNext[1].song.id)
+        assertEquals("song_3", manager.upNext[2].song.id)
+
+        manager.reorderUpNext(0, 2)
+        // after moving index 0 to 2: [song_2, song_3, song_1]
+        assertEquals("song_2", manager.upNext[0].song.id)
+        assertEquals("song_3", manager.upNext[1].song.id)
+        assertEquals("song_1", manager.upNext[2].song.id)
+    }
 }

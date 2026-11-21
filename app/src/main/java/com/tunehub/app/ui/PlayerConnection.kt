@@ -24,9 +24,12 @@ import com.tunehub.app.data.isOriginalMusicAudio
 import com.tunehub.app.data.isPureMusic
 import com.tunehub.app.data.isSameTrackAs
 import com.tunehub.app.playback.PlaybackService
-import com.tunehub.app.playback.PlayerQueueManager
 import com.tunehub.app.playback.PlaylistStart
+import com.tunehub.app.playback.QueueExoAdapter
 import com.tunehub.app.playback.QueueItem
+import com.tunehub.app.playback.QueueManager
+import com.tunehub.app.playback.QueueState
+import com.tunehub.app.playback.RepeatMode
 import com.tunehub.app.playback.ShuffleMode
 import com.tunehub.app.playback.toMediaItem
 import com.tunehub.app.playback.toSong
@@ -38,7 +41,7 @@ import java.util.UUID
 
 /** The UI's handle on PlaybackService, mirrored into Compose state. */
 object PlayerConnection {
-    val queueManager = PlayerQueueManager()
+    val queueManager = QueueManager()
 
     var controller by mutableStateOf<MediaController?>(null)
         private set
@@ -59,6 +62,14 @@ object PlayerConnection {
         private set
     private var isExtendingAutoplay = false
 
+    /** Pure single source of truth queue state. */
+    var queueState by mutableStateOf(queueManager.state)
+        private set
+
+    val userQueue: List<QueueItem> get() = queueState.userQueue
+    val upNext: List<QueueItem> get() = queueState.upNext
+    val history: List<QueueItem> get() = queueState.history
+
     /** Whether shuffle is currently on. */
     var shuffle by mutableStateOf(false)
         private set
@@ -76,10 +87,17 @@ object PlayerConnection {
     val index: Int get() = 0
 
     private fun syncQueueState() {
+        queueState = queueManager.state
         current = queueManager.current
         shuffle = queueManager.shuffle
         shuffleMode = queueManager.shuffleMode
         queue = queueManager.visibleQueue
+    }
+
+    private fun syncToExoPlayer(playlistStart: PlaylistStart? = null, isRadio: Boolean = isRadioActive) {
+        withController { c ->
+            QueueExoAdapter.syncToExoPlayer(c, queueManager.state, playlistStart, isRadio)
+        }
     }
 
     // ── Connection plumbing ──────────────────────────────────────────────────
@@ -137,6 +155,7 @@ object PlayerConnection {
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
                 queueManager.advance()
                 syncQueueState()
+                syncToExoPlayer()
                 checkAndExtendAutoplay()
             }
         }
@@ -151,19 +170,10 @@ object PlayerConnection {
                     queueManager.upNext.firstOrNull()?.song?.id == exoCurrent.id) {
                     queueManager.advance()
                     syncQueueState()
+                    syncToExoPlayer()
                 } else {
                     current = exoCurrent
                 }
-            }
-        }
-        // Absorb any items added to ExoPlayer by background service
-        if (queueManager.upNext.isEmpty() && p.mediaItemCount > p.currentMediaItemIndex + 1) {
-            val remainingInExo = (p.currentMediaItemIndex + 1 until p.mediaItemCount).mapNotNull {
-                p.getMediaItemAt(it).toSong()
-            }
-            if (remainingInExo.isNotEmpty()) {
-                queueManager.appendRadioSongs(remainingInExo)
-                syncQueueState()
             }
         }
         val isAutoplayOn = TuneHubApp.library.data.value.autoplay || isRadioActive
@@ -196,25 +206,14 @@ object PlayerConnection {
         if (songs.isEmpty()) return
         currentPlaylistId = playlistId
         isRadioActive = radio
+        val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
         queueManager.start(songs, startIndex, shuffled)
         syncQueueState()
-
-        val startSong = queueManager.current ?: return
-        val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
-        val allItems = listOf(startSong) + (queueManager.userQueue.map { it.song }) + (queueManager.upNext.map { it.song })
-        val mediaItems = allItems.mapIndexed { i, song ->
-            song.toMediaItem(radio = radio && i == 0, playlistStart = start)
-        }
-        withController(replaces = true) { c ->
-            c.shuffleModeEnabled = false // Handled directly in PlayerQueueManager
-            c.setMediaItems(mediaItems, 0, 0)
-            c.prepare()
-            c.play()
-        }
+        syncToExoPlayer(playlistStart = start, isRadio = radio)
 
         val isAutoplayOn = TuneHubApp.library.data.value.autoplay || radio
         if (isAutoplayOn && queueManager.upNext.isEmpty()) {
-            checkAndExtendAutoplay(startSong.id)
+            queueManager.current?.id?.let { checkAndExtendAutoplay(it) }
         }
     }
 
@@ -225,7 +224,7 @@ object PlayerConnection {
     fun cycleShuffle(context: Context? = null) {
         val newMode = queueManager.cycleShuffleMode()
         syncQueueState()
-        syncUpNextToExoPlayer()
+        syncToExoPlayer()
 
         when (newMode) {
             ShuffleMode.OFF -> {
@@ -298,25 +297,10 @@ object PlayerConnection {
                     if (queueManager.shuffleMode == ShuffleMode.SMART && sorted.isNotEmpty()) {
                         queueManager.injectSmartRecommendations(sorted)
                         syncQueueState()
-                        syncUpNextToExoPlayer()
+                        syncToExoPlayer()
                     }
                 }
             } catch (_: Exception) {
-            }
-        }
-    }
-
-    /** Syncs our userQueue + upNext to ExoPlayer AFTER current track (without interrupting it). */
-    private fun syncUpNextToExoPlayer() {
-        withController { c ->
-            val currentIdx = c.currentMediaItemIndex
-            val after = currentIdx + 1
-            if (after < c.mediaItemCount) {
-                c.removeMediaItems(after, c.mediaItemCount)
-            }
-            val upcoming = (queueManager.userQueue + queueManager.upNext).map { it.song.toMediaItem() }
-            if (upcoming.isNotEmpty()) {
-                c.addMediaItems(upcoming)
             }
         }
     }
@@ -329,7 +313,7 @@ object PlayerConnection {
         }
         queueManager.playNext(song)
         syncQueueState()
-        syncUpNextToExoPlayer()
+        syncToExoPlayer()
         appContext?.let { Toast.makeText(it, "\"${song.title}\" will play next", Toast.LENGTH_SHORT).show() }
     }
 
@@ -345,7 +329,7 @@ object PlayerConnection {
             return
         }
         syncQueueState()
-        syncUpNextToExoPlayer()
+        syncToExoPlayer()
         appContext?.let { Toast.makeText(it, "Added to queue", Toast.LENGTH_SHORT).show() }
     }
 
@@ -354,7 +338,7 @@ object PlayerConnection {
         val moved = queueManager.moveToTop(qid)
         if (moved) {
             syncQueueState()
-            syncUpNextToExoPlayer()
+            syncToExoPlayer()
         }
     }
 
@@ -363,7 +347,7 @@ object PlayerConnection {
         val removed = queueManager.removeItem(qid)
         if (removed) {
             syncQueueState()
-            syncUpNextToExoPlayer()
+            syncToExoPlayer()
         }
     }
 
@@ -371,13 +355,7 @@ object PlayerConnection {
     fun jumpToQid(qid: String) {
         val targetSong = queueManager.jumpToQid(qid) ?: return
         syncQueueState()
-        withController { c ->
-            val mediaItems = (listOf(targetSong) + (queueManager.userQueue + queueManager.upNext).map { it.song })
-                .map { it.toMediaItem() }
-            c.setMediaItems(mediaItems, 0, 0)
-            c.prepare()
-            c.play()
-        }
+        syncToExoPlayer()
     }
 
     fun togglePlay() = withController { c ->
@@ -394,7 +372,7 @@ object PlayerConnection {
     fun clearUpcoming() {
         queueManager.clearUpcoming()
         syncQueueState()
-        syncUpNextToExoPlayer()
+        syncToExoPlayer()
     }
 
     fun move(from: Int, to: Int) = withController { c ->
@@ -411,13 +389,7 @@ object PlayerConnection {
         val nextSong = queueManager.advance()
         if (nextSong != null) {
             syncQueueState()
-            withController { c ->
-                val mediaItems = (listOf(nextSong) + (queueManager.userQueue + queueManager.upNext).map { it.song })
-                    .map { it.toMediaItem() }
-                c.setMediaItems(mediaItems, 0, 0)
-                c.prepare()
-                c.play()
-            }
+            syncToExoPlayer()
             checkAndExtendAutoplay()
         } else {
             val cur = current
@@ -449,16 +421,11 @@ object PlayerConnection {
                             val rest = related.drop(1)
                             queueManager.start(listOf(first) + rest, 0, false)
                             syncQueueState()
-                            withController { c ->
-                                val mediaItems = (listOf(first) + rest).map { it.toMediaItem() }
-                                c.setMediaItems(mediaItems, 0, 0)
-                                c.prepare()
-                                c.play()
-                            }
+                            syncToExoPlayer()
                         } else {
                             queueManager.appendRadioSongs(related)
                             syncQueueState()
-                            syncUpNextToExoPlayer()
+                            syncToExoPlayer()
                         }
                     }
                 }
@@ -474,14 +441,10 @@ object PlayerConnection {
             if (c.currentPosition > 3000L) {
                 c.seekTo(0)
             } else {
-                val prevSong = queueManager.previous()
+                val prevSong = queueManager.previous(c.currentPosition)
                 if (prevSong != null) {
                     syncQueueState()
-                    val mediaItems = (listOf(prevSong) + (queueManager.userQueue + queueManager.upNext).map { it.song })
-                        .map { it.toMediaItem() }
-                    c.setMediaItems(mediaItems, 0, 0)
-                    c.prepare()
-                    c.play()
+                    syncToExoPlayer()
                 } else {
                     c.seekTo(0)
                 }
@@ -510,12 +473,15 @@ object PlayerConnection {
         moveToTop(item.qid)
     }
 
-    fun cycleRepeat() = withController {
-        it.repeatMode = when (it.repeatMode) {
-            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-            else -> Player.REPEAT_MODE_OFF
+    fun cycleRepeat() {
+        val targetMode = when (repeatMode) {
+            Player.REPEAT_MODE_OFF -> RepeatMode.ALL
+            Player.REPEAT_MODE_ALL -> RepeatMode.ONE
+            else -> RepeatMode.OFF
         }
+        queueManager.setRepeatMode(targetMode)
+        syncQueueState()
+        syncToExoPlayer()
     }
 
     fun positionMs(): Long = controller?.currentPosition ?: 0L

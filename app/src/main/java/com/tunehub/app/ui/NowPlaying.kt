@@ -947,8 +947,13 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 private fun QueueSheet(onDismiss: () -> Unit) {
-    val queue = PlayerConnection.queue
+    val queueState = PlayerConnection.queueState
+    val currentItem = queueState.current?.copy(qid = "current")
+    val userQueue = queueState.userQueue
+    val upNext = queueState.upNext
     val listState = rememberLazyListState()
     val openMenu = LocalSongMenu.current
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -988,142 +993,217 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             }
         }
         LazyColumn(state = listState, modifier = Modifier.padding(bottom = 16.dp)) {
-            items(queue, key = { it.qid }) { item ->
-                val isCurrent = item.qid == "current"
-                val isSmart = item.isSmartRecommended
-                var offsetX by remember { mutableFloatStateOf(0f) }
+            if (currentItem != null) {
+                item(key = "header_now_playing") {
+                    Text(
+                        "NOW PLAYING",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tuneColors.accentText,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 22.dp, top = 4.dp, bottom = 4.dp),
+                    )
+                }
+                item(key = currentItem.qid) {
+                    QueueRow(
+                        item = currentItem,
+                        isCurrent = true,
+                        isQueueLocked = isQueueLocked,
+                        context = context,
+                        openMenu = openMenu,
+                    )
+                }
+            }
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .offset { androidx.compose.ui.unit.IntOffset(offsetX.roundToInt(), 0) }
-                        .then(
-                            if (!isCurrent && !isQueueLocked) {
-                                Modifier.pointerInput(item.qid) {
-                                    detectHorizontalDragGestures(
-                                        onDragEnd = {
-                                            if (offsetX > 100f) {
-                                                PlayerConnection.moveToTop(item.qid)
-                                                android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                                            }
-                                            offsetX = 0f
-                                        },
-                                        onDragCancel = { offsetX = 0f },
-                                        onHorizontalDrag = { _, dragAmount ->
-                                            if (dragAmount > 0 || offsetX > 0) {
-                                                offsetX = (offsetX + dragAmount).coerceIn(0f, 250f)
-                                            }
-                                        },
-                                    )
-                                }
-                            } else Modifier
-                        )
-                        .padding(horizontal = 14.dp, vertical = 3.dp)
-                        .then(
-                            if (isSmart) {
-                                Modifier
-                                    .background(tuneColors.accent.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
-                                    .border(1.dp, tuneColors.accent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
-                            } else if (isCurrent) {
-                                Modifier
-                                    .background(tuneColors.raised, RoundedCornerShape(14.dp))
-                                    .border(1.dp, tuneColors.rule, RoundedCornerShape(14.dp))
-                            } else Modifier
-                        )
-                        .combinedClickable(
-                            onClick = {
-                                if (!isCurrent) {
-                                    PlayerConnection.jumpToQid(item.qid)
-                                }
-                            },
-                            onLongClick = {
-                                if (!isCurrent && !isQueueLocked) {
+            if (userQueue.isNotEmpty()) {
+                item(key = "header_next_in_queue") {
+                    Text(
+                        "NEXT IN QUEUE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tuneColors.accentText,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
+                    )
+                }
+                items(userQueue, key = { it.qid }) { item ->
+                    QueueRow(
+                        item = item,
+                        isCurrent = false,
+                        isQueueLocked = isQueueLocked,
+                        context = context,
+                        openMenu = openMenu,
+                    )
+                }
+            }
+
+            if (upNext.isNotEmpty()) {
+                val sourceLabel = when {
+                    PlayerConnection.isRadioActive -> "RADIO"
+                    !PlayerConnection.currentPlaylistId.isNullOrBlank() -> "PLAYLIST"
+                    else -> "RECOMMENDED"
+                }
+                item(key = "header_up_next") {
+                    Text(
+                        "NEXT FROM $sourceLabel",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tuneColors.muted,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
+                    )
+                }
+                items(upNext, key = { it.qid }) { item ->
+                    QueueRow(
+                        item = item,
+                        isCurrent = false,
+                        isQueueLocked = isQueueLocked,
+                        context = context,
+                        openMenu = openMenu,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun QueueRow(
+    item: QueueItem,
+    isCurrent: Boolean,
+    isQueueLocked: Boolean,
+    context: android.content.Context,
+    openMenu: (SongMenuRequest) -> Unit,
+) {
+    val isSmart = item.isSmartRecommended
+    var offsetX by remember { mutableFloatStateOf(0f) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset { androidx.compose.ui.unit.IntOffset(offsetX.roundToInt(), 0) }
+            .then(
+                if (!isCurrent && !isQueueLocked) {
+                    Modifier.pointerInput(item.qid) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (offsetX > 100f) {
                                     PlayerConnection.moveToTop(item.qid)
                                     android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
                                 }
-                                openMenu(SongMenuRequest(item.song))
+                                offsetX = 0f
+                            },
+                            onDragCancel = { offsetX = 0f },
+                            onHorizontalDrag = { _, dragAmount ->
+                                if (dragAmount > 0 || offsetX > 0) {
+                                    offsetX = (offsetX + dragAmount).coerceIn(0f, 250f)
+                                }
                             },
                         )
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(46.dp)) {
-                            Artwork(item.song.thumb, 46.dp, corner = 14.dp)
-                            if (isSmart) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .size(16.dp)
-                                        .background(tuneColors.accent, CircleShape),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        AppIcons.Sparkles,
-                                        contentDescription = "Smart recommendation",
-                                        tint = tuneColors.onAccent,
-                                        modifier = Modifier.size(10.dp),
-                                    )
-                                }
-                            }
-                        }
-                        Column(
-                            Modifier
-                                .weight(1f)
-                                .padding(horizontal = 14.dp),
-                        ) {
-                            Text(
-                                item.song.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = if (isCurrent) tuneColors.accentText else tuneColors.text,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (isSmart) {
-                                    Text(
-                                        "✨ Recommended • ",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = tuneColors.accentText,
-                                    )
-                                }
-                                Text(
-                                    if (isCurrent) "Now playing" else item.song.artist,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (isCurrent) tuneColors.accentText else if (isSmart) tuneColors.accentText.copy(alpha = 0.85f) else tuneColors.muted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        if (!isCurrent && !isQueueLocked) {
-                            if (isSmart) {
-                                var addedToPlaylist by remember(item.qid) { mutableStateOf(false) }
-                                DockButton(
-                                    if (addedToPlaylist) Icons.Default.Check else Icons.Default.Add,
-                                    "Add to playlist",
-                                    tint = if (addedToPlaylist) tuneColors.accentText else tuneColors.accent,
-                                ) {
-                                    val currentPid = PlayerConnection.currentPlaylistId
-                                    if (currentPid != null) {
-                                        TuneHubApp.library.addToPlaylist(currentPid, item.song)
-                                        addedToPlaylist = true
-                                        android.widget.Toast.makeText(context, "Added to current playlist", android.widget.Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        TuneHubApp.library.toggleLike(item.song)
-                                        addedToPlaylist = true
-                                        android.widget.Toast.makeText(context, "Added to Liked Songs", android.widget.Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                            DockButton(Icons.Default.KeyboardArrowUp, "Move to Top", tint = tuneColors.accentText) {
-                                PlayerConnection.moveToTop(item.qid)
-                                android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                            DockButton(Icons.Default.Close, "Remove", tint = tuneColors.muted) {
-                                PlayerConnection.removeItem(item.qid)
-                            }
+                    }
+                } else Modifier
+            )
+            .padding(horizontal = 14.dp, vertical = 3.dp)
+            .then(
+                if (isSmart) {
+                    Modifier
+                        .background(tuneColors.accent.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                        .border(1.dp, tuneColors.accent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                } else if (isCurrent) {
+                    Modifier
+                        .background(tuneColors.raised, RoundedCornerShape(14.dp))
+                        .border(1.dp, tuneColors.rule, RoundedCornerShape(14.dp))
+                } else Modifier
+            )
+            .combinedClickable(
+                onClick = {
+                    if (!isCurrent) {
+                        PlayerConnection.jumpToQid(item.qid)
+                    }
+                },
+                onLongClick = {
+                    if (!isCurrent && !isQueueLocked) {
+                        PlayerConnection.moveToTop(item.qid)
+                        android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    openMenu(SongMenuRequest(item.song))
+                },
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(46.dp)) {
+                Artwork(item.song.thumb, 46.dp, corner = 14.dp)
+                if (isSmart) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(16.dp)
+                            .background(tuneColors.accent, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            AppIcons.Sparkles,
+                            contentDescription = "Smart recommendation",
+                            tint = tuneColors.onAccent,
+                            modifier = Modifier.size(10.dp),
+                        )
+                    }
+                }
+            }
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp),
+            ) {
+                Text(
+                    item.song.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (isCurrent) tuneColors.accentText else tuneColors.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isSmart) {
+                        Text(
+                            "✨ Recommended • ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tuneColors.accentText,
+                        )
+                    }
+                    Text(
+                        if (isCurrent) "Now playing" else item.song.artist,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isCurrent) tuneColors.accentText else if (isSmart) tuneColors.accentText.copy(alpha = 0.85f) else tuneColors.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (!isCurrent && !isQueueLocked) {
+                if (isSmart) {
+                    var addedToPlaylist by remember(item.qid) { mutableStateOf(false) }
+                    DockButton(
+                        if (addedToPlaylist) Icons.Default.Check else Icons.Default.Add,
+                        "Add to playlist",
+                        tint = if (addedToPlaylist) tuneColors.accentText else tuneColors.accent,
+                    ) {
+                        val currentPid = PlayerConnection.currentPlaylistId
+                        if (currentPid != null) {
+                            TuneHubApp.library.addToPlaylist(currentPid, item.song)
+                            addedToPlaylist = true
+                            android.widget.Toast.makeText(context, "Added to current playlist", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            TuneHubApp.library.toggleLike(item.song)
+                            addedToPlaylist = true
+                            android.widget.Toast.makeText(context, "Added to Liked Songs", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
+                }
+                DockButton(Icons.Default.KeyboardArrowUp, "Move to Top", tint = tuneColors.accentText) {
+                    PlayerConnection.moveToTop(item.qid)
+                    android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                DockButton(Icons.Default.Close, "Remove", tint = tuneColors.muted) {
+                    PlayerConnection.removeItem(item.qid)
                 }
             }
         }
