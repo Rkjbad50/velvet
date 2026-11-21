@@ -249,4 +249,41 @@ class PlayerQueueTest {
         assertTrue("New song should be enqueued", resNew)
         assertEquals(1, manager.userQueue.size)
     }
+
+    @Test
+    fun testCycleShuffleModeAndSmartShuffleInjection() {
+        val songs = makeSongs(5)
+        val manager = PlayerQueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+
+        assertEquals(com.tunehub.app.playback.ShuffleMode.OFF, manager.shuffleMode)
+        assertFalse(manager.shuffle)
+
+        // 1. Cycle to STANDARD
+        val mode1 = manager.cycleShuffleMode()
+        assertEquals(com.tunehub.app.playback.ShuffleMode.STANDARD, mode1)
+        assertTrue(manager.shuffle)
+        assertFalse(manager.isSmartShuffle)
+
+        // 2. Cycle to SMART
+        val mode2 = manager.cycleShuffleMode()
+        assertEquals(com.tunehub.app.playback.ShuffleMode.SMART, mode2)
+        assertTrue(manager.shuffle)
+        assertTrue(manager.isSmartShuffle)
+
+        // Inject smart recommendations
+        val recSongs = listOf(makeSong("rec_1", "Rec 1"), makeSong("rec_2", "Rec 2"))
+        manager.injectSmartRecommendations(recSongs)
+
+        val smartItems = manager.upNext.filter { it.isSmartRecommended }
+        assertEquals(2, smartItems.size)
+        assertEquals("rec_1", smartItems[0].song.id)
+        assertEquals("rec_2", smartItems[1].song.id)
+
+        // 3. Cycle to OFF: smart recommendations must be cleared, linear restored
+        val mode3 = manager.cycleShuffleMode()
+        assertEquals(com.tunehub.app.playback.ShuffleMode.OFF, mode3)
+        assertFalse(manager.shuffle)
+        assertTrue(manager.upNext.none { it.isSmartRecommended })
+    }
 }

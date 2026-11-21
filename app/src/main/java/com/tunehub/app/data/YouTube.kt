@@ -50,7 +50,14 @@ object YouTube {
             }
             nextPage = page.nextPage
             hasMore = page.hasNextPage()
-            return page.items.mapNotNull { it.toBrowseItem(isAlbum = filter == FILTER_ALBUMS) }
+            val items = page.items.mapNotNull { it.toBrowseItem(isAlbum = filter == FILTER_ALBUMS) }
+            return if (filter == FILTER_SONGS) {
+                items.filter { item ->
+                    (item as? BrowseItem.SongItem)?.song?.let { it.isPureMusic() && it.isOriginalMusicAudio() } ?: true
+                }.sortedByDescending { (it as? BrowseItem.SongItem)?.song?.preferredMusicSource == true }
+            } else {
+                items
+            }
         }
     }
 
@@ -71,7 +78,9 @@ object YouTube {
         val albums = section(FILTER_ALBUMS)
         val playlists = section(FILTER_PLAYLISTS)
         TopResults(
-            songs = songs.await().filterIsInstance<BrowseItem.SongItem>().map { it.song },
+            songs = songs.await().filterIsInstance<BrowseItem.SongItem>().map { it.song }
+                .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
+                .sortedByDescending { it.preferredMusicSource },
             artists = artists.await().filterIsInstance<BrowseItem.ArtistItem>().map { it.artist },
             albums = albums.await().filterIsInstance<BrowseItem.AlbumItem>().map { it.album },
             playlists = playlists.await().filterIsInstance<BrowseItem.AlbumItem>().map { it.album },
@@ -188,7 +197,9 @@ object YouTube {
     fun trendingMusic(): List<Song> {
         val extractor = service.kioskList.getExtractorById("trending_music", null)
         extractor.fetchPage()
-        return extractor.initialPage.items.mapNotNull { (it as? StreamInfoItem)?.toSong() }.filter { it.isPureMusic() }
+        return extractor.initialPage.items.mapNotNull { (it as? StreamInfoItem)?.toSong() }
+            .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
+            .sortedByDescending { it.preferredMusicSource }
     }
 
     // ---------------------------------------------------------------- helpers

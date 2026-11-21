@@ -20,11 +20,13 @@ import com.tunehub.app.data.Song
 import com.tunehub.app.data.StreamResolver
 import com.tunehub.app.data.YouTube
 import com.tunehub.app.data.isDuplicateOf
+import com.tunehub.app.data.isOriginalMusicAudio
 import com.tunehub.app.data.isPureMusic
 import com.tunehub.app.playback.PlaybackService
 import com.tunehub.app.playback.PlayerQueueManager
 import com.tunehub.app.playback.PlaylistStart
 import com.tunehub.app.playback.QueueItem
+import com.tunehub.app.playback.ShuffleMode
 import com.tunehub.app.playback.toMediaItem
 import com.tunehub.app.playback.toSong
 import kotlinx.coroutines.CoroutineScope
@@ -56,6 +58,8 @@ object PlayerConnection {
     /** Whether shuffle is currently on. */
     var shuffle by mutableStateOf(false)
         private set
+    var shuffleMode by mutableStateOf(ShuffleMode.OFF)
+        private set
 
     /**
      * What the queue sheet shows: current song first (highlighted), then
@@ -70,6 +74,7 @@ object PlayerConnection {
     private fun syncQueueState() {
         current = queueManager.current
         shuffle = queueManager.shuffle
+        shuffleMode = queueManager.shuffleMode
         queue = queueManager.visibleQueue
     }
 
@@ -189,14 +194,68 @@ object PlayerConnection {
     }
 
     /**
+     * Cycle through all shuffle modes: OFF -> STANDARD -> SMART -> OFF.
+     * Displays clean toasts and triggers smart recommendation loading when SMART is activated.
+     */
+    fun cycleShuffle(context: Context? = null) {
+        val newMode = queueManager.cycleShuffleMode()
+        syncQueueState()
+        syncUpNextToExoPlayer()
+
+        when (newMode) {
+            ShuffleMode.OFF -> {
+                (context ?: appContext)?.let { Toast.makeText(it, "Shuffle is off", Toast.LENGTH_SHORT).show() }
+            }
+            ShuffleMode.STANDARD -> {
+                (context ?: appContext)?.let { Toast.makeText(it, "Shuffle is on", Toast.LENGTH_SHORT).show() }
+            }
+            ShuffleMode.SMART -> {
+                (context ?: appContext)?.let { Toast.makeText(it, "Smart Shuffle is on ✨", Toast.LENGTH_SHORT).show() }
+                loadSmartShuffleRecommendations()
+            }
+        }
+    }
+
+    /**
      * Toggle shuffle. When turning ON: Fisher-Yates reshuffle of sourceList
      * excluding current song and userQueue items. Current track is NOT interrupted.
      * When turning OFF: restore linear order from sourceList after current position.
      */
     fun toggleShuffle() {
-        queueManager.toggleShuffle()
-        syncQueueState()
-        syncUpNextToExoPlayer()
+        cycleShuffle(appContext)
+    }
+
+    /**
+     * Loads algorithmic smart recommendations that match the genre, tempo, era, and style
+     * of the currently playing track/playlist, filtering strictly for original source audio.
+     */
+    fun loadSmartShuffleRecommendations() {
+        val currentSong = current ?: return
+        val seeds = (listOf(currentSong) + queueManager.sourceList.take(3)).distinctBy { it.id }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val candidates = mutableListOf<Song>()
+                for (seed in seeds) {
+                    val related = runCatching { StreamResolver.related(seed.id) }.getOrDefault(emptyList())
+                    candidates.addAll(related)
+                }
+                val filtered = candidates
+                    .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
+                    .distinctBy { it.id }
+                    .sortedByDescending { it.preferredMusicSource }
+                    .take(8)
+
+                withContext(Dispatchers.Main) {
+                    if (queueManager.shuffleMode == ShuffleMode.SMART) {
+                        queueManager.injectSmartRecommendations(filtered)
+                        syncQueueState()
+                        syncUpNextToExoPlayer()
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
     }
 
     /** Syncs our userQueue + upNext to ExoPlayer AFTER current track (without interrupting it). */

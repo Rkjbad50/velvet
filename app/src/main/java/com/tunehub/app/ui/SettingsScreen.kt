@@ -87,7 +87,8 @@ fun SettingsScreen(onBack: () -> Unit) {
         value = withContext(Dispatchers.IO) { TuneHubApp.downloads.usedBytes() / (1024 * 1024) }
     }
     val version = remember {
-        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+        val raw = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "2.0"
+        if (raw.startsWith("v")) raw else "v$raw"
     }
 
     Column(
@@ -362,7 +363,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
 
         SettingsGroup("About") {
-            ActionRow("Developer", "Rkjbad50") {
+            ActionRow("Developer", "Narayan") {
                 openReleases(context, "https://github.com/Rkjbad50/velvet")
             }
             ActionRow(
@@ -380,7 +381,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                             } else {
                                 BuildConfig.UPSTREAM_BUILD_NUMBER
                             }
-                            val newer = withContext(Dispatchers.IO) { ReleaseCheck.hasNewerBuild(TuneHubApp.http, upstreamBuild) }
+                            val newer = withContext(Dispatchers.IO) {
+                                ReleaseCheck.hasNewerBuild(TuneHubApp.http, upstreamBuild, BuildConfig.VERSION_NAME)
+                            }
                             if (newer) openReleases(context, UPSTREAM_RELEASES_URL)
                             else Toast.makeText(context, "Already on the latest version", Toast.LENGTH_SHORT).show()
                         } catch (e: CancellationException) {
@@ -402,7 +405,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
 
         Text(
-            "VELVET is a modern Material 3 Expressive music player powered by YouTube Music, designed and crafted by Rkjbad50. Features synchronized lyrics from LRCLIB, pure music streaming, lossless cache, and offline playback. Personal use only.",
+            "VELVET is a modern Material 3 Expressive music player powered by YouTube Music, designed and crafted by Narayan. Features synchronized lyrics from LRCLIB, pure music streaming, lossless cache, and offline playback. Personal use only.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(16.dp),

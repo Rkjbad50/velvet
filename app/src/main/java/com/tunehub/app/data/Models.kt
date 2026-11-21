@@ -158,7 +158,7 @@ class BoundedCache<K : Any, V : Any>(private val maxSize: Int) {
 }
 
 private val NON_MUSIC_REGEX = Regex(
-    """(?i)\b(full movie|film|trailer|teaser|scene|clip|full scene|climax|podcast|episode|interview|documentary|audiobook|vlog|gameplay|funny moments|roast|reaction|unboxing|talk show|behind the scenes|making of|bloopers|status|whatsapp status|reels?|tiktok|short edit|bgm edit|dialogue|part \d+)\b"""
+    """(?i)\b(full movie|film|trailer|teaser|scene|clip|full scene|climax|podcast|episode|interview|documentary|audiobook|vlog|gameplay|funny moments|roast|reaction|unboxing|talk show|behind the scenes|making of|bloopers|status|whatsapp status|reels?|tiktok|short edit|bgm edit|dialogue|part \d+|fan made|fan video|dance cover|cover song|karaoke|slowed \+ reverb|slowed and reverb|8d audio|mashup edit|amv|guitar cover|piano cover|drum cover|parody)\b"""
 )
 
 /**
@@ -170,6 +170,20 @@ fun Song.isPureMusic(): Boolean {
     if (durationSec > 780) return false // Exceeds 13 minutes (likely podcast, full movie scene, or dj set)
     val text = "$title $artist"
     if (NON_MUSIC_REGEX.containsMatchIn(text)) return false
+    return true
+}
+
+/**
+ * Ensures track is from native producer/singer/original source, filtering out
+ * unofficial random YouTube video uploads, amateur covers, and meme re-uploads.
+ */
+fun Song.isOriginalMusicAudio(): Boolean {
+    if (!isPureMusic()) return false
+    val lower = "$title $artist".lowercase()
+    if (lower.contains("cover") && !lower.contains("discover") && !lower.contains("under cover") && !lower.contains("album cover")) return false
+    if (lower.contains("slowed") || lower.contains("reverb") || lower.contains("status")) return false
+    if (lower.contains("8d audio") || lower.contains("bass boosted") || lower.contains("nightcore")) return false
+    if (lower.contains("official video") && lower.contains("scene")) return false
     return true
 }
 

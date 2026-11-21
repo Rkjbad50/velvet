@@ -107,7 +107,8 @@ object StreamResolver {
             val info = YouTube.streamInfo(videoId)
             val pureRelated = info.relatedItems
                 .mapNotNull { (it as? StreamInfoItem)?.toSong() }
-                .filter { it.id != videoId && it.isPureMusic() }
+                .filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
+                .sortedByDescending { it.preferredMusicSource }
 
             val finalRelated = if (pureRelated.size < 6) {
                 val seedArtist = (info.uploaderName ?: "").removeSuffix(" - Topic").trim()
@@ -116,7 +117,8 @@ object StreamResolver {
                         YouTube.Search(seedArtist, YouTube.FILTER_SONGS).loadNext()
                             .filterIsInstance<BrowseItem.SongItem>()
                             .map { it.song }
-                            .filter { it.id != videoId && it.isPureMusic() }
+                            .filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
+                            .sortedByDescending { it.preferredMusicSource }
                     }.getOrDefault(emptyList())
                 } else emptyList()
                 (pureRelated + musicFallback).distinctBy { it.id }
@@ -193,7 +195,9 @@ object StreamResolver {
 
     private fun fetchFull(videoId: String, saver: Boolean): Resolved {
         val info = YouTube.streamInfo(videoId)
-        relatedCache[videoId] = info.relatedItems.mapNotNull { (it as? StreamInfoItem)?.toSong() }.filter { it.id != videoId && it.isPureMusic() }
+        relatedCache[videoId] = info.relatedItems.mapNotNull { (it as? StreamInfoItem)?.toSong() }
+            .filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
+            .sortedByDescending { it.preferredMusicSource }
         val progressive = info.audioStreams.filter {
             it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.isUrl
         }

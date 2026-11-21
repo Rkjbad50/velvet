@@ -11,7 +11,14 @@ import java.util.UUID
 data class QueueItem(
     val song: Song,
     val qid: String = UUID.randomUUID().toString(),
+    val isSmartRecommended: Boolean = false,
 )
+
+enum class ShuffleMode {
+    OFF,
+    STANDARD,
+    SMART,
+}
 
 /**
  * Robust, stateful queue manager for VELVET.
@@ -21,7 +28,7 @@ data class QueueItem(
  * - [userQueue]: songs manually added via "Play next" or "Add to queue"
  * - [upNext]: remaining songs from playlist/album/radio
  * - [sourceList]: original un-shuffled song list
- * - [shuffle]: whether shuffle mode is active
+ * - [shuffleMode]: whether shuffle mode is OFF, STANDARD, or SMART
  */
 class PlayerQueueManager {
     private val _history = mutableListOf<Song>()
@@ -39,8 +46,11 @@ class PlayerQueueManager {
     private var _sourceList = listOf<Song>()
     val sourceList: List<Song> get() = _sourceList
 
-    var shuffle: Boolean = false
+    var shuffleMode: ShuffleMode = ShuffleMode.OFF
         private set
+
+    val shuffle: Boolean get() = shuffleMode != ShuffleMode.OFF
+    val isSmartShuffle: Boolean get() = shuffleMode == ShuffleMode.SMART
 
     /**
      * Visible Queue for UI:
@@ -70,7 +80,7 @@ class PlayerQueueManager {
         val startSong = uniqueSongs[safeIndex]
         current = startSong
 
-        shuffle = shuffled
+        shuffleMode = if (shuffled) ShuffleMode.STANDARD else ShuffleMode.OFF
         if (shuffled) {
             val rest = uniqueSongs.filter { it.id != startSong.id }.shuffled()
             _upNext.clear()
@@ -82,33 +92,96 @@ class PlayerQueueManager {
     }
 
     /**
-     * Toggle shuffle.
-     * - Turning ON: Fisher-Yates reshuffle of sourceList excluding current track and userQueue items.
-     *   Current track is NOT changed or interrupted. userQueue stays untouched.
-     * - Turning OFF: upNext = sourceList items after current track's position in sourceList.
-     * Returns the new shuffle state.
+     * Toggle shuffle between OFF and STANDARD.
+     * Returns true if shuffle is now active, false otherwise.
      */
     fun toggleShuffle(): Boolean {
         val currentSong = current ?: return shuffle
-        shuffle = !shuffle
+        val nextMode = if (shuffleMode == ShuffleMode.OFF) ShuffleMode.STANDARD else ShuffleMode.OFF
+        setShuffleMode(nextMode)
+        return shuffle
+    }
+
+    /**
+     * Cycle through all shuffle modes: OFF -> STANDARD -> SMART -> OFF.
+     */
+    fun cycleShuffleMode(): ShuffleMode {
+        val currentSong = current ?: return shuffleMode
+        val nextMode = when (shuffleMode) {
+            ShuffleMode.OFF -> ShuffleMode.STANDARD
+            ShuffleMode.STANDARD -> ShuffleMode.SMART
+            ShuffleMode.SMART -> ShuffleMode.OFF
+        }
+        setShuffleMode(nextMode)
+        return shuffleMode
+    }
+
+    /**
+     * Explicitly set the shuffle mode.
+     */
+    fun setShuffleMode(mode: ShuffleMode) {
+        val currentSong = current ?: run {
+            shuffleMode = mode
+            return
+        }
+        shuffleMode = mode
         val userQueueSongIds = _userQueue.map { it.song.id }.toSet()
 
-        if (shuffle) {
-            val pool = _sourceList.filter { it.id != currentSong.id && it.id !in userQueueSongIds }
-            val reshuffled = pool.shuffled()
-            _upNext.clear()
-            _upNext.addAll(reshuffled.map { QueueItem(it) })
-        } else {
-            val currentPos = _sourceList.indexOfFirst { it.id == currentSong.id }
-            val remaining = if (currentPos >= 0) {
-                _sourceList.drop(currentPos + 1).filter { it.id !in userQueueSongIds }
-            } else {
-                _sourceList.filter { it.id != currentSong.id && it.id !in userQueueSongIds }
+        when (mode) {
+            ShuffleMode.OFF -> {
+                _upNext.removeAll { it.isSmartRecommended }
+                val currentPos = _sourceList.indexOfFirst { it.id == currentSong.id }
+                val remaining = if (currentPos >= 0) {
+                    _sourceList.drop(currentPos + 1).filter { it.id !in userQueueSongIds }
+                } else {
+                    _sourceList.filter { it.id != currentSong.id && it.id !in userQueueSongIds }
+                }
+                _upNext.clear()
+                _upNext.addAll(remaining.map { QueueItem(it) })
             }
-            _upNext.clear()
-            _upNext.addAll(remaining.map { QueueItem(it) })
+            ShuffleMode.STANDARD -> {
+                _upNext.removeAll { it.isSmartRecommended }
+                val pool = _sourceList.filter { it.id != currentSong.id && it.id !in userQueueSongIds }
+                val reshuffled = pool.shuffled()
+                _upNext.clear()
+                _upNext.addAll(reshuffled.map { QueueItem(it) })
+            }
+            ShuffleMode.SMART -> {
+                val nonSmart = _upNext.filter { !it.isSmartRecommended }
+                if (nonSmart.isEmpty()) {
+                    val pool = _sourceList.filter { it.id != currentSong.id && it.id !in userQueueSongIds }
+                    _upNext.clear()
+                    _upNext.addAll(pool.shuffled().map { QueueItem(it) })
+                }
+            }
         }
-        return shuffle
+    }
+
+    /**
+     * Injects smart recommended songs in-between upcoming tracks.
+     */
+    fun injectSmartRecommendations(recommendations: List<Song>) {
+        if (shuffleMode != ShuffleMode.SMART || recommendations.isEmpty()) return
+        val existingIds = (_history.map { it.id } +
+            listOfNotNull(current?.id) +
+            _userQueue.map { it.song.id } +
+            _upNext.map { it.song.id }).toSet()
+        val fresh = recommendations.filter { it.id !in existingIds }
+        if (fresh.isEmpty()) return
+
+        val result = mutableListOf<QueueItem>()
+        var recIdx = 0
+        for (i in _upNext.indices) {
+            result.add(_upNext[i])
+            if ((i % 2 == 1 || i == _upNext.lastIndex) && recIdx < fresh.size) {
+                result.add(QueueItem(song = fresh[recIdx++], isSmartRecommended = true))
+            }
+        }
+        while (recIdx < fresh.size) {
+            result.add(QueueItem(song = fresh[recIdx++], isSmartRecommended = true))
+        }
+        _upNext.clear()
+        _upNext.addAll(result)
     }
 
     /**
@@ -116,7 +189,7 @@ class PlayerQueueManager {
      */
     fun reshuffle() {
         val currentSong = current ?: return
-        shuffle = true
+        shuffleMode = ShuffleMode.STANDARD
         val userQueueSongIds = _userQueue.map { it.song.id }.toSet()
         val pool = _sourceList.filter { it.id != currentSong.id && it.id !in userQueueSongIds }
         val reshuffled = pool.shuffled()
@@ -271,6 +344,6 @@ class PlayerQueueManager {
         _userQueue.clear()
         _upNext.clear()
         _sourceList = emptyList()
-        shuffle = false
+        shuffleMode = ShuffleMode.OFF
     }
 }
