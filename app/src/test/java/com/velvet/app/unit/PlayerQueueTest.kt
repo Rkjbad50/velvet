@@ -230,6 +230,73 @@ class PlayerQueueTest {
     }
 
     @Test
+    fun testQueueActionsByQid_historyIsNeverMutated() {
+        val songs = makeSongs(5)
+        val manager = com.velvet.app.playback.QueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+
+        // Advance twice: song_0 and song_1 move to history, song_2 is current
+        manager.advance()
+        manager.advance()
+        assertEquals("song_2", manager.current?.id)
+        assertEquals(2, manager.history.size)
+        val historyQids = manager.state.history.map { it.qid }
+
+        // Attempting moveToTop or remove on a history qid must fail and do nothing
+        val movedHist = manager.moveToTop(historyQids[0])
+        assertFalse("Cannot moveToTop a history item", movedHist)
+        assertEquals(2, manager.history.size)
+        assertTrue(manager.userQueue.isEmpty())
+
+        val removedHist = manager.removeItem(historyQids[1])
+        assertFalse("Cannot removeItem a history item", removedHist)
+        assertEquals(2, manager.history.size)
+    }
+
+    @Test
+    fun testUserQueueSurvivesShuffleTogglesRepeatRebuildsAndAutoplay() {
+        val songs = makeSongs(6)
+        val manager = com.velvet.app.playback.QueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+
+        // User manually queues 2 custom songs
+        val manual1 = makeSong("m1", "Manual 1")
+        val manual2 = makeSong("m2", "Manual 2")
+        manager.playNext(manual1)
+        manager.addToQueue(manual2)
+
+        assertEquals(2, manager.userQueue.size)
+        assertEquals("m1", manager.userQueue[0].song.id)
+        assertEquals("m2", manager.userQueue[1].song.id)
+
+        // 1. Survives multiple shuffle toggles
+        manager.enableShuffle()
+        assertEquals(2, manager.userQueue.size)
+        assertEquals("m1", manager.userQueue[0].song.id)
+        assertEquals("m2", manager.userQueue[1].song.id)
+
+        manager.disableShuffle()
+        assertEquals(2, manager.userQueue.size)
+        assertEquals("m1", manager.userQueue[0].song.id)
+        assertEquals("m2", manager.userQueue[1].song.id)
+
+        // 2. Survives autoplay extension: autoplay songs append to upNext, never userQueue
+        val autoSongs = listOf(makeSong("a1", "Autoplay 1"), makeSong("a2", "Autoplay 2"))
+        manager.appendAutoplay(autoSongs)
+        assertEquals(2, manager.userQueue.size)
+        assertEquals("m1", manager.userQueue[0].song.id)
+        assertEquals("m2", manager.userQueue[1].song.id)
+        assertTrue(manager.upNext.any { it.song.id == "a1" })
+        assertTrue(manager.upNext.any { it.song.id == "a2" })
+
+        // 3. User queue songs play first in order before upNext
+        val next1 = manager.advance()
+        assertEquals("m1", next1?.id)
+        val next2 = manager.advance()
+        assertEquals("m2", next2?.id)
+    }
+
+    @Test
     fun testPrevious_greaterThan3sRestarts_lessOrEqual3sPopsHistory() {
         val songs = makeSongs(3)
         val manager = com.velvet.app.playback.QueueManager()

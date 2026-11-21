@@ -970,7 +970,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
                 Text(
-                    if (isQueueLocked) "Queue locked" else "Swipe right on a song to play next",
+                    if (isQueueLocked) "Queue locked" else "Swipe right to play next, left to remove",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
                 )
@@ -1086,14 +1086,15 @@ private fun QueueRow(
                                 if (offsetX > 100f) {
                                     PlayerConnection.moveToTop(item.qid)
                                     android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
+                                } else if (offsetX < -100f) {
+                                    PlayerConnection.removeItem(item.qid)
+                                    android.widget.Toast.makeText(context, "Removed from queue", android.widget.Toast.LENGTH_SHORT).show()
                                 }
                                 offsetX = 0f
                             },
                             onDragCancel = { offsetX = 0f },
                             onHorizontalDrag = { _, dragAmount ->
-                                if (dragAmount > 0 || offsetX > 0) {
-                                    offsetX = (offsetX + dragAmount).coerceIn(0f, 250f)
-                                }
+                                offsetX = (offsetX + dragAmount).coerceIn(-250f, 250f)
                             },
                         )
                     }
