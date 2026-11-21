@@ -133,4 +133,59 @@ object PlaylistSorter {
         SortKey.DATE_ADDED -> if (direction == SortDirection.DESC) "Recently added" else "Oldest added"
         SortKey.DURATION -> if (direction == SortDirection.ASC) "Shortest first" else "Longest first"
     }
+
+    enum class LibrarySortKey(val label: String) {
+        RECENTLY_ADDED("Recently added"),
+        RECENTLY_PLAYED("Recently played"),
+        ALPHABETICAL("Alphabetical"),
+    }
+
+    fun <T> sortLibrary(
+        items: List<T>,
+        key: LibrarySortKey,
+        direction: SortDirection = SortDirection.ASC,
+        titleSelector: (T) -> String,
+        addedAtSelector: (T) -> Long,
+        lastPlayedAtSelector: (T) -> Long = { 0L },
+    ): List<T> {
+        if (items.size <= 1) return items
+        val indexed = items.mapIndexed { idx, item -> Pair(item, idx) }
+        val comparator: Comparator<Pair<T, Int>> = when (key) {
+            LibrarySortKey.RECENTLY_ADDED -> Comparator { a, b ->
+                val timeA = addedAtSelector(a.first)
+                val timeB = addedAtSelector(b.first)
+                if (timeA > 0L && timeB > 0L) {
+                    val cmp = if (direction == SortDirection.ASC) timeA.compareTo(timeB) else timeB.compareTo(timeA)
+                    if (cmp != 0) cmp else a.second.compareTo(b.second)
+                } else if (timeA > 0L) -1
+                else if (timeB > 0L) 1
+                else a.second.compareTo(b.second)
+            }
+            LibrarySortKey.RECENTLY_PLAYED -> Comparator { a, b ->
+                val timeA = lastPlayedAtSelector(a.first)
+                val timeB = lastPlayedAtSelector(b.first)
+                if (timeA > 0L && timeB > 0L) {
+                    val cmp = if (direction == SortDirection.ASC) timeA.compareTo(timeB) else timeB.compareTo(timeA)
+                    if (cmp != 0) cmp else a.second.compareTo(b.second)
+                } else if (timeA > 0L) -1
+                else if (timeB > 0L) 1
+                else {
+                    val addA = addedAtSelector(a.first)
+                    val addB = addedAtSelector(b.first)
+                    addB.compareTo(addA).takeIf { it != 0 } ?: a.second.compareTo(b.second)
+                }
+            }
+            LibrarySortKey.ALPHABETICAL -> Comparator { a, b ->
+                val titleA = stripLeadingArticles(titleSelector(a.first))
+                val titleB = stripLeadingArticles(titleSelector(b.first))
+                val cmp = collator.compare(titleA, titleB)
+                if (cmp != 0) {
+                    if (direction == SortDirection.ASC) cmp else -cmp
+                } else {
+                    a.second.compareTo(b.second)
+                }
+            }
+        }
+        return indexed.sortedWith(comparator).map { it.first }
+    }
 }
