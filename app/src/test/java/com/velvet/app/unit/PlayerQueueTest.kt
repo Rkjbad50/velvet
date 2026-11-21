@@ -621,6 +621,13 @@ class PlayerQueueTest {
         state = com.velvet.app.playback.QueueManager.enableShuffle(state)
         state = com.velvet.app.playback.QueueManager.setRepeatMode(state, com.velvet.app.playback.RepeatMode.ALL)
 
+        // upNext has the other 2 songs shuffled
+        assertEquals(2, state.upNext.size)
+
+        // Advance through the remaining 2 tracks
+        state = com.velvet.app.playback.QueueManager.advance(state, manual = true)
+        assertEquals(1, state.upNext.size)
+        state = com.velvet.app.playback.QueueManager.advance(state, manual = true)
         assertEquals(0, state.upNext.size)
 
         // Advancing at end of list with repeat ALL & shuffle ON rebuilds reshuffled queue
