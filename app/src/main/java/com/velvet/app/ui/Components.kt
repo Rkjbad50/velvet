@@ -77,8 +77,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import com.velvet.app.data.CoverMode
 import com.velvet.app.data.Playlist
 import com.velvet.app.data.PlaylistNameValidator
+import java.io.File
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -202,6 +204,18 @@ object PlaylistCoverPresets {
             gradient = Brush.linearGradient(listOf(Color(0xFFFF9A8B), Color(0xFFFF6A88), Color(0xFFFF99AC))),
             icon = Icons.Default.Favorite,
         ),
+        CoverPreset(
+            id = 10,
+            name = "Solar Flare",
+            gradient = Brush.linearGradient(listOf(Color(0xFFFF416C), Color(0xFFFF4B2B), Color(0xFFFF8008))),
+            icon = AppIcons.Sparkles,
+        ),
+        CoverPreset(
+            id = 11,
+            name = "Cosmic Indigo",
+            gradient = Brush.linearGradient(listOf(Color(0xFF3A1C71), Color(0xFFD76D77), Color(0xFFFFAF7B))),
+            icon = AppIcons.Radio,
+        ),
     )
 
     @Composable
@@ -224,14 +238,52 @@ object PlaylistCoverPresets {
     }
 }
 
-/** 2×2 collage of the first four distinct covers, preset gradient/icon, or custom uploaded image. */
+/** 2×2 collage of the first four distinct covers, preset gradient/icon, track art, or custom uploaded image. */
 @Composable
 fun PlaylistCover(
     songs: List<Song>,
     size: Dp,
     corner: Dp = 14.dp,
     customCover: String? = null,
+    coverMode: CoverMode = CoverMode.AUTO,
+    coverRef: String? = null,
 ) {
+    val context = LocalContext.current
+
+    when (coverMode) {
+        CoverMode.PRESET -> {
+            val presetId = coverRef?.toIntOrNull() ?: 0
+            PlaylistCoverPresets.RenderPreset(presetId, size, corner)
+            return
+        }
+        CoverMode.CUSTOM_IMAGE -> {
+            if (!coverRef.isNullOrBlank()) {
+                val file = File(File(context.filesDir, "covers"), coverRef)
+                if (file.exists() && file.length() > 0) {
+                    AsyncImage(
+                        model = file,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(size)
+                            .clip(RoundedCornerShape(corner)),
+                    )
+                    return
+                }
+            }
+        }
+        CoverMode.TRACK_ART -> {
+            val trackThumb = songs.find { it.id == coverRef }?.thumb ?: coverRef
+            if (!trackThumb.isNullOrBlank()) {
+                Artwork(trackThumb, size, corner = corner, placeholder = AppIcons.QueueMusic)
+                return
+            }
+        }
+        CoverMode.AUTO -> {
+            // Handled below
+        }
+    }
+
     if (customCover != null) {
         if (customCover.startsWith("preset:")) {
             val presetId = customCover.removePrefix("preset:").toIntOrNull() ?: 0
@@ -252,8 +304,25 @@ fun PlaylistCover(
     }
 
     val thumbs = songs.mapNotNull { it.thumb }.distinct().take(4)
+    if (thumbs.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(corner))
+                .background(velvetColors.raised),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                AppIcons.QueueMusic,
+                contentDescription = null,
+                tint = velvetColors.accentText,
+                modifier = Modifier.size(size * 0.42f),
+            )
+        }
+        return
+    }
     if (thumbs.size < 4) {
-        Artwork(thumbs.firstOrNull(), size, corner = corner, placeholder = AppIcons.QueueMusic)
+        Artwork(thumbs.first(), size, corner = corner, placeholder = AppIcons.QueueMusic)
         return
     }
     val half = size / 2
@@ -534,7 +603,7 @@ private fun ColumnScope.PlaylistPicker(song: Song, onDone: () -> Unit) {
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PlaylistCover(p.songs, 46.dp, customCover = p.customCover)
+                PlaylistCover(p.songs, 46.dp, customCover = p.customCover, coverMode = p.coverMode, coverRef = p.coverRef)
                 Column(Modifier.padding(start = 14.dp)) {
                     Text(p.name, style = MaterialTheme.typography.titleMedium)
                     Text(

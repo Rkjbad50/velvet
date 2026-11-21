@@ -1,6 +1,38 @@
 package com.velvet.app.data
 
 import kotlinx.serialization.Serializable
+import java.util.UUID
+
+@Serializable
+enum class CoverMode {
+    AUTO,
+    TRACK_ART,
+    CUSTOM_IMAGE,
+    PRESET,
+}
+
+@Serializable
+enum class SortKey {
+    CUSTOM,
+    TITLE,
+    ARTIST,
+    ALBUM,
+    DATE_ADDED,
+    DURATION,
+}
+
+@Serializable
+enum class SortDirection {
+    ASC,
+    DESC,
+}
+
+@Serializable
+data class PlaylistEntry(
+    val entryId: String = UUID.randomUUID().toString(),
+    val song: Song,
+    val addedAt: Long = 0L,
+)
 
 @Serializable
 data class Song(
@@ -18,14 +50,34 @@ data class Playlist(
     val id: String,
     val name: String,
     val songs: List<Song> = emptyList(),
+    val entries: List<PlaylistEntry> = emptyList(),
     val updatedAt: Long = 0,
     /** When it was created (0 for playlists saved before this field existed). */
     val addedAt: Long = 0,
+    val createdAt: Long = addedAt,
     val playCount: Long = 0,
     val lastPlayedAt: Long = 0,
     val customCover: String? = null,
     val description: String? = null,
-)
+    val coverMode: CoverMode = CoverMode.AUTO,
+    val coverRef: String? = null,
+    val sortKey: SortKey = SortKey.CUSTOM,
+    val sortDirection: SortDirection = SortDirection.ASC,
+) {
+    fun resolvedEntries(): List<PlaylistEntry> {
+        if (entries.isNotEmpty()) return entries
+        return songs.mapIndexed { index, song ->
+            PlaylistEntry(
+                entryId = "${id}_legacy_${index}_${song.id}",
+                song = song,
+                addedAt = 0L,
+            )
+        }
+    }
+
+    val resolvedSongs: List<Song>
+        get() = if (entries.isNotEmpty()) entries.map { it.song } else songs
+}
 
 internal fun List<Playlist>.homePlaylists(limit: Int = 2): List<Playlist> = asSequence()
     .filter { it.songs.isNotEmpty() }

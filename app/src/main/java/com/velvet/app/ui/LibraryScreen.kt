@@ -67,7 +67,7 @@ fun LibraryScreen() {
     }
     val entries = buildList {
         data.playlists.forEach { p ->
-            add(LibEntry("p-" + p.id, p.name, "Playlist • ${songCountLabel(p.songs.size)}", LibFilter.Playlists, p.addedAt, { PlaylistCover(p.songs, 58.dp, customCover = p.customCover) }) {
+            add(LibEntry("p-" + p.id, p.name, "Playlist • ${songCountLabel(p.songs.size)}", LibFilter.Playlists, p.addedAt, { PlaylistCover(p.songs, 58.dp, customCover = p.customCover, coverMode = p.coverMode, coverRef = p.coverRef) }) {
                 nav.open(Route.LocalPlaylist(p.id))
             })
         }

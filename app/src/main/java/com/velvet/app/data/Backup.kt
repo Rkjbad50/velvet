@@ -59,7 +59,11 @@ fun mergeLibraries(current: LibraryData, incoming: LibraryData): LibraryData {
     val playlists = (current.playlists + incoming.playlists)
         .groupBy { it.id }
         .map { (_, versions) ->
-            versions.maxBy { it.updatedAt }.copy(
+            val newest = versions.maxBy { it.updatedAt }
+            val resolvedEnt = newest.resolvedEntries()
+            newest.copy(
+                entries = resolvedEnt,
+                songs = if (newest.songs.isNotEmpty()) newest.songs else resolvedEnt.map { it.song },
                 playCount = versions.maxOf { it.playCount },
                 lastPlayedAt = versions.maxOf { it.lastPlayedAt },
             )

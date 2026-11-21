@@ -238,7 +238,7 @@ fun HomeScreen(vm: HomeViewModel) {
     val savedAlbums = data.albums.sortedByDescending { it.addedAt }
     val shortcuts = buildList {
         userPlaylists.forEach { p ->
-            add(Shortcut(p.name, { PlaylistCover(p.songs, 58.dp, corner = 16.dp, customCover = p.customCover) }) { nav.open(Route.LocalPlaylist(p.id)) })
+            add(Shortcut(p.name, { PlaylistCover(p.songs, 58.dp, corner = 16.dp, customCover = p.customCover, coverMode = p.coverMode, coverRef = p.coverRef) }) { nav.open(Route.LocalPlaylist(p.id)) })
         }
         if (size < 4) {
             savedAlbums.take(4 - size).forEach { a ->

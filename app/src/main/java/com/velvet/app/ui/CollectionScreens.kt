@@ -418,6 +418,8 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                             if (activeSongs.size <= 1) 156.dp else 230.dp,
                             corner = 28.dp,
                             customCover = playlist.customCover,
+                            coverMode = playlist.coverMode,
+                            coverRef = playlist.coverRef,
                         )
                     },
                     artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,

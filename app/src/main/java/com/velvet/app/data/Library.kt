@@ -134,6 +134,52 @@ class LibraryStore(private val dir: File) {
     // version 1 files had no version field (decoded as the default); nothing to convert yet
     private fun migrate(data: LibraryData): LibraryData {
         var current = if (data.version < LibraryData.CURRENT_VERSION) data.copy(version = LibraryData.CURRENT_VERSION) else data
+        val coversDir = File(dir, "covers")
+        val migratedPlaylists = current.playlists.map { p ->
+            var pl = p
+            // 1. Ensure entries are populated from legacy songs if missing
+            if (pl.entries.isEmpty() && pl.songs.isNotEmpty()) {
+                val entries = pl.songs.mapIndexed { i, s ->
+                    PlaylistEntry(entryId = "${pl.id}_legacy_${i}_${s.id}", song = s, addedAt = 0L)
+                }
+                pl = pl.copy(entries = entries, songs = entries.map { it.song })
+            } else if (pl.entries.isNotEmpty() && pl.songs.isEmpty()) {
+                pl = pl.copy(songs = pl.entries.map { it.song })
+            }
+            // 2. Ensure createdAt / addedAt consistency
+            if (pl.createdAt == 0L && pl.addedAt > 0L) {
+                pl = pl.copy(createdAt = pl.addedAt)
+            } else if (pl.addedAt == 0L && pl.createdAt > 0L) {
+                pl = pl.copy(addedAt = pl.createdAt)
+            }
+            // 3. Migrate legacy customCover string if coverMode is AUTO and coverRef is null
+            if (pl.coverMode == CoverMode.AUTO && pl.coverRef == null && pl.customCover != null) {
+                val legacy = pl.customCover
+                pl = when {
+                    legacy.startsWith("preset:") -> {
+                        pl.copy(coverMode = CoverMode.PRESET, coverRef = legacy.removePrefix("preset:"))
+                    }
+                    legacy.startsWith("file://") || legacy.startsWith("/") -> {
+                        val fileName = File(legacy.removePrefix("file://")).name
+                        pl.copy(coverMode = CoverMode.CUSTOM_IMAGE, coverRef = fileName)
+                    }
+                    else -> {
+                        pl.copy(coverMode = CoverMode.TRACK_ART, coverRef = legacy)
+                    }
+                }
+            }
+            // 4. If custom image file does not exist on disk, silently fall back to AUTO
+            if (pl.coverMode == CoverMode.CUSTOM_IMAGE) {
+                val fileName = pl.coverRef
+                val file = if (fileName != null) File(coversDir, fileName) else null
+                if (file == null || !file.exists() || file.length() == 0L) {
+                    pl = pl.copy(coverMode = CoverMode.AUTO, coverRef = null, customCover = null)
+                }
+            }
+            pl
+        }
+        current = current.copy(playlists = migratedPlaylists)
+
         if (current.contextRecents.isEmpty() && current.recent.isNotEmpty()) {
             val migrated = ContextRecentsManager.migrateOldFormat(current.recent, current.playlists)
             if (migrated.isNotEmpty()) {
@@ -195,10 +241,69 @@ class Library(dir: File) {
 
     // ---------------------------------------------------------------- playlists
 
+    val coversDir: File = File(dir, "covers").apply { mkdirs() }
+
+    fun deleteCoverFile(fileName: String?) {
+        if (!fileName.isNullOrBlank()) {
+            runCatching {
+                val f = File(coversDir, fileName)
+                if (f.exists()) f.delete()
+            }
+        }
+    }
+
     fun createPlaylist(name: String, songs: List<Song> = emptyList()): String {
         val id = UUID.randomUUID().toString()
-        update { it.copy(playlists = listOf(Playlist(id, name.trim(), songs, now(), addedAt = now())) + it.playlists) }
+        val entries = songs.mapIndexed { i, s ->
+            PlaylistEntry(entryId = UUID.randomUUID().toString(), song = s, addedAt = now())
+        }
+        val playlist = Playlist(
+            id = id,
+            name = name.trim(),
+            songs = songs,
+            entries = entries,
+            createdAt = now(),
+            addedAt = now(),
+            updatedAt = now(),
+            coverMode = CoverMode.AUTO,
+            sortKey = SortKey.CUSTOM,
+            sortDirection = SortDirection.ASC,
+        )
+        update { it.copy(playlists = listOf(playlist) + it.playlists) }
         return id
+    }
+
+    fun duplicatePlaylist(id: String): String? {
+        val original = _data.value.playlists.find { it.id == id } ?: return null
+        val newId = UUID.randomUUID().toString()
+        val newName = "${original.name} (Copy)"
+        val copiedEntries = original.resolvedEntries().map {
+            it.copy(entryId = UUID.randomUUID().toString(), addedAt = now())
+        }
+        var newCoverRef = original.coverRef
+        if (original.coverMode == CoverMode.CUSTOM_IMAGE && original.coverRef != null) {
+            val origFile = File(coversDir, original.coverRef)
+            if (origFile.exists()) {
+                val copyFileName = "${newId}_${now()}.jpg"
+                origFile.copyTo(File(coversDir, copyFileName), overwrite = true)
+                newCoverRef = copyFileName
+            }
+        }
+        val copy = original.copy(
+            id = newId,
+            name = newName,
+            entries = copiedEntries,
+            songs = copiedEntries.map { it.song },
+            createdAt = now(),
+            addedAt = now(),
+            updatedAt = now(),
+            playCount = 0L,
+            lastPlayedAt = 0L,
+            coverRef = newCoverRef,
+            customCover = if (original.coverMode == CoverMode.CUSTOM_IMAGE && newCoverRef != null) "file://${File(coversDir, newCoverRef).absolutePath}" else original.customCover,
+        )
+        update { it.copy(playlists = listOf(copy) + it.playlists) }
+        return newId
     }
 
     fun renamePlaylist(id: String, name: String) = updatePlaylist(id) { it.copy(name = name.trim()) }
@@ -207,13 +312,70 @@ class Library(dir: File) {
         it.copy(name = name.trim(), description = description?.trim()?.ifEmpty { null })
     }
 
-    fun setPlaylistCover(id: String, cover: String?) = updatePlaylist(id) { it.copy(customCover = cover) }
+    fun setPlaylistCover(id: String, mode: CoverMode, ref: String?) = updatePlaylist(id) { p ->
+        if (p.coverMode == CoverMode.CUSTOM_IMAGE && p.coverRef != null && p.coverRef != ref) {
+            deleteCoverFile(p.coverRef)
+        }
+        val legacy = when (mode) {
+            CoverMode.PRESET -> "preset:$ref"
+            CoverMode.CUSTOM_IMAGE -> ref?.let { "file://${File(coversDir, it).absolutePath}" }
+            CoverMode.TRACK_ART -> ref
+            CoverMode.AUTO -> null
+        }
+        p.copy(coverMode = mode, coverRef = ref, customCover = legacy)
+    }
 
-    fun deletePlaylist(id: String) = update { d ->
-        d.copy(
-            playlists = d.playlists.filterNot { it.id == id },
-            contextRecents = d.contextRecents.filterNot { it.type == RecentType.LOCAL_PLAYLIST && it.id == id },
+    fun revertPlaylistCover(id: String) = updatePlaylist(id) { p ->
+        if (p.coverMode == CoverMode.CUSTOM_IMAGE && p.coverRef != null) {
+            deleteCoverFile(p.coverRef)
+        }
+        p.copy(coverMode = CoverMode.AUTO, coverRef = null, customCover = null)
+    }
+
+    fun setPlaylistCover(id: String, cover: String?) = updatePlaylist(id) { p ->
+        if (cover == null) {
+            if (p.coverMode == CoverMode.CUSTOM_IMAGE && p.coverRef != null) {
+                deleteCoverFile(p.coverRef)
+            }
+            p.copy(coverMode = CoverMode.AUTO, coverRef = null, customCover = null)
+        } else if (cover.startsWith("preset:")) {
+            if (p.coverMode == CoverMode.CUSTOM_IMAGE && p.coverRef != null) {
+                deleteCoverFile(p.coverRef)
+            }
+            val presetId = cover.removePrefix("preset:")
+            p.copy(coverMode = CoverMode.PRESET, coverRef = presetId, customCover = cover)
+        } else if (cover.startsWith("file://") || cover.startsWith("/")) {
+            val fileName = File(cover.removePrefix("file://")).name
+            p.copy(coverMode = CoverMode.CUSTOM_IMAGE, coverRef = fileName, customCover = cover)
+        } else {
+            p.copy(coverMode = CoverMode.TRACK_ART, coverRef = cover, customCover = cover)
+        }
+    }
+
+    fun setPlaylistSort(id: String, key: SortKey, direction: SortDirection) = updatePlaylist(id) { p ->
+        p.copy(sortKey = key, sortDirection = direction)
+    }
+
+    fun savePlaylistOrder(id: String, reordered: List<PlaylistEntry>) = updatePlaylist(id) { p ->
+        p.copy(
+            entries = reordered,
+            songs = reordered.map { it.song },
+            sortKey = SortKey.CUSTOM,
+            sortDirection = SortDirection.ASC,
         )
+    }
+
+    fun deletePlaylist(id: String) {
+        val target = _data.value.playlists.find { it.id == id }
+        if (target != null && target.coverMode == CoverMode.CUSTOM_IMAGE && target.coverRef != null) {
+            deleteCoverFile(target.coverRef)
+        }
+        update { d ->
+            d.copy(
+                playlists = d.playlists.filterNot { it.id == id },
+                contextRecents = d.contextRecents.filterNot { it.type == RecentType.LOCAL_PLAYLIST && it.id == id },
+            )
+        }
     }
 
     internal fun recordPlaylistPlay(id: String) = update { d ->
@@ -223,18 +385,26 @@ class Library(dir: File) {
     }
 
     fun addToPlaylist(playlistId: String, song: Song) = updatePlaylist(playlistId) { p ->
-        if (p.songs.any { it.id == song.id }) p else p.copy(songs = p.songs + song)
+        val newEntry = PlaylistEntry(entryId = UUID.randomUUID().toString(), song = song, addedAt = now())
+        val entries = p.resolvedEntries() + newEntry
+        p.copy(entries = entries, songs = entries.map { it.song })
+    }
+
+    fun removeEntryFromPlaylist(playlistId: String, entryId: String) = updatePlaylist(playlistId) { p ->
+        val entries = p.resolvedEntries().filterNot { it.entryId == entryId }
+        p.copy(entries = entries, songs = entries.map { it.song })
     }
 
     fun removeFromPlaylist(playlistId: String, songId: String) = updatePlaylist(playlistId) { p ->
-        p.copy(songs = p.songs.filterNot { it.id == songId })
+        val entries = p.resolvedEntries().filterNot { it.song.id == songId }
+        p.copy(entries = entries, songs = entries.map { it.song })
     }
 
     fun moveInPlaylist(playlistId: String, from: Int, to: Int) = updatePlaylist(playlistId) { p ->
-        if (from !in p.songs.indices || to !in p.songs.indices) return@updatePlaylist p
-        val songs = p.songs.toMutableList()
-        songs.add(to, songs.removeAt(from))
-        p.copy(songs = songs)
+        val entries = p.resolvedEntries().toMutableList()
+        if (from !in entries.indices || to !in entries.indices) return@updatePlaylist p
+        entries.add(to, entries.removeAt(from))
+        p.copy(entries = entries, songs = entries.map { it.song })
     }
 
     private fun updatePlaylist(id: String, change: (Playlist) -> Playlist) = update { d ->
@@ -326,7 +496,16 @@ class Library(dir: File) {
 
     fun setAutoUpdateCheck(enabled: Boolean) = update { it.copy(autoUpdateCheck = enabled) }
 
-    fun setPlaylistSongs(playlistId: String, songs: List<Song>) = updatePlaylist(playlistId) { it.copy(songs = songs) }
+    fun setPlaylistSongs(playlistId: String, songs: List<Song>) = updatePlaylist(playlistId) { p ->
+        val entries = songs.mapIndexed { i, s ->
+            PlaylistEntry(entryId = UUID.randomUUID().toString(), song = s, addedAt = now())
+        }
+        p.copy(entries = entries, songs = songs)
+    }
+
+    fun setPlaylistEntries(playlistId: String, entries: List<PlaylistEntry>) = updatePlaylist(playlistId) { p ->
+        p.copy(entries = entries, songs = entries.map { it.song })
+    }
 
     fun setDataSaver(enabled: Boolean) = update { it.copy(dataSaver = enabled) }
 
