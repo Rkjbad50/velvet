@@ -561,4 +561,73 @@ class PlayerQueueTest {
         assertEquals("song_3", manager.upNext[1].song.id)
         assertEquals("song_1", manager.upNext[2].song.id)
     }
+
+    @Test
+    fun testRepeatOne_autoAdvanceReplaysCurrent_manualNextAdvances() {
+        val songs = makeSongs(3)
+        val manager = com.velvet.app.playback.QueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+        manager.setRepeatMode(com.velvet.app.playback.RepeatMode.ONE)
+
+        assertEquals("song_0", manager.current?.id)
+        assertEquals(com.velvet.app.playback.RepeatMode.ONE, manager.repeatMode)
+
+        // 1. Natural track end (auto-advance with manual = false): replays current track
+        val autoAdvanceSong = manager.advance(manual = false)
+        assertEquals("song_0", autoAdvanceSong?.id)
+        assertEquals("song_0", manager.current?.id)
+        assertTrue(manager.history.isEmpty())
+
+        // 2. User presses Next button (manual = true): advances to next track
+        val manualNextSong = manager.advance(manual = true)
+        assertEquals("song_1", manualNextSong?.id)
+        assertEquals("song_1", manager.current?.id)
+        assertEquals("song_0", manager.history.last().id)
+        assertEquals(com.velvet.app.playback.RepeatMode.ONE, manager.repeatMode)
+    }
+
+    @Test
+    fun testShuffleRetap_producesNewOrder_rerollsIfIdentical() {
+        val songs = makeSongs(15)
+        val manager = com.velvet.app.playback.QueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+
+        val orders = mutableListOf<List<String>>()
+
+        // Toggle OFF -> ON 5 times
+        for (i in 1..5) {
+            manager.enableShuffle()
+            val order = manager.upNext.map { it.song.id }
+            orders.add(order)
+            manager.disableShuffle()
+        }
+
+        // Check that consecutive shuffled orders are distinct
+        for (i in 0 until orders.size - 1) {
+            assertNotEquals("Consecutive shuffle taps must generate distinct permutations", orders[i], orders[i + 1])
+        }
+    }
+
+    @Test
+    fun testRepeatAllAtEndOfList_reshufflesWhenShuffleOn() {
+        val songs = makeSongs(3)
+        var state = com.velvet.app.playback.QueueManager.start(
+            com.velvet.app.playback.QueueState(),
+            songs,
+            startIndex = 2, // at last track
+            shuffled = false,
+        )
+        // Enable shuffle and repeat ALL
+        state = com.velvet.app.playback.QueueManager.enableShuffle(state)
+        state = com.velvet.app.playback.QueueManager.setRepeatMode(state, com.velvet.app.playback.RepeatMode.ALL)
+
+        assertEquals(0, state.upNext.size)
+
+        // Advancing at end of list with repeat ALL & shuffle ON rebuilds reshuffled queue
+        val nextState = com.velvet.app.playback.QueueManager.advance(state, manual = true)
+        assertNotNull(nextState.current)
+        assertEquals(2, nextState.upNext.size)
+        assertEquals(com.velvet.app.playback.ShuffleMode.STANDARD, nextState.shuffleMode)
+        assertEquals(com.velvet.app.playback.RepeatMode.ALL, nextState.repeatMode)
+    }
 }

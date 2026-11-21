@@ -81,10 +81,10 @@ class QueueManager(initialState: QueueState = QueueState()) {
         update { Companion.start(it, songs, startIndex, shuffled, rng = rng) }
     }
 
-    fun advance(rng: Random = Random()): Song? {
+    fun advance(manual: Boolean = false, rng: Random = Random()): Song? {
         var nextSong: Song? = null
         update {
-            val newState = Companion.advance(it, rng)
+            val newState = Companion.advance(it, manual, rng)
             nextSong = newState.current?.song
             newState
         }
@@ -165,6 +165,16 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
     fun reorderUpNext(fromIndex: Int, toIndex: Int) {
         update { Companion.reorderUpNext(it, fromIndex, toIndex) }
+    }
+
+    fun enableShuffle(mode: ShuffleMode = ShuffleMode.STANDARD, allowSmartShuffle: Boolean = true, rng: Random = Random()): ShuffleMode {
+        update { Companion.enableShuffle(it, mode, allowSmartShuffle, rng) }
+        return state.shuffleMode
+    }
+
+    fun disableShuffle(): ShuffleMode {
+        update { Companion.disableShuffle(it) }
+        return state.shuffleMode
     }
 
     fun setShuffleMode(mode: ShuffleMode, allowSmartShuffle: Boolean = true, rng: Random = Random()): ShuffleMode {
@@ -288,13 +298,13 @@ class QueueManager(initialState: QueueState = QueueState()) {
          * Order: current -> userQueue (in order) -> upNext (in order).
          * Old current moves to history.
          * If repeat ALL and queue ends: rebuild upNext from sourceList (reshuffled if shuffle on).
-         * If repeat ONE: current repeats.
+         * If repeat ONE: auto-advance replays current; manual Next advances to next song.
          */
-        fun advance(state: QueueState, rng: Random = Random()): QueueState {
+        fun advance(state: QueueState, manual: Boolean = false, rng: Random = Random()): QueueState {
             val oldCurrent = state.current ?: return state
 
-            // Repeat ONE replays current
-            if (state.repeatMode == RepeatMode.ONE) {
+            // Repeat ONE: auto-advance replays current; manual Next still advances
+            if (state.repeatMode == RepeatMode.ONE && !manual) {
                 return state
             }
 
@@ -485,74 +495,86 @@ class QueueManager(initialState: QueueState = QueueState()) {
         }
 
         /**
-         * Explicitly set shuffle mode according to Spotify behavior:
-         * - Current song is NEVER interrupted.
+         * Enable shuffle mode according to Spotify behavior:
+         * - Current song is NEVER interrupted (pinned and keeps playing).
          * - userQueue is untouched.
-         * - When turning ON (STANDARD): upNext = shuffle(sourceList minus current minus history).
-         *   Guarantees a new order when upNext.size > 2.
-         * - When turning OFF: upNext = sourceList items positioned AFTER current's position in sourceList.
-         * - When SMART: after Fisher-Yates, spread same-artist tracks apart.
+         * - upNext = Fisher-Yates(sourceList minus current minus history minus userQueue).
+         * - Re-tap (OFF->ON): If upNext.size > 2 and result equals previous order, re-roll up to 5 times.
+         * - In SMART mode: after Fisher-Yates, spread same-artist tracks apart.
          */
-        fun setShuffleMode(
+        fun enableShuffle(
             state: QueueState,
-            mode: ShuffleMode,
+            mode: ShuffleMode = ShuffleMode.STANDARD,
             allowSmartShuffle: Boolean = true,
             rng: Random = Random(),
         ): QueueState {
             val targetMode = if (mode == ShuffleMode.SMART && !allowSmartShuffle) ShuffleMode.STANDARD else mode
             val currentItem = state.current ?: return state.copy(shuffleMode = targetMode)
             val userQueueSongIds = state.userQueue.map { it.song.id }.toSet()
+            val historySongIds = state.history.map { it.song.id }.toSet()
 
-            return when (targetMode) {
-                ShuffleMode.OFF -> {
-                    val currentPos = state.sourceList.indexOfFirst { it.song.id == currentItem.song.id }
-                    val remaining = if (currentPos >= 0) {
-                        state.sourceList.drop(currentPos + 1).filter { it.song.id !in userQueueSongIds }
-                    } else {
-                        state.sourceList.filter { it.song.id != currentItem.song.id && it.song.id !in userQueueSongIds }
-                    }
-                    state.copy(
-                        shuffleMode = ShuffleMode.OFF,
-                        upNext = remaining.map { QueueItem(it.song) },
-                    )
-                }
-                ShuffleMode.STANDARD -> {
-                    val historySongIds = state.history.map { it.song.id }.toSet()
-                    val pool = state.sourceList.filter {
-                        it.song.id != currentItem.song.id &&
-                            it.song.id !in historySongIds &&
-                            it.song.id !in userQueueSongIds
-                    }
-                    val previousIds = state.upNext.map { it.song.id }
-                    var reshuffled = fisherYatesShuffle(pool, rng)
-                    // Guarantee the new order differs from previous when size > 2
-                    if (pool.size > 2) {
-                        var attempts = 0
-                        while (attempts < 5 && reshuffled.map { it.song.id } == previousIds) {
-                            reshuffled = fisherYatesShuffle(pool, rng)
-                            attempts++
-                        }
-                    }
-                    state.copy(
-                        shuffleMode = ShuffleMode.STANDARD,
-                        upNext = reshuffled.map { QueueItem(it.song) },
-                    )
-                }
-                ShuffleMode.SMART -> {
-                    val historySongIds = state.history.map { it.song.id }.toSet()
-                    val pool = state.sourceList.filter {
-                        it.song.id != currentItem.song.id &&
-                            it.song.id !in historySongIds &&
-                            it.song.id !in userQueueSongIds
-                    }
-                    val shuffled = fisherYatesShuffle(pool, rng)
-                    val spaced = spreadSameArtistTracks(shuffled)
-                    state.copy(
-                        shuffleMode = ShuffleMode.SMART,
-                        upNext = spaced.map { QueueItem(it.song) },
-                    )
+            val pool = state.sourceList.filter {
+                it.song.id != currentItem.song.id &&
+                    it.song.id !in historySongIds &&
+                    it.song.id !in userQueueSongIds
+            }
+
+            val previousIds = state.upNext.map { it.song.id }
+            var reshuffled = fisherYatesShuffle(pool, rng)
+
+            // Guarantee the new order differs from previous when size > 2 (re-roll up to 5 times)
+            if (pool.size > 2) {
+                var attempts = 0
+                while (attempts < 5 && reshuffled.map { it.song.id } == previousIds) {
+                    reshuffled = fisherYatesShuffle(pool, rng)
+                    attempts++
                 }
             }
+
+            val finalUpNext = if (targetMode == ShuffleMode.SMART) {
+                spreadSameArtistTracks(reshuffled)
+            } else {
+                reshuffled
+            }
+
+            return state.copy(
+                shuffleMode = targetMode,
+                upNext = finalUpNext.map { QueueItem(it.song) },
+            )
+        }
+
+        /**
+         * Disable shuffle mode according to Spotify behavior:
+         * - Current song keeps playing uninterrupted.
+         * - userQueue is untouched.
+         * - upNext = sourceList items positioned AFTER current's position in sourceList.
+         */
+        fun disableShuffle(state: QueueState): QueueState {
+            val currentItem = state.current ?: return state.copy(shuffleMode = ShuffleMode.OFF)
+            val userQueueSongIds = state.userQueue.map { it.song.id }.toSet()
+
+            val currentPos = state.sourceList.indexOfFirst { it.song.id == currentItem.song.id }
+            val remaining = if (currentPos >= 0) {
+                state.sourceList.drop(currentPos + 1).filter { it.song.id !in userQueueSongIds }
+            } else {
+                state.sourceList.filter { it.song.id != currentItem.song.id && it.song.id !in userQueueSongIds }
+            }
+
+            return state.copy(
+                shuffleMode = ShuffleMode.OFF,
+                upNext = remaining.map { QueueItem(it.song) },
+            )
+        }
+
+        fun setShuffleMode(
+            state: QueueState,
+            mode: ShuffleMode,
+            allowSmartShuffle: Boolean = true,
+            rng: Random = Random(),
+        ): QueueState = when (mode) {
+            ShuffleMode.OFF -> disableShuffle(state)
+            ShuffleMode.STANDARD -> enableShuffle(state, ShuffleMode.STANDARD, allowSmartShuffle, rng)
+            ShuffleMode.SMART -> enableShuffle(state, ShuffleMode.SMART, allowSmartShuffle, rng)
         }
 
         fun toggleShuffle(state: QueueState, allowSmartShuffle: Boolean = true, rng: Random = Random()): QueueState {

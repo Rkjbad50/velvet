@@ -175,7 +175,7 @@ object PlayerConnection {
             // When ExoPlayer auto-advances (track finished naturally), pop from our queue
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-                queueManager.advance()
+                queueManager.advance(manual = false)
                 syncQueueState()
                 syncToExoPlayer()
                 checkAndExtendAutoplay()
@@ -489,7 +489,7 @@ object PlayerConnection {
     }
 
     fun next() {
-        val nextSong = queueManager.advance()
+        val nextSong = queueManager.advance(manual = true)
         if (nextSong != null) {
             syncQueueState()
             syncToExoPlayer()
