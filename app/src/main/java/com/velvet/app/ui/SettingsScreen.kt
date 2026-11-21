@@ -298,6 +298,12 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         SettingsGroup("Playback") {
             ToggleRow("Autoplay", "Keep playing similar songs when your queue ends", data.autoplay, library::setAutoplay)
+            ToggleRow(
+                "Self-healing",
+                "Automatically retry transient errors, re-resolve expired links, and skip broken songs",
+                data.selfHealingEnabled,
+                library::setSelfHealing
+            )
             ToggleRow("Hi-Res audio", "Stream the best quality YouTube offers. Off saves mobile data", !data.dataSaver) { PlayerConnection.setHiRes(it) }
             ToggleRow(
                 "Look up lyrics automatically",

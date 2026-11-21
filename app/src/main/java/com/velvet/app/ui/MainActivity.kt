@@ -43,7 +43,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -182,52 +184,85 @@ private fun AppRoot() {
         Box(Modifier.fillMaxSize()) {
             PaperBackground()
 
-            Box(
+            Column(
                 Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .padding(bottom = bottomRoom),
             ) {
-                AnimatedContent(
-                    targetState = Pair(nav.tab, nav.current),
-                    transitionSpec = {
-                        val isTabSwitch = initialState.second == null && targetState.second == null
-                        if (isTabSwitch) {
-                            // Fluid butter-smooth tab transition with zero scale jerk
-                            fadeIn(animationSpec = tween(140, easing = LinearEasing))
-                                .togetherWith(fadeOut(animationSpec = tween(140, easing = LinearEasing)))
-                        } else if (targetState.second != null && initialState.second == null) {
-                            // Detail screen entrance: elegant subtle slide & fade
-                            (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                                slideInHorizontally(initialOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(220, easing = FastOutSlowInEasing)))
-                                .togetherWith(fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)))
-                        } else {
-                            // Detail screen exit: graceful retreat
-                            fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
-                                .togetherWith(fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)) +
-                                    slideOutHorizontally(targetOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(180, easing = FastOutSlowInEasing)))
+                PlayerConnection.brokenStreamingBanner?.let { bannerText ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = bannerText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = {
+                                    PlayerConnection.dismissStreamingBrokenBanner()
+                                    nav.open(Route.Developer)
+                                },
+                            ) {
+                                Text("Developer options")
+                            }
                         }
-                    },
-                    label = "screenTransition",
-                ) { (_, currentRoute) ->
-                    when (currentRoute) {
-                        null -> when (nav.tab) {
-                            0 -> HomeScreen(viewModel())
-                            1 -> SearchScreen(searchVm)
-                            else -> LibraryScreen()
+                    }
+                }
+
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    AnimatedContent(
+                        targetState = Pair(nav.tab, nav.current),
+                        transitionSpec = {
+                            val isTabSwitch = initialState.second == null && targetState.second == null
+                            if (isTabSwitch) {
+                                // Fluid butter-smooth tab transition with zero scale jerk
+                                fadeIn(animationSpec = tween(140, easing = LinearEasing))
+                                    .togetherWith(fadeOut(animationSpec = tween(140, easing = LinearEasing)))
+                            } else if (targetState.second != null && initialState.second == null) {
+                                // Detail screen entrance: elegant subtle slide & fade
+                                (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                                    slideInHorizontally(initialOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(220, easing = FastOutSlowInEasing)))
+                                    .togetherWith(fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)))
+                            } else {
+                                // Detail screen exit: graceful retreat
+                                fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
+                                    .togetherWith(fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)) +
+                                        slideOutHorizontally(targetOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(180, easing = FastOutSlowInEasing)))
+                            }
+                        },
+                        label = "screenTransition",
+                    ) { (_, currentRoute) ->
+                        when (currentRoute) {
+                            null -> when (nav.tab) {
+                                0 -> HomeScreen(viewModel())
+                                1 -> SearchScreen(searchVm)
+                                else -> LibraryScreen()
+                            }
+                            Route.Liked -> LikedScreen(onBack = nav::back)
+                            Route.Recent -> RecentScreen(onBack = nav::back)
+                            Route.Downloads -> DownloadsScreen(onBack = nav::back)
+                            Route.Settings -> SettingsScreen(onBack = nav::back)
+                            Route.Equalizer -> EqualizerScreen(onBack = nav::back)
+                            Route.Import -> ImportScreen(onBack = nav::back)
+                            Route.Developer -> DeveloperScreen(onBack = nav::back)
+                            is Route.LocalPlaylist -> LocalPlaylistScreen(currentRoute.id, onBack = nav::back)
+                            is Route.Album -> AlbumScreen(currentRoute.album, onBack = nav::back)
+                            is Route.Artist -> ArtistScreen(currentRoute.artist, onBack = nav::back)
+                            is Route.Genre -> GenreScreen(currentRoute.name, onBack = nav::back)
                         }
-                        Route.Liked -> LikedScreen(onBack = nav::back)
-                        Route.Recent -> RecentScreen(onBack = nav::back)
-                        Route.Downloads -> DownloadsScreen(onBack = nav::back)
-                        Route.Settings -> SettingsScreen(onBack = nav::back)
-                        Route.Equalizer -> EqualizerScreen(onBack = nav::back)
-                        Route.Import -> ImportScreen(onBack = nav::back)
-                        Route.Developer -> DeveloperScreen(onBack = nav::back)
-                        is Route.LocalPlaylist -> LocalPlaylistScreen(currentRoute.id, onBack = nav::back)
-                        is Route.Album -> AlbumScreen(currentRoute.album, onBack = nav::back)
-                        is Route.Artist -> ArtistScreen(currentRoute.artist, onBack = nav::back)
-                        is Route.Genre -> GenreScreen(currentRoute.name, onBack = nav::back)
                     }
                 }
             }

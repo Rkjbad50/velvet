@@ -60,6 +60,16 @@ object PlayerConnection {
     var savedInitialPositionMs by mutableLongStateOf(0L)
         private set
     var error by mutableStateOf<String?>(null)
+    var brokenStreamingBanner by mutableStateOf<String?>(null)
+        private set
+
+    fun showStreamingBrokenBanner(message: String) {
+        brokenStreamingBanner = message
+    }
+
+    fun dismissStreamingBrokenBanner() {
+        brokenStreamingBanner = null
+    }
     var currentPlaylistId by mutableStateOf<String?>(null)
         private set
     var isRadioActive by mutableStateOf(false)

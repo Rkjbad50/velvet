@@ -38,6 +38,7 @@ import com.velvet.app.diagnostics.LastErrorTracker
 import com.velvet.app.data.isDuplicateOf
 import com.velvet.app.data.isValidVideoId
 import com.velvet.app.ui.MainActivity
+import com.velvet.app.ui.PlayerConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,6 +69,7 @@ class PlaybackService : MediaSessionService() {
     private var retriedId: String? = null
     private var failuresInARow = 0
     private var announcedSessionId = C.AUDIO_SESSION_ID_UNSET
+    private val healingLadder = PlaybackHealingLadder()
 
     /** Bumped whenever the queue is replaced. */
     private var queueGeneration = 0
@@ -284,7 +286,12 @@ class PlaybackService : MediaSessionService() {
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {}
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (isPlaying) failuresInARow = 0
+            if (isPlaying) {
+                failuresInARow = 0
+                exo.currentMediaItem?.mediaId?.let { id ->
+                    healingLadder.onPlaybackSuccess(id)
+                }
+            }
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -306,34 +313,84 @@ class PlaybackService : MediaSessionService() {
 
     private fun handleError(error: PlaybackException) {
         val id = exo.currentMediaItem?.mediaId ?: return
+        healingLadder.selfHealingEnabled = VelvetApp.library.data.value.selfHealingEnabled
         failuresInARow++
         LastErrorTracker.record(error, videoId = id)
 
-        // offline, rate-limited or YouTube having a bad moment: wait instead of burning through the queue
-        if (isTemporaryOutage(error)) {
-            toast(if (isNetworkDown(error)) "No connection" else "YouTube isn't responding. Try again in a moment")
+        if (!healingLadder.selfHealingEnabled) {
+            if (isTemporaryOutage(error)) {
+                toast(if (isNetworkDown(error)) "No connection" else "YouTube isn't responding. Try again in a moment")
+                return
+            }
+            if (failuresInARow >= MAX_FAILURES_IN_A_ROW) {
+                exo.pause()
+                toast("Playback keeps failing. Check your connection, then press play")
+                failuresInARow = 0
+                return
+            }
+            val title = exo.currentMediaItem?.mediaMetadata?.title ?: "song"
+            toast("Couldn't play $title")
+            if (exo.hasNextMediaItem()) {
+                exo.seekToNextMediaItem()
+                exo.prepare()
+                exo.play()
+            }
             return
         }
-        if (failuresInARow >= MAX_FAILURES_IN_A_ROW) {
-            exo.pause()
-            toast("Playback keeps failing. Check your connection, then press play")
-            failuresInARow = 0
-            return
-        }
-        if (retriedId != id) {
-            // most often an expired or bad stream: look it up again and rebuild the source,
-            // so a different rendition never reuses the old one's parser state
-            retriedId = id
-            StreamResolver.invalidate(id)
-            reloadQueue(exo, resume = true)
-            return
-        }
-        val title = exo.currentMediaItem?.mediaMetadata?.title ?: "song"
-        toast("Couldn't play $title")
-        if (exo.hasNextMediaItem()) {
-            exo.seekToNextMediaItem()
-            exo.prepare()
-            exo.play()
+
+        val category = PlaybackHealingLadder.classifyError(error)
+        val decision = healingLadder.handleFailure(
+            videoId = id,
+            errorCategory = category,
+            error = error,
+            host = LastErrorTracker.lastError.value?.urlHost,
+        )
+
+        when (decision) {
+            is HealingDecision.NoAction -> {
+                val title = exo.currentMediaItem?.mediaMetadata?.title ?: "song"
+                toast("Couldn't play $title")
+                if (exo.hasNextMediaItem()) {
+                    exo.seekToNextMediaItem()
+                    exo.prepare()
+                    exo.play()
+                }
+            }
+            is HealingDecision.RetryTransient -> {
+                scope.launch {
+                    delay(decision.backoffMs)
+                    exo.prepare()
+                    exo.play()
+                }
+            }
+            is HealingDecision.InvalidateAndReResolve -> {
+                StreamResolver.invalidate(decision.videoId)
+                reloadQueue(exo, resume = true)
+            }
+            is HealingDecision.TryNextCandidate -> {
+                StreamResolver.invalidate(decision.videoId)
+                reloadQueue(exo, resume = true)
+            }
+            is HealingDecision.TryNextClient -> {
+                StreamResolver.togglePreferredClient()
+                StreamResolver.invalidate(decision.videoId)
+                reloadQueue(exo, resume = true)
+            }
+            is HealingDecision.SkipTrack -> {
+                val title = exo.currentMediaItem?.mediaMetadata?.title ?: "song"
+                toast("Couldn't play $title. Skipping to next...")
+                if (exo.hasNextMediaItem()) {
+                    exo.seekToNextMediaItem()
+                    exo.prepare()
+                    exo.play()
+                }
+            }
+            is HealingDecision.CircuitBreakerTrip -> {
+                exo.pause()
+                if (decision.showBanner) {
+                    PlayerConnection.showStreamingBrokenBanner(decision.bannerMessage)
+                }
+            }
         }
     }
 
