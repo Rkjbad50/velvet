@@ -134,8 +134,12 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // swiping the app away keeps music going, unless nothing is playing
-        if (!exo.playWhenReady || exo.mediaItemCount == 0) stopSelf()
+        super.onTaskRemoved(rootIntent)
+        exo.pause()
+        exo.stop()
+        exo.clearMediaItems()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
