@@ -384,30 +384,31 @@ object AppUpdater {
 
         val sessionId = packageInstaller.createSession(params)
         val session = packageInstaller.openSession(sessionId)
-        apkFile.inputStream().use { input ->
-            session.openOutputStream("velvet_update").use { output ->
-                input.copyTo(output)
-                session.fsync(output)
+        session.use { activeSession ->
+            activeSession.openWrite("velvet_update", 0L, apkFile.length()).use { output ->
+                apkFile.inputStream().use { input ->
+                    input.copyTo(output)
+                }
+                activeSession.fsync(output)
             }
-        }
 
-        val receiverIntent = Intent(context, InstallStatusReceiver::class.java).apply {
-            action = ACTION_INSTALL_STATUS
-        }
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            sessionId,
-            receiverIntent,
-            flags,
-        )
+            val receiverIntent = Intent(context, InstallStatusReceiver::class.java).apply {
+                action = ACTION_INSTALL_STATUS
+            }
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                sessionId,
+                receiverIntent,
+                flags,
+            )
 
-        session.commit(pendingIntent.intentSender)
-        session.close()
+            activeSession.commit(pendingIntent.intentSender)
+        }
         return UpdateInstallResult.PromptLaunched
     }
 
