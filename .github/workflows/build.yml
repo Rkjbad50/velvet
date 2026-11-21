@@ -3,6 +3,7 @@ name: Build VELVET APK
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -44,8 +45,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.6"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v2.6"
+          fi
+          VERSION="${TAG#v}"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_FILE" velvet.apk
+          SHA256=$(sha256sum velvet.apk | awk '{print $1}')
+          echo "Release tag: $TAG"
+          echo "SHA256: $SHA256"
+
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
-          gh release create "$TAG" velvet.apk --repo "${{ github.repository }}" --title "Version 2.6" --notes "VELVET Version 2.6 Official Release. Highlights: Persistent playback state with instant resume across app closes (no timeline reset to 00:00, no need to press previous), unified permanent release keystore for conflict-free in-app updates, and automated GitHub update detection with banner in Settings > About. Direct download: **velvet.apk** below." --latest
+          gh release create "$TAG" velvet.apk \
+            --repo "${{ github.repository }}" \
+            --title "Version $VERSION" \
+            --notes "### VELVET Version $VERSION Official Release
+
+**SHA-256:** \`$SHA256\`
+
+#### Highlights:
+- Seamless in-app update checks and one-tap install with SHA-256 and certificate verification.
+- True crossfade automix with equal-power curves and gapless fallback.
+- Context recents with time-of-day listening history.
+- Smart queue reordering with drag-and-drop.
+- Unified permanent release keystore for conflict-free in-app updates.
+
+Direct download: **velvet.apk** below." \
+            --latest

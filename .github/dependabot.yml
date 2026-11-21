@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      streaming-dependencies:
+        patterns:
+          - "com.github.TeamNewPipe:NewPipeExtractor*"
+          - "androidx.media3:*"
