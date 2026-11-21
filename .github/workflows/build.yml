@@ -62,16 +62,19 @@ jobs:
           TAG="v2.6"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_FILE" velvet.apk
+          cat << 'EOF' > release_notes.txt
+VELVET Version 2.6 Official Release.
+
+Highlights in this update:
+- Persistent Playback State & Instant Resume: Velvet now remembers the exact track, timeline position, duration, and queue across app closes. Opening the app restores your last played state and tapping Play starts instantly without zeroing out (00:00).
+- Permanent Release Signing Key: Commits a unified release keystore directly into the build pipeline, permanently solving package name / signature conflict errors during in-app updates.
+- In-App Update Detection & Banner: Settings > About checks GitHub Releases automatically on launch and displays a prominent update banner with one-tap APK download.
+
+Direct download: velvet.apk below.
+EOF
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create "$TAG" velvet.apk \
             --repo "${{ github.repository }}" \
             --title "Version 2.6" \
-            --notes "### VELVET Version 2.6 Official Release
-
-**Highlights in this update:**
-- **Persistent Playback State & Instant Resume**: Velvet now preserves the exact playback state across app closes. Opening the app restores the last played track, timeline position, duration, and queue without zeroing out (00:00) or failing on play. Pressing Play starts instantly right where you left off.
-- **Unified Release Key Signing (Fixes Package Name / Update Conflict)**: Integrated a permanent release keystore committed directly into the build pipeline. Future APK updates and in-app upgrades install seamlessly over existing installations without 'Package conflicts with an existing package' or requiring uninstallation.
-- **In-App Update Detection & Banner in About**: Settings > About now checks GitHub Releases automatically on launch and displays a high-visibility update banner with the latest release details and one-tap direct APK download/install.
-
-**Direct Download**: Download **velvet.apk** below to install or update." \
+            --notes-file release_notes.txt \
             --latest
