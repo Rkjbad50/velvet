@@ -70,6 +70,7 @@ fun mergeLibraries(current: LibraryData, incoming: LibraryData): LibraryData {
         albums = union(current.albums, incoming.albums) { it.url },
         artists = union(current.artists, incoming.artists) { it.url },
         recent = union(current.recent, incoming.recent) { it.id }.take(100),
+        contextRecents = ContextRecentsManager.merge(current.contextRecents, incoming.contextRecents),
         searches = union(current.searches, incoming.searches) { it.lowercase() }.take(15),
         autoplay = incoming.autoplay,
         dataSaver = incoming.dataSaver,
@@ -80,7 +81,7 @@ fun mergeLibraries(current: LibraryData, incoming: LibraryData): LibraryData {
 }
 
 fun LibraryData.isEmptyLibrary() =
-    liked.isEmpty() && playlists.isEmpty() && albums.isEmpty() && artists.isEmpty() && recent.isEmpty()
+    liked.isEmpty() && playlists.isEmpty() && albums.isEmpty() && artists.isEmpty() && recent.isEmpty() && contextRecents.isEmpty()
 
 /**
  * Keeps a copy of the library in Download/VELVET/velvet-backup.json, outside the app, so it

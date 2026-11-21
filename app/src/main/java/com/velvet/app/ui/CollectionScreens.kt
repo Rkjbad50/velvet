@@ -1,6 +1,10 @@
 package com.velvet.app.ui
 
 import android.widget.Toast
+import com.velvet.app.data.ContextRecentsManager
+import com.velvet.app.data.PlaybackContext
+import com.velvet.app.data.RecentItem
+import com.velvet.app.data.RecentType
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -80,8 +84,8 @@ internal fun songCountLabel(count: Int): String = if (count == 1) "1 song" else 
 private fun songMeta(songs: List<Song>): String =
     listOf(songCountLabel(songs.size), totalDuration(songs)).filter { it.isNotBlank() }.joinToString(" • ")
 
-private fun shuffle(songs: List<Song>, playlistId: String? = null) {
-    if (songs.isNotEmpty()) PlayerConnection.play(songs, songs.indices.random(), shuffled = true, playlistId = playlistId)
+private fun shuffle(songs: List<Song>, playlistId: String? = null, context: PlaybackContext? = null) {
+    if (songs.isNotEmpty()) PlayerConnection.play(songs, songs.indices.random(), shuffled = true, playlistId = playlistId, context = context)
 }
 
 // ------------------------------------------------------------------ YouTube albums & playlists
@@ -122,6 +126,13 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
     val tint = rememberArtColor(info.thumb)
     // album pages list tracks by number; their thumbnails are all the same cover
     val isAlbum = info.isAlbum
+    val playbackContext = PlaybackContext(
+        id = album.url,
+        type = if (isAlbum) RecentType.ALBUM else RecentType.REMOTE_PLAYLIST,
+        title = info.title,
+        subtitle = if (isAlbum) info.subtitle else "Playlist",
+        artworkUrl = info.thumb,
+    )
 
     BackPage(onBack) {
         item {
@@ -132,8 +143,8 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
                 tint = tint,
                 art = { Artwork(info.thumb, 230.dp, corner = 34.dp, placeholder = AppIcons.Album) },
                 playEnabled = songs.isNotEmpty(),
-                onPlay = { PlayerConnection.play(songs) },
-                onShuffle = { shuffle(songs) },
+                onPlay = { PlayerConnection.play(songs, context = playbackContext) },
+                onShuffle = { shuffle(songs, context = playbackContext) },
                 onSubtitleClick = songs.firstOrNull()?.artistUrl?.takeIf { isAlbum }?.let { url ->
                     { nav.open(Route.Artist(ArtistRef(url, info.subtitle))) }
                 },
@@ -155,7 +166,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
             else -> itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
                 SongRow(
                     song,
-                    onClick = { PlayerConnection.play(songs, i) },
+                    onClick = { PlayerConnection.play(songs, i, context = playbackContext) },
                     trackNumber = if (isAlbum) i + 1 else null,
                     showArt = !isAlbum,
                 )
@@ -191,14 +202,139 @@ fun LikedScreen(onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RecentScreen(onBack: () -> Unit) {
-    val data by VelvetApp.library.data.collectAsStateWithLifecycle()
-    val songs = data.recent.take(50)
+    val library = VelvetApp.library
+    val data by library.data.collectAsStateWithLifecycle()
+    val nav = LocalNav.current
+    var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
+    ConfirmDialog(confirm) { confirm = null }
+
+    val recents = remember(data.contextRecents, data.playlists) {
+        ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
+    }
+
     BackPage(onBack, heading = { ScreenHeading("HISTORY", "Recently played") }) {
-        if (songs.isEmpty()) item { EmptyHint("Your listening history will appear here.") }
-        itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
-            SongRow(song, onClick = { PlayerConnection.play(songs, index) })
+        if (recents.isNotEmpty()) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        onClick = {
+                            confirm = ConfirmRequest(
+                                "Clear recents?",
+                                "Your recently played containers will be cleared.",
+                                "Clear",
+                            ) { library.clearContextRecents() }
+                        },
+                    ) {
+                        Text("Clear recents", color = velvetColors.muted)
+                    }
+                }
+            }
+        }
+        if (recents.isEmpty()) {
+            item { EmptyHint("Your recently played albums, artists and playlists will appear here.") }
+        }
+        itemsIndexed(recents, key = { _, item -> "${item.type}:${item.id}" }) { _, item ->
+            RecentItemRow(
+                item = item,
+                onClick = {
+                    when (item.type) {
+                        RecentType.LOCAL_PLAYLIST -> nav.open(Route.LocalPlaylist(item.id))
+                        RecentType.REMOTE_PLAYLIST, RecentType.ALBUM -> nav.open(
+                            Route.Album(
+                                AlbumRef(
+                                    url = item.id,
+                                    title = item.title,
+                                    subtitle = item.subtitle,
+                                    thumb = item.artworkUrl.orEmpty(),
+                                ),
+                            ),
+                        )
+                        RecentType.ARTIST -> nav.open(
+                            Route.Artist(
+                                ArtistRef(
+                                    url = item.id,
+                                    name = item.title,
+                                    thumb = item.artworkUrl.orEmpty(),
+                                ),
+                            ),
+                        )
+                        RecentType.GENRE_MIX -> nav.open(Route.Genre(item.title))
+                        RecentType.UNKNOWN -> {}
+                    }
+                },
+                onRemove = {
+                    library.removeContextRecent(item.id, item.type)
+                },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun RecentItemRow(
+    item: RecentItem,
+    onClick: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val isArtist = item.type == RecentType.ARTIST
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onRemove,
+            )
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isArtist) {
+            Box(
+                Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(velvetColors.accent)
+                    .padding(2.dp),
+            ) {
+                Artwork(item.artworkUrl, 48.dp, corner = 24.dp, placeholder = Icons.Default.Person)
+            }
+        } else {
+            Artwork(item.artworkUrl, 52.dp, corner = 14.dp, placeholder = AppIcons.Album)
+        }
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = 14.dp),
+        ) {
+            Text(
+                item.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                item.subtitle.ifEmpty {
+                    when (item.type) {
+                        RecentType.LOCAL_PLAYLIST, RecentType.REMOTE_PLAYLIST -> "Playlist"
+                        RecentType.ALBUM -> "Album"
+                        RecentType.ARTIST -> "Artist"
+                        RecentType.GENRE_MIX -> "Mix"
+                        RecentType.UNKNOWN -> ""
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = velvetColors.muted,
+                maxLines = 1,
+            )
+        }
+        IconButton(onClick = onRemove) {
+            Icon(Icons.Default.Close, contentDescription = "Remove from recents", tint = velvetColors.muted)
         }
     }
 }
@@ -269,6 +405,13 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
         BackPage(onBack) {
             item {
                 val trackCountText = "${activeSongs.size} ${if (activeSongs.size == 1) "track" else "tracks"}"
+                val playbackContext = PlaybackContext(
+                    id = playlist.id,
+                    type = RecentType.LOCAL_PLAYLIST,
+                    title = playlist.name,
+                    subtitle = trackCountText,
+                    artworkUrl = activeSongs.firstOrNull()?.thumb ?: playlist.customCover,
+                )
                 CollectionHeader(
                     title = playlist.name,
                     subtitle = if (isEditing) "Editing playlist ($trackCountText)" else playlist.description.orEmpty(),
@@ -308,8 +451,8 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     },
                     artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
                     playEnabled = activeSongs.isNotEmpty() && !isEditing,
-                    onPlay = { PlayerConnection.play(activeSongs, playlistId = id) },
-                    onShuffle = { shuffle(activeSongs, playlistId = id) },
+                    onPlay = { PlayerConnection.play(activeSongs, playlistId = id, context = playbackContext) },
+                    onShuffle = { shuffle(activeSongs, playlistId = id, context = playbackContext) },
                     topActions = {
                         if (!isEditing) {
                             PanelIconButton(AppIcons.Pencil, "Rename playlist") { renaming = true }
@@ -463,7 +606,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                         }
                     }
                 } else {
-                    SongRow(song, onClick = { PlayerConnection.play(activeSongs, i, playlistId = id) }, playlistId = id)
+                    SongRow(song, onClick = { PlayerConnection.play(activeSongs, i, playlistId = id, context = playbackContext) }, playlistId = id)
                 }
             }
         }

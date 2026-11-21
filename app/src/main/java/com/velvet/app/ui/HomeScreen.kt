@@ -14,6 +14,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.velvet.app.R
+import com.velvet.app.data.ContextRecentsManager
+import com.velvet.app.data.RecentItem
+import com.velvet.app.data.RecentType
 import com.velvet.app.data.isPureMusic
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -328,6 +331,53 @@ fun HomeScreen(vm: HomeViewModel) {
             item(key = "spotlight") {
                 Box(Modifier.padding(top = 10.dp)) {
                     SpotlightCard(hero, spotlightQueue, featured)
+                }
+            }
+        }
+
+        val filteredRecents = remember(data.contextRecents, data.playlists) {
+            ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
+        }
+        if (filteredRecents.isNotEmpty()) {
+            item(key = "home-recently-played") {
+                BrowseSection("Recently played", action = "See all") { nav.open(Route.Recent) }
+            }
+            item(key = "home-recently-played-rail") {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    items(filteredRecents.take(10), key = { "hr-${it.type}-${it.id}" }) { item ->
+                        RecentContextTile(
+                            item = item,
+                            onClick = {
+                                when (item.type) {
+                                    RecentType.LOCAL_PLAYLIST -> nav.open(Route.LocalPlaylist(item.id))
+                                    RecentType.REMOTE_PLAYLIST, RecentType.ALBUM -> nav.open(
+                                        Route.Album(
+                                            AlbumRef(
+                                                url = item.id,
+                                                title = item.title,
+                                                subtitle = item.subtitle,
+                                                thumb = item.artworkUrl.orEmpty(),
+                                            ),
+                                        ),
+                                    )
+                                    RecentType.ARTIST -> nav.open(
+                                        Route.Artist(
+                                            ArtistRef(
+                                                url = item.id,
+                                                name = item.title,
+                                                thumb = item.artworkUrl.orEmpty(),
+                                            ),
+                                        ),
+                                    )
+                                    RecentType.GENRE_MIX -> nav.open(Route.Genre(item.title))
+                                    RecentType.UNKNOWN -> {}
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -762,5 +812,55 @@ private fun TrendingRail(songs: List<Song>) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RecentContextTile(
+    item: RecentItem,
+    onClick: () -> Unit,
+) {
+    val isArtist = item.type == RecentType.ARTIST
+    Column(
+        Modifier
+            .width(130.dp)
+            .clickable(onClick = onClick),
+        horizontalAlignment = if (isArtist) Alignment.CenterHorizontally else Alignment.Start,
+    ) {
+        if (isArtist) {
+            Box(
+                Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+                    .background(velvetColors.accent)
+                    .padding(3.dp),
+            ) {
+                Artwork(item.artworkUrl, 114.dp, corner = 57.dp, placeholder = Icons.Default.Person)
+            }
+        } else {
+            Artwork(item.artworkUrl, 130.dp, corner = 22.dp, placeholder = AppIcons.Album)
+        }
+        Text(
+            item.title,
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Text(
+            item.subtitle.ifEmpty {
+                when (item.type) {
+                    RecentType.LOCAL_PLAYLIST, RecentType.REMOTE_PLAYLIST -> "Playlist"
+                    RecentType.ALBUM -> "Album"
+                    RecentType.ARTIST -> "Artist"
+                    RecentType.GENRE_MIX -> "Mix"
+                    RecentType.UNKNOWN -> ""
+                }
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = velvetColors.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

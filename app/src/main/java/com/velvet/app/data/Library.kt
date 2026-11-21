@@ -46,6 +46,7 @@ data class LibraryData(
     /** Downloads requested but not finished; resumed on the next start if the app was killed. */
     val pendingDownloads: List<Song> = emptyList(),
     val recent: List<Song> = emptyList(),
+    val contextRecents: List<RecentItem> = emptyList(),
     val searches: List<String> = emptyList(),
     val autoplay: Boolean = true,
     val dataSaver: Boolean = false,
@@ -130,8 +131,16 @@ class LibraryStore(private val dir: File) {
     }.getOrNull()
 
     // version 1 files had no version field (decoded as the default); nothing to convert yet
-    private fun migrate(data: LibraryData): LibraryData =
-        if (data.version < LibraryData.CURRENT_VERSION) data.copy(version = LibraryData.CURRENT_VERSION) else data
+    private fun migrate(data: LibraryData): LibraryData {
+        var current = if (data.version < LibraryData.CURRENT_VERSION) data.copy(version = LibraryData.CURRENT_VERSION) else data
+        if (current.contextRecents.isEmpty() && current.recent.isNotEmpty()) {
+            val migrated = ContextRecentsManager.migrateOldFormat(current.recent, current.playlists)
+            if (migrated.isNotEmpty()) {
+                current = current.copy(contextRecents = migrated)
+            }
+        }
+        return current.copy(contextRecents = ContextRecentsManager.filterDeletedPlaylists(current.contextRecents, current.playlists))
+    }
 }
 
 /** Everything the user saves. State changes are immediate; disk writes are batched in the background. */
@@ -199,7 +208,12 @@ class Library(dir: File) {
 
     fun setPlaylistCover(id: String, cover: String?) = updatePlaylist(id) { it.copy(customCover = cover) }
 
-    fun deletePlaylist(id: String) = update { d -> d.copy(playlists = d.playlists.filterNot { it.id == id }) }
+    fun deletePlaylist(id: String) = update { d ->
+        d.copy(
+            playlists = d.playlists.filterNot { it.id == id },
+            contextRecents = d.contextRecents.filterNot { it.type == RecentType.LOCAL_PLAYLIST && it.id == id },
+        )
+    }
 
     internal fun recordPlaylistPlay(id: String) = update { d ->
         d.copy(playlists = d.playlists.map { playlist ->
@@ -249,6 +263,16 @@ class Library(dir: File) {
     }
 
     fun clearRecent() = update { it.copy(recent = emptyList()) }
+
+    fun addContextRecent(context: PlaybackContext) = update { d ->
+        d.copy(contextRecents = ContextRecentsManager.record(d.contextRecents, context, now()))
+    }
+
+    fun removeContextRecent(id: String, type: RecentType) = update { d ->
+        d.copy(contextRecents = ContextRecentsManager.remove(d.contextRecents, id, type))
+    }
+
+    fun clearContextRecents() = update { it.copy(contextRecents = emptyList()) }
 
     fun addSearch(query: String) = update { d ->
         val q = query.trim()

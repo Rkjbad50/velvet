@@ -46,6 +46,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.ArtistRef
+import com.velvet.app.data.PlaybackContext
+import com.velvet.app.data.RecentType
 import com.velvet.app.data.YouTube
 import com.velvet.app.data.formatCount
 import kotlinx.coroutines.CancellationException
@@ -153,11 +155,18 @@ fun ArtistScreen(artist: ArtistRef, onBack: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                val playbackContext = PlaybackContext(
+                    id = artist.url,
+                    type = RecentType.ARTIST,
+                    title = info.name,
+                    subtitle = "Artist",
+                    artworkUrl = info.thumb,
+                )
                 val popular = page?.popular.orEmpty()
                 PanelIconButton(AppIcons.Shuffle, "Shuffle", size = 48.dp) {
-                    if (popular.isNotEmpty()) PlayerConnection.play(popular, popular.indices.random(), shuffled = true)
+                    if (popular.isNotEmpty()) PlayerConnection.play(popular, popular.indices.random(), shuffled = true, context = playbackContext)
                 }
-                PlayCircle(enabled = popular.isNotEmpty()) { PlayerConnection.play(popular) }
+                PlayCircle(enabled = popular.isNotEmpty()) { PlayerConnection.play(popular, context = playbackContext) }
             }
         }
 
@@ -165,10 +174,17 @@ fun ArtistScreen(artist: ArtistRef, onBack: () -> Unit) {
             page == null && vm.error != null -> item { ErrorBox(vm.error ?: "") { vm.load(artist, force = true) } }
             page == null -> item { LoadingBox() }
             else -> {
+                val playbackContext = PlaybackContext(
+                    id = artist.url,
+                    type = RecentType.ARTIST,
+                    title = info.name,
+                    subtitle = "Artist",
+                    artworkUrl = info.thumb,
+                )
                 if (page.popular.isNotEmpty()) {
                     item { SectionTitle("Popular") }
                     itemsIndexed(page.popular, key = { _, s -> "p-" + s.id }) { i, song ->
-                        SongRow(song, onClick = { PlayerConnection.play(page.popular, i) }, trackNumber = i + 1)
+                        SongRow(song, onClick = { PlayerConnection.play(page.popular, i, context = playbackContext) }, trackNumber = i + 1)
                     }
                 }
                 if (page.albums.isNotEmpty()) {
@@ -182,7 +198,7 @@ fun ArtistScreen(artist: ArtistRef, onBack: () -> Unit) {
                 if (page.videos.isNotEmpty()) {
                     item { SectionTitle("Music videos") }
                     itemsIndexed(page.videos, key = { _, s -> "v-" + s.id }) { i, song ->
-                        SongRow(song, onClick = { PlayerConnection.play(page.videos, i) })
+                        SongRow(song, onClick = { PlayerConnection.play(page.videos, i, context = playbackContext) })
                     }
                 }
                 if (page.popular.isEmpty() && page.albums.isEmpty() && page.videos.isEmpty()) {

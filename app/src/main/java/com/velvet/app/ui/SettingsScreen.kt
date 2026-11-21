@@ -384,9 +384,10 @@ fun SettingsScreen(onBack: () -> Unit) {
         SettingsGroup("Storage") {
             ActionRow("Downloads", "${data.downloads.size} songs • $downloadsMb MB") { nav.open(Route.Downloads) }
             ActionRow("Streaming cache", "Up to 512 MB of recently played audio, cleared automatically")
-            ActionRow("Clear listening history", "${data.recent.size} songs in Recently played") {
+            ActionRow("Clear listening history", "${data.contextRecents.size.takeIf { it > 0 } ?: data.recent.size} items in Recently played") {
                 confirm = ConfirmRequest("Clear listening history?", "Recently played and Quick picks will start fresh.", "Clear history") {
                     library.clearRecent()
+                    library.clearContextRecents()
                 }
             }
             ActionRow("Clear search history", "${data.searches.size} recent searches") {

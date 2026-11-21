@@ -16,6 +16,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.BrowseItem
+import com.velvet.app.data.PlaybackContext
 import com.velvet.app.data.Song
 import com.velvet.app.data.StreamResolver
 import com.velvet.app.data.YouTube
@@ -300,8 +301,12 @@ object PlayerConnection {
         shuffled: Boolean = false,
         radio: Boolean = false,
         playlistId: String? = null,
+        context: PlaybackContext? = null,
     ) {
         if (songs.isEmpty()) return
+        if (context != null) {
+            VelvetApp.library.addContextRecent(context)
+        }
         currentPlaylistId = playlistId
         isRadioActive = radio
         val isUserPlaylist = playlistId != null && VelvetApp.library.data.value.playlists.any { it.id == playlistId }
