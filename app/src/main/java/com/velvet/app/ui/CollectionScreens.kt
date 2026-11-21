@@ -31,8 +31,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -708,8 +706,7 @@ fun EditPlaylistSheet(
                 title = "Discard unsaved changes?",
                 message = "You have unsaved changes. Discard them?",
                 confirmLabel = "Discard",
-                danger = true,
-                onConfirm = {
+                action = {
                     showDiscardConfirm = false
                     onDismiss()
                 },
@@ -1053,7 +1050,7 @@ fun PlaylistSortSheet(
                 title = "Save as Custom Order?",
                 message = "This will save the current sorted list as the permanent custom order for \"${playlist.name}\".",
                 confirmLabel = "Save order",
-                onConfirm = {
+                action = {
                     confirmCustom = false
                     onSaveAsCustom(activeEntries)
                 },
