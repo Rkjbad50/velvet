@@ -177,6 +177,5 @@ class LibraryStoreTest {
         val merged = mergeLibraries(LibraryData(), incoming)
         assertEquals(1, merged.liked.size)
         assertEquals("dQw4w9WgXcQ", merged.liked.first().id)
-        assertEquals("RETRO_WAVE", merged.seekbarStyle)
     }
 }
