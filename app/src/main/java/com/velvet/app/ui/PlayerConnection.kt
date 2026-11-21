@@ -358,37 +358,18 @@ object PlayerConnection {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val candidates = mutableListOf<Song>()
-                for (seed in seeds) {
-                    val related = runCatching { StreamResolver.related(seed.id) }.getOrDefault(emptyList())
-                    candidates.addAll(related)
-                }
-
-                // Collect all current songs from playlist, queue, history and current track
-                val allExistingSongs = (
+                val snapshot = (
                     queueManager.sourceList +
                     queueManager.history +
                     listOfNotNull(queueManager.current) +
                     queueManager.userQueue.map { it.song }
                 )
-
-                val distinctFresh = mutableListOf<Song>()
-                for (item in candidates) {
-                    if (!item.isPureMusic() || !item.isOriginalMusicAudio()) continue
-                    
-                    // Reject any song that is already in playlist or queue (by ID or cleaned title)
-                    val inPlaylistOrQueue = allExistingSongs.any { it.isSameTrackAs(item) }
-                    if (inPlaylistOrQueue) continue
-
-                    // Reject any duplicate within the new recommendations set itself
-                    val alreadyInFresh = distinctFresh.any { it.isSameTrackAs(item) }
-                    if (alreadyInFresh) continue
-
-                    distinctFresh.add(item)
+                for (seed in seeds) {
+                    val recs = runCatching { VelvetApp.autoplayPipeline.next(seed, snapshot, n = 6) }.getOrDefault(emptyList())
+                    candidates.addAll(recs)
                 }
 
-                val sorted = distinctFresh
-                    .sortedByDescending { it.preferredMusicSource }
-                    .take(12)
+                val sorted = candidates.distinctBy { it.id }.take(12)
 
                 withContext(Dispatchers.Main) {
                     if (queueManager.shuffleMode == ShuffleMode.SMART && sorted.isNotEmpty()) {
@@ -404,6 +385,7 @@ object PlayerConnection {
 
     /** Add song to play immediately after current. */
     fun playNext(song: Song) {
+        VelvetApp.sessionHistory.record(song)
         if (controller?.mediaItemCount == 0 || current == null) {
             play(listOf(song))
             return
@@ -416,6 +398,7 @@ object PlayerConnection {
 
     /** Add song to end of queue. */
     fun enqueue(song: Song) {
+        VelvetApp.sessionHistory.record(song)
         if (controller?.mediaItemCount == 0 || current == null) {
             play(listOf(song))
             return
@@ -504,7 +487,11 @@ object PlayerConnection {
 
     fun checkAndExtendAutoplay(seedId: String? = null, autoPlayNext: Boolean = false) {
         val currentSong = current ?: return
-        val targetSeed = seedId ?: currentSong.id
+        val targetSeed = if (seedId != null) {
+            queueManager.upNext.find { it.song.id == seedId }?.song
+                ?: queueManager.userQueue.find { it.song.id == seedId }?.song
+                ?: currentSong
+        } else currentSong
         val isAutoplayEnabled = VelvetApp.library.data.value.autoplay || isRadioActive
         if (!isAutoplayEnabled) return
         if (queueManager.upNext.size >= 6 && !autoPlayNext) return
@@ -513,9 +500,8 @@ object PlayerConnection {
         isExtendingAutoplay = true
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val related = StreamResolver.related(targetSeed)
-                    .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
-                    .sortedByDescending { it.preferredMusicSource }
+                val snapshot = (listOfNotNull(current) + queueManager.userQueue.map { it.song } + queueManager.upNext.map { it.song })
+                val related = VelvetApp.autoplayPipeline.next(targetSeed, snapshot, n = 10)
 
                 withContext(Dispatchers.Main) {
                     if (related.isNotEmpty()) {
@@ -526,7 +512,7 @@ object PlayerConnection {
                             syncQueueState()
                             syncToExoPlayer()
                         } else {
-                            queueManager.appendRadioSongs(related)
+                            queueManager.appendAutoplay(related)
                             syncQueueState()
                             syncToExoPlayer()
                         }

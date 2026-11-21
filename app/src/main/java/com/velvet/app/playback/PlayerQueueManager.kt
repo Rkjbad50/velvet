@@ -159,6 +159,23 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
     fun remove(qid: String): Boolean = removeItem(qid)
 
+    @Deprecated("Index-based queue mutations are deprecated. Use removeItem(qid).", ReplaceWith("removeItem(qid)"))
+    fun removeAt(index: Int): Boolean {
+        val qid = state.upNext.getOrNull(index)?.qid ?: state.userQueue.getOrNull(index)?.qid ?: return false
+        return removeItem(qid)
+    }
+
+    @Deprecated("Index-based queue mutations are deprecated. Use moveToTop(qid) or reorder methods.", ReplaceWith("reorderUpNext(fromIndex, toIndex)"))
+    fun move(fromIndex: Int, toIndex: Int) {
+        reorderUpNext(fromIndex, toIndex)
+    }
+
+    @Deprecated("Index-based queue jumps are deprecated. Use jumpToQid(qid).", ReplaceWith("jumpToQid(qid)"))
+    fun playAtIndex(index: Int): Song? {
+        val qid = state.upNext.getOrNull(index)?.qid ?: return null
+        return jumpToQid(qid)
+    }
+
     fun reorderUserQueue(fromIndex: Int, toIndex: Int) {
         update { Companion.reorderUserQueue(it, fromIndex, toIndex) }
     }
@@ -629,7 +646,7 @@ class QueueManager(initialState: QueueState = QueueState()) {
             }
             if (fresh.isEmpty()) return state
 
-            val newItems = fresh.map { QueueItem(it) }
+            val newItems = fresh.map { QueueItem(it, isSmartRecommended = true) }
             return state.copy(
                 upNext = state.upNext + newItems,
             )

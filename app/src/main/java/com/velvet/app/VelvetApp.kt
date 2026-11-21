@@ -33,6 +33,14 @@ class VelvetApp : Application(), ImageLoaderFactory {
     lateinit var http: OkHttpClient
         private set
 
+    val sessionHistory = com.velvet.app.playback.SessionHistory(50)
+    val autoplayPipeline by lazy {
+        com.velvet.app.playback.AutoplayPipeline(
+            sources = listOf(com.velvet.app.playback.CandidateSource { com.velvet.app.data.StreamResolver.related(it.id) }),
+            history = sessionHistory,
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -71,5 +79,7 @@ class VelvetApp : Application(), ImageLoaderFactory {
         val downloads: Downloads get() = instance.downloads
         val backups: Backups get() = instance.backups
         val http: OkHttpClient get() = instance.http
+        val sessionHistory: com.velvet.app.playback.SessionHistory get() = instance.sessionHistory
+        val autoplayPipeline: com.velvet.app.playback.AutoplayPipeline get() = instance.autoplayPipeline
     }
 }

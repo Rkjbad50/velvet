@@ -260,6 +260,7 @@ class PlaybackService : MediaSessionService() {
             }
             if (mediaItem.mediaId != retriedId) retriedId = null
             VelvetApp.library.addRecent(mediaItem.toSong())
+            VelvetApp.sessionHistory.record(mediaItem.toSong())
             trimPlayedHistory()
             prefetchNext()
 
