@@ -64,6 +64,8 @@ data class LibraryData(
     val crossfadeSeconds: Float = 0f,
     val developerOptionsUnlocked: Boolean = false,
     val selfHealingEnabled: Boolean = true,
+    val includePrereleases: Boolean = false,
+    val autoUpdateCheck: Boolean = true,
 ) {
     companion object {
         const val CURRENT_VERSION = 2
@@ -322,6 +324,10 @@ class Library(dir: File) {
     fun setDeveloperOptions(unlocked: Boolean) = update { it.copy(developerOptionsUnlocked = unlocked) }
 
     fun setSelfHealing(enabled: Boolean) = update { it.copy(selfHealingEnabled = enabled) }
+
+    fun setIncludePrereleases(include: Boolean) = update { it.copy(includePrereleases = include) }
+
+    fun setAutoUpdateCheck(enabled: Boolean) = update { it.copy(autoUpdateCheck = enabled) }
 
     fun setPlaylistSongs(playlistId: String, songs: List<Song>) = updatePlaylist(playlistId) { it.copy(songs = songs) }
 

@@ -60,6 +60,10 @@ class VelvetApp : Application(), ImageLoaderFactory {
         CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
             library.data.map { it.dataSaver }.distinctUntilChanged().collect { StreamResolver.dataSaver = it }
         }
+
+        if (library.data.value.autoUpdateCheck) {
+            com.velvet.app.data.UpdateCheckJobService.schedule(this)
+        }
     }
 
     // Artwork URLs never change, so ignore the servers' short cache headers and keep images on disk

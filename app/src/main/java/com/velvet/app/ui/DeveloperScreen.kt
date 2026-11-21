@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,7 +60,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.velvet.app.BuildConfig
+import com.velvet.app.VelvetApp
+import com.velvet.app.data.ReleaseCheck
 import com.velvet.app.data.StreamResolver
+import com.velvet.app.data.UpdateInfo
+import com.velvet.app.data.UpdateTrigger
 import com.velvet.app.data.YouTube
 import com.velvet.app.diagnostics.CheckResult
 import com.velvet.app.diagnostics.DiagnosticRunner
@@ -71,7 +76,9 @@ import com.velvet.app.diagnostics.LastErrorTracker
 import com.velvet.app.diagnostics.LogEntry
 import com.velvet.app.diagnostics.LogLevel
 import com.velvet.app.playback.PlaybackService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -88,6 +95,42 @@ fun DeveloperScreen(onBack: () -> Unit) {
     var activeLogFilter by remember { mutableStateOf<LogLevel?>(null) }
     var preferredClientName by remember {
         mutableStateOf(if (StreamResolver.forceFullExtractor) "NewPipeExtractor (Full)" else "Android Reel (Fast) + Fallback")
+    }
+
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+
+    fun runUpdateCheck(force: Boolean = false) {
+        if (isCheckingUpdate) return
+        isCheckingUpdate = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                val upstreamBuild = if (BuildConfig.APPLICATION_ID == "com.spitify.app") {
+                    BuildConfig.VERSION_CODE
+                } else {
+                    BuildConfig.UPSTREAM_BUILD_NUMBER
+                }
+                val info = ReleaseCheck.checkUpdate(
+                    http = VelvetApp.http,
+                    upstreamBuild = upstreamBuild,
+                    currentVersionName = BuildConfig.VERSION_NAME,
+                    includePrereleases = VelvetApp.library.data.value.includePrereleases,
+                    forceRefresh = force,
+                )
+                withContext(Dispatchers.Main) {
+                    updateInfo = info
+                }
+            } catch (_: Exception) {
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isCheckingUpdate = false
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        runUpdateCheck(force = false)
     }
 
     Column(
@@ -129,10 +172,13 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
         // A1: Versions Panel
         DevSectionCard(title = "A1 • System & Build Versions") {
-            VersionRow("App Version", "${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")
+            val latestAppStr = updateInfo?.latestVersion?.let { " (latest: v$it)" } ?: if (isCheckingUpdate) " (checking...)" else ""
+            val latestExtractorStr = updateInfo?.latestExtractorVersion?.let { " (latest: $it)" } ?: if (isCheckingUpdate) " (checking...)" else ""
+
+            VersionRow("App Version", "${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})$latestAppStr")
             VersionRow("Git Commit", BuildConfig.GIT_COMMIT)
             VersionRow("Build Time", BuildConfig.BUILD_TIME)
-            VersionRow("NewPipeExtractor", BuildConfig.NEWPIPE_VERSION)
+            VersionRow("NewPipeExtractor", "${BuildConfig.NEWPIPE_VERSION}$latestExtractorStr")
             VersionRow("Media3 (ExoPlayer)", BuildConfig.MEDIA3_VERSION)
             VersionRow("Kotlin", BuildConfig.KOTLIN_VERSION)
             VersionRow("Compose BOM", BuildConfig.COMPOSE_VERSION)
@@ -140,6 +186,34 @@ fun DeveloperScreen(onBack: () -> Unit) {
             VersionRow("SDK Targets", "Target API ${BuildConfig.TARGET_SDK_VERSION} • Compile ${BuildConfig.COMPILE_SDK_VERSION} • Min ${BuildConfig.MIN_SDK_VERSION}")
             VersionRow("Device", "${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE})")
             VersionRow("Android Version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+
+            val statusText = when {
+                isCheckingUpdate -> "Checking GitHub Releases..."
+                updateInfo?.isRateLimited == true -> "API Rate Limited (cached info shown)"
+                updateInfo?.isOffline == true -> "Network Offline (cached info shown)"
+                updateInfo?.hasUpdate == true -> when (updateInfo?.trigger) {
+                    UpdateTrigger.APP -> "Update Available (VELVET App)"
+                    UpdateTrigger.EXTRACTOR -> "Update Available (NewPipeExtractor)"
+                    UpdateTrigger.BOTH -> "Update Available (App & Extractor)"
+                    else -> "Update Available"
+                }
+                updateInfo != null -> "Up to Date"
+                else -> "Not checked"
+            }
+            VersionRow("Update Status", statusText)
+
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                OutlinedButton(
+                    onClick = { runUpdateCheck(force = true) },
+                    enabled = !isCheckingUpdate,
+                ) {
+                    Text(if (isCheckingUpdate) "Checking..." else "Check for Updates")
+                }
+            }
         }
 
         Spacer(Modifier.height(16.dp))
