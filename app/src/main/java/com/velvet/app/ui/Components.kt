@@ -703,6 +703,7 @@ fun BackPage(onBack: () -> Unit, heading: (@Composable () -> Unit)? = null, cont
 }
 
 /** Header for albums, playlists, Liked Songs and Downloads: glowing art, titles, actions, play button. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CollectionHeader(
     title: String,
