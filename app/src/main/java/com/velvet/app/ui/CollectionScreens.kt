@@ -8,8 +8,6 @@ import com.velvet.app.data.ContextRecentsManager
 import com.velvet.app.data.PlaybackContext
 import com.velvet.app.data.RecentItem
 import com.velvet.app.data.RecentType
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,11 +30,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -80,7 +73,6 @@ import com.velvet.app.data.totalDuration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.io.File
-import java.io.FileOutputStream
 
 internal fun songCountLabel(count: Int): String = if (count == 1) "1 song" else "$count songs"
 
@@ -396,8 +388,6 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     }
 
     var isEditing by remember { mutableStateOf(false) }
-    var showSortMenu by remember { mutableStateOf(false) }
-    var showCoverPicker by remember { mutableStateOf(false) }
     var draftSongs by remember(playlist.id, isEditing) { mutableStateOf(playlist.songs) }
     var recentlyRemoved by remember { mutableStateOf<Pair<Int, Song>?>(null) }
     var showUndoToast by remember { mutableStateOf(false) }
@@ -423,34 +413,12 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     onTitleClick = { if (!isEditing) renaming = true },
                     onTitleLongClick = { if (!isEditing) renaming = true },
                     art = {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(28.dp))
-                                .clickable { showCoverPicker = true },
-                        ) {
-                            PlaylistCover(
-                                activeSongs,
-                                if (activeSongs.size <= 1) 156.dp else 230.dp,
-                                corner = 28.dp,
-                                customCover = playlist.customCover,
-                            )
-                            Box(
-                                modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(8.dp)
-                                .size(36.dp)
-                                .background(velvetColors.surface.copy(alpha = 0.90f), CircleShape)
-                                .border(1.dp, velvetColors.rule, CircleShape),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    AppIcons.Palette,
-                                    contentDescription = "Change cover art",
-                                    tint = velvetColors.accentText,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                        }
+                        PlaylistCover(
+                            activeSongs,
+                            if (activeSongs.size <= 1) 156.dp else 230.dp,
+                            corner = 28.dp,
+                            customCover = playlist.customCover,
+                        )
                     },
                     artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
                     playEnabled = activeSongs.isNotEmpty() && !isEditing,
@@ -458,13 +426,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     onShuffle = { shuffle(activeSongs, playlistId = id, context = playbackContext) },
                     topActions = {
                         if (!isEditing) {
-                            PanelIconButton(AppIcons.Pencil, "Rename playlist") { renaming = true }
-                            PanelIconButton(Icons.Default.Edit, "Edit tracks") {
-                                draftSongs = playlist.songs
-                                isEditing = true
-                            }
-                            PanelIconButton(AppIcons.Palette, "Change cover art") { showCoverPicker = true }
-                            PanelIconButton(AppIcons.Sort, "Sort") { showSortMenu = true }
+                            PanelIconButton(AppIcons.Pencil, "Edit playlist") { renaming = true }
                             PanelIconButton(Icons.Default.Delete, "Delete playlist") {
                                 confirm = ConfirmRequest(
                                     "Delete \"${playlist.name}\"?",
@@ -473,7 +435,6 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                                 ) { library.deletePlaylist(playlist.id) }
                             }
                         } else {
-                            PanelIconButton(AppIcons.Sort, "Sort") { showSortMenu = true }
                             PanelIconButton(Icons.Default.Check, "Save") {
                                 library.setPlaylistSongs(playlist.id, draftSongs)
                                 isEditing = false
@@ -516,63 +477,6 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                 )
             }
 
-            if (showSortMenu) {
-                item {
-                    DropdownMenu(
-                        expanded = showSortMenu,
-                        onDismissRequest = { showSortMenu = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Alphabetical (A - Z)") },
-                            onClick = {
-                                draftSongs = draftSongs.sortedBy { it.title.lowercase() }
-                                isEditing = true
-                                showSortMenu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Alphabetical (Z - A)") },
-                            onClick = {
-                                draftSongs = draftSongs.sortedByDescending { it.title.lowercase() }
-                                isEditing = true
-                                showSortMenu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Artist (A - Z)") },
-                            onClick = {
-                                draftSongs = draftSongs.sortedBy { it.artist.lowercase() }
-                                isEditing = true
-                                showSortMenu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Artist (Z - A)") },
-                            onClick = {
-                                draftSongs = draftSongs.sortedByDescending { it.artist.lowercase() }
-                                isEditing = true
-                                showSortMenu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Duration (Shortest first)") },
-                            onClick = {
-                                draftSongs = draftSongs.sortedBy { it.durationSec }
-                                isEditing = true
-                                showSortMenu = false
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Duration (Longest first)") },
-                            onClick = {
-                                draftSongs = draftSongs.sortedByDescending { it.durationSec }
-                                isEditing = true
-                                showSortMenu = false
-                            },
-                        )
-                    }
-                }
-            }
 
             if (activeSongs.isEmpty()) {
                 item { EmptyHint("No songs in this playlist.") }
@@ -664,179 +568,6 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
             },
         )
     }
-
-    if (showCoverPicker) {
-        PlaylistCoverPickerSheet(playlist = playlist, onDismiss = { showCoverPicker = false })
-    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun PlaylistCoverPickerSheet(
-    playlist: Playlist,
-    onDismiss: () -> Unit,
-) {
-    val context = LocalContext.current
-    val library = VelvetApp.library
 
-    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            try {
-                val dir = File(context.filesDir, "playlist_covers")
-                if (!dir.exists()) dir.mkdirs()
-                val targetFile = File(dir, "cover_${playlist.id}.jpg")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                library.setPlaylistCover(playlist.id, "file://${targetFile.absolutePath}")
-                Toast.makeText(context, "Cover art updated from gallery", Toast.LENGTH_SHORT).show()
-                onDismiss()
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
-        tonalElevation = 0.dp,
-        scrimColor = Color(0x99000000),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-        ) {
-            Text(
-                "Change Playlist Cover",
-                style = MaterialTheme.typography.headlineSmall,
-                color = velvetColors.text,
-            )
-            Text(
-                "Pick an in-built gradient preset or upload a custom image",
-                style = MaterialTheme.typography.bodySmall,
-                color = velvetColors.muted,
-                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
-            )
-
-            Text(
-                "10 IN-BUILT PRESETS",
-                style = MaterialTheme.typography.labelSmall,
-                color = velvetColors.accentText,
-                modifier = Modifier.padding(bottom = 10.dp),
-            )
-
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val rows = PlaylistCoverPresets.presets.chunked(5)
-                rows.forEach { rowPresets ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        rowPresets.forEach { preset ->
-                            val isSelected = playlist.customCover == "preset:${preset.id}"
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        library.setPlaylistCover(playlist.id, "preset:${preset.id}")
-                                        Toast.makeText(context, "Cover updated: ${preset.name}", Toast.LENGTH_SHORT).show()
-                                        onDismiss()
-                                    },
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(preset.gradient)
-                                        .then(
-                                            if (isSelected) Modifier.border(2.5.dp, Color.White, RoundedCornerShape(14.dp))
-                                            else Modifier.border(1.dp, velvetColors.rule, RoundedCornerShape(14.dp))
-                                        ),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        preset.icon,
-                                        contentDescription = preset.name,
-                                        tint = preset.iconTint,
-                                        modifier = Modifier.fillMaxSize(0.42f),
-                                    )
-                                    if (isSelected) {
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .padding(3.dp)
-                                                .size(14.dp)
-                                                .background(Color.White, CircleShape),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = Color.Black,
-                                                modifier = Modifier.size(10.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    preset.name,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) velvetColors.accentText else velvetColors.text,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = velvetColors.rule)
-            Spacer(Modifier.height(16.dp))
-
-            Button(
-                onClick = { galleryLauncher.launch("image/*") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = velvetColors.raised),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(vertical = 4.dp),
-                ) {
-                    Icon(AppIcons.Palette, contentDescription = null, tint = velvetColors.accentText)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "Upload from Gallery / Files",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = velvetColors.text,
-                    )
-                }
-            }
-
-            if (playlist.customCover != null) {
-                Spacer(Modifier.height(8.dp))
-                TextButton(
-                    onClick = {
-                        library.setPlaylistCover(playlist.id, null)
-                        Toast.makeText(context, "Reset to default song collage", Toast.LENGTH_SHORT).show()
-                        onDismiss()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Reset to default collage", color = velvetColors.danger)
-                }
-            }
-        }
-    }
-}
