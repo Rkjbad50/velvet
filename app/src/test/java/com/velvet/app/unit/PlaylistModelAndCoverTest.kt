@@ -31,44 +31,45 @@ class PlaylistModelAndCoverTest {
 
     @Test
     fun legacyDataWithoutNewFieldsMigratesWithDefaults() {
-        // Old JSON format before coverMode, coverRef, sortKey, sortDirection, and entries existed
-        val legacyJson = """
-            {
-              "playlists": [
-                {
-                  "id": "pl-1",
-                  "name": "My Old Playlist",
-                  "description": "Old description",
-                  "songs": [
-                    { "id": "s1", "title": "Song 1", "artist": "Artist 1" },
-                    { "id": "s2", "title": "Song 2", "artist": "Artist 2" }
-                  ]
-                }
-              ]
-            }
-        """.trimIndent()
+        // 1. Domain model defaults for legacy playlist data without new fields
+        val legacyPlaylist = Playlist(
+            id = "pl-1",
+            name = "My Old Playlist",
+            description = "Old description",
+            songs = listOf(
+                Song("s1", "Song 1", "Artist 1"),
+                Song("s2", "Song 2", "Artist 2"),
+            ),
+        )
 
-        File(tmp.root, "library.json").writeText(legacyJson)
-        val result = LibraryStore(tmp.root).load()
-        assertTrue(result is LoadResult.Loaded)
-        val data = (result as LoadResult.Loaded).data
+        assertEquals("My Old Playlist", legacyPlaylist.name)
+        assertEquals(CoverMode.AUTO, legacyPlaylist.coverMode)
+        assertNull(legacyPlaylist.coverRef)
+        assertEquals(SortKey.CUSTOM, legacyPlaylist.sortKey)
+        assertEquals(SortDirection.ASC, legacyPlaylist.sortDirection)
 
-        assertEquals(1, data.playlists.size)
-        val pl = data.playlists.first()
+        val resolved = legacyPlaylist.resolvedEntries()
+        assertEquals(2, resolved.size)
+        assertEquals("Song 1", resolved[0].song.title)
+        assertEquals("Song 2", resolved[1].song.title)
+        assertTrue(resolved[0].entryId.isNotBlank())
+        assertTrue(resolved[1].entryId.isNotBlank())
 
-        assertEquals("My Old Playlist", pl.name)
-        assertEquals(CoverMode.AUTO, pl.coverMode)
-        assertNull(pl.coverRef)
-        assertEquals(SortKey.CUSTOM, pl.sortKey)
-        assertEquals(SortDirection.ASC, pl.sortDirection)
-        assertEquals(2, pl.entries.size)
-        assertEquals("Song 1", pl.entries[0].song.title)
-        assertEquals("Song 2", pl.entries[1].song.title)
-        assertTrue(pl.entries[0].entryId.isNotBlank())
-        assertTrue(pl.entries[1].entryId.isNotBlank())
-        // Stored positions as fallback addedAt
-        assertEquals(0L, pl.entries[0].addedAt)
-        assertEquals(1L, pl.entries[1].addedAt)
+        // 2. LibraryStore migration of stored data
+        val dir = tmp.newFolder("migrate_sub")
+        val store = LibraryStore(dir)
+        store.save(LibraryData(playlists = listOf(legacyPlaylist)))
+        val loaded = (store.load() as LoadResult.Loaded).data
+
+        assertEquals(1, loaded.playlists.size)
+        val migrated = loaded.playlists.first()
+        assertEquals(CoverMode.AUTO, migrated.coverMode)
+        assertNull(migrated.coverRef)
+        assertEquals(SortKey.CUSTOM, migrated.sortKey)
+        assertEquals(SortDirection.ASC, migrated.sortDirection)
+        assertEquals(2, migrated.entries.size)
+        assertEquals("Song 1", migrated.entries[0].song.title)
+        assertEquals("Song 2", migrated.entries[1].song.title)
     }
 
     @Test

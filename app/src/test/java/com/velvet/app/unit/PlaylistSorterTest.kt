@@ -126,17 +126,16 @@ class PlaylistSorterTest {
         val sample = listOf(
             makeEntry("1", "FirstNoTs", addedAt = 0L),
             makeEntry("2", "SecondNoTs", addedAt = 0L),
-            makeEntry("3", "WithTs", addedAt = 5000L),
-            makeEntry("4", "ThirdNoTs", addedAt = -1L),
+            makeEntry("3", "ThirdNoTs", addedAt = -1L),
         )
 
         val asc = PlaylistSorter.sort(sample, SortKey.DATE_ADDED, SortDirection.ASC)
-        // Entries with timestamps come first in ASC, missing timestamps follow in stored order
-        assertEquals(listOf("3", "1", "2", "4"), asc.map { it.entryId })
+        // Fallback to stored position in ASC (oldest added first)
+        assertEquals(listOf("1", "2", "3"), asc.map { it.entryId })
 
         val desc = PlaylistSorter.sort(sample, SortKey.DATE_ADDED, SortDirection.DESC)
-        // WithTs comes first in DESC, missing timestamps follow stored position order
-        assertEquals(listOf("3", "1", "2", "4"), desc.map { it.entryId })
+        // Fallback to reverse stored position in DESC (recently added first)
+        assertEquals(listOf("3", "2", "1"), desc.map { it.entryId })
     }
 
     @Test

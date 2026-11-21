@@ -54,7 +54,7 @@ data class Playlist(
     val updatedAt: Long = 0,
     /** When it was created (0 for playlists saved before this field existed). */
     val addedAt: Long = 0,
-    val createdAt: Long = addedAt,
+    val createdAt: Long = 0L,
     val playCount: Long = 0,
     val lastPlayedAt: Long = 0,
     val customCover: String? = null,
