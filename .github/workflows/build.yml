@@ -32,21 +32,6 @@ jobs:
           BUILD_NUMBER=${{ github.run_number }}
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
 
-      - name: Configure APK signing
-        id: signing
-        run: |
-          if [ -f "keystore/velvet.jks" ]; then
-            echo "Persistent release keystore found at keystore/velvet.jks."
-            echo "VELVET_KEYSTORE=$(pwd)/keystore/velvet.jks" >> "$GITHUB_ENV"
-            echo "VELVET_KEYSTORE_PASSWORD=velvetapp" >> "$GITHUB_ENV"
-            echo "VELVET_KEY_ALIAS=velvet" >> "$GITHUB_ENV"
-            echo "VELVET_KEY_PASSWORD=velvetapp" >> "$GITHUB_ENV"
-            echo "is_signed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_signed=false" >> "$GITHUB_OUTPUT"
-            echo "Keystore not found. Using debug signing."
-          fi
-
       - name: Build release APK
         run: gradle testReleaseUnitTest assembleRelease --stacktrace
 
@@ -62,19 +47,5 @@ jobs:
           TAG="v2.6"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_FILE" velvet.apk
-          cat << 'EOF' > release_notes.txt
-VELVET Version 2.6 Official Release.
-
-Highlights in this update:
-- Persistent Playback State & Instant Resume: Velvet now remembers the exact track, timeline position, duration, and queue across app closes. Opening the app restores your last played state and tapping Play starts instantly without zeroing out (00:00).
-- Permanent Release Signing Key: Commits a unified release keystore directly into the build pipeline, permanently solving package name / signature conflict errors during in-app updates.
-- In-App Update Detection & Banner: Settings > About checks GitHub Releases automatically on launch and displays a prominent update banner with one-tap APK download.
-
-Direct download: velvet.apk below.
-EOF
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
-          gh release create "$TAG" velvet.apk \
-            --repo "${{ github.repository }}" \
-            --title "Version 2.6" \
-            --notes-file release_notes.txt \
-            --latest
+          gh release create "$TAG" velvet.apk --repo "${{ github.repository }}" --title "Version 2.6" --notes "VELVET Version 2.6 Official Release. Highlights: Persistent playback state with instant resume across app closes (no timeline reset to 00:00, no need to press previous), unified permanent release keystore for conflict-free in-app updates, and automated GitHub update detection with banner in Settings > About. Direct download: **velvet.apk** below." --latest
