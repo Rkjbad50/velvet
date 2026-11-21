@@ -178,9 +178,80 @@ class PlayerQueueTest {
         assertTrue(manager.userQueue.isEmpty())
         assertTrue(manager.visibleQueue.none { it.qid == targetQid })
 
-        // Cannot remove "current" item
-        assertFalse(manager.removeItem("current"))
-        assertNotNull(manager.current)
+        // Removing "current" item skips to the next track as per spec
+        assertTrue(manager.removeItem("current"))
+        assertEquals("song_1", manager.current?.id)
+        assertEquals("song_0", manager.history.last().id)
+    }
+
+    @Test
+    fun testPlayNextMoveToTopRemoveByQid_withDuplicateSongs() {
+        val dupSong = makeSong("same_id", "Same Track")
+        val otherSong = makeSong("other_id", "Other Track")
+        val item1 = com.velvet.app.playback.QueueItem(dupSong, "qid_1")
+        val item2 = com.velvet.app.playback.QueueItem(dupSong, "qid_2")
+        val item3 = com.velvet.app.playback.QueueItem(otherSong, "qid_3")
+
+        val state0 = com.velvet.app.playback.QueueState(
+            sourceList = listOf(item1, item2, item3),
+            current = item1,
+            upNext = listOf(item2, item3),
+        )
+
+        val manager = com.velvet.app.playback.QueueManager(state0)
+
+        // 1. Move duplicate item2 (qid_2) to top
+        val moved = manager.moveToTop("qid_2")
+        assertTrue(moved)
+        assertEquals(1, manager.userQueue.size)
+        assertEquals("qid_2", manager.userQueue.first().qid)
+        // item1 (current) remains current with qid_1
+        assertEquals("qid_1", manager.state.current?.qid)
+
+        // 2. Add another copy of sameSong via playNext with qid_4
+        val item4 = com.velvet.app.playback.QueueItem(dupSong, "qid_4")
+        manager.playNext(item4)
+        assertEquals(2, manager.userQueue.size)
+        assertEquals("qid_4", manager.userQueue[0].qid)
+        assertEquals("qid_2", manager.userQueue[1].qid)
+
+        // 3. Remove qid_2: ONLY qid_2 is removed; qid_4 and qid_1 remain!
+        val removed = manager.removeItem("qid_2")
+        assertTrue(removed)
+        assertEquals(1, manager.userQueue.size)
+        assertEquals("qid_4", manager.userQueue.first().qid)
+        assertEquals("qid_1", manager.state.current?.qid)
+
+        // 4. Remove current (qid_1): advances to next track (qid_4)
+        val removedCurrent = manager.removeItem("qid_1")
+        assertTrue(removedCurrent)
+        assertEquals("qid_4", manager.state.current?.qid)
+        assertEquals("qid_1", manager.state.history.last().qid)
+    }
+
+    @Test
+    fun testPrevious_greaterThan3sRestarts_lessOrEqual3sPopsHistory() {
+        val songs = makeSongs(3)
+        val manager = com.velvet.app.playback.QueueManager()
+        manager.start(songs, startIndex = 0, shuffled = false)
+        // Advance to song_1
+        manager.advance()
+        assertEquals("song_1", manager.current?.id)
+        assertEquals("song_0", manager.history.last().id)
+
+        // Previous with position > 3000ms: restarts current song, history not popped
+        val (stateGt3s, restartedGt3s) = com.velvet.app.playback.QueueManager.previous(manager.state, positionMs = 4500L)
+        assertTrue(restartedGt3s)
+        assertEquals("song_1", stateGt3s.current?.song?.id)
+        assertEquals(1, stateGt3s.history.size)
+
+        // Previous with position <= 3000ms: pops history, song_0 becomes current
+        val (stateLe3s, restartedLe3s) = com.velvet.app.playback.QueueManager.previous(manager.state, positionMs = 1200L)
+        assertFalse(restartedLe3s)
+        assertEquals("song_0", stateLe3s.current?.song?.id)
+        assertTrue(stateLe3s.history.isEmpty())
+        // Old current (song_1) pushed to front of upNext
+        assertEquals("song_1", stateLe3s.upNext.first().song.id)
     }
 
     @Test

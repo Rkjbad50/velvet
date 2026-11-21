@@ -105,6 +105,10 @@ class QueueManager(initialState: QueueState = QueueState()) {
         update { Companion.playNext(it, song) }
     }
 
+    fun playNext(item: QueueItem) {
+        update { Companion.playNext(it, item) }
+    }
+
     fun playNext(qid: String): Boolean {
         var found = false
         update {
@@ -125,7 +129,13 @@ class QueueManager(initialState: QueueState = QueueState()) {
         return added
     }
 
-    fun addToQueue(song: Song): Boolean = enqueue(song)
+    fun addToQueue(song: Song) {
+        update { Companion.addToQueue(it, song) }
+    }
+
+    fun addToQueue(item: QueueItem) {
+        update { Companion.addToQueue(it, item) }
+    }
 
     fun moveToTop(qid: String): Boolean {
         var moved = false
@@ -367,18 +377,23 @@ class QueueManager(initialState: QueueState = QueueState()) {
         }
 
         /**
-         * Add a song to play immediately after current ("Play next").
+         * Add an item to play immediately after current ("Play next").
          * Inserted at userQueue index 0. User queue is NEVER shuffled.
          */
-        fun playNext(state: QueueState, song: Song): QueueState {
-            val newItem = QueueItem(song)
-            val cleanUserQueue = state.userQueue.filter { !it.song.isDuplicateOf(song) }
-            val cleanUpNext = state.upNext.filter { !it.song.isDuplicateOf(song) }
-            return state.copy(
-                userQueue = listOf(newItem) + cleanUserQueue,
-                upNext = cleanUpNext,
-            )
-        }
+        fun playNext(state: QueueState, item: QueueItem): QueueState =
+            state.copy(userQueue = listOf(item) + state.userQueue)
+
+        fun playNext(state: QueueState, song: Song): QueueState =
+            playNext(state, QueueItem(song))
+
+        /**
+         * Append an item to the end of userQueue ("Add to queue").
+         */
+        fun addToQueue(state: QueueState, item: QueueItem): QueueState =
+            state.copy(userQueue = state.userQueue + item)
+
+        fun addToQueue(state: QueueState, song: Song): QueueState =
+            addToQueue(state, QueueItem(song))
 
         /**
          * Move item by qid to the top of userQueue (index 0).
@@ -423,13 +438,13 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
         /**
          * Remove an item by qid.
-         * Removing current item ("current") is rejected and returns false.
+         * Spec: removing current = skip to next track.
          */
         fun remove(state: QueueState, qid: String): QueueState = removeWithResult(state, qid).first
 
         fun removeWithResult(state: QueueState, qid: String): Pair<QueueState, Boolean> {
             if (qid == "current" || qid == state.current?.qid) {
-                return Pair(state, false)
+                return Pair(advance(state), true)
             }
             val inUserQueue = state.userQueue.any { it.qid == qid }
             val inUpNext = state.upNext.any { it.qid == qid }
