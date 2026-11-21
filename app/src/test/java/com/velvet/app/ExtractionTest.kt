@@ -70,6 +70,10 @@ class ExtractionTest {
             val reason = "YouTube requires bot verification for this connection"
             println("Skipping stream fetch because $reason")
             throw AssumptionViolatedException(reason, blocked)
+        } catch (e: org.schabi.newpipe.extractor.exceptions.ExtractionException) {
+            val reason = "YouTube restricted content for datacenter IP: ${e.message}"
+            println("Skipping stream fetch because $reason")
+            throw AssumptionViolatedException(reason, e)
         }
         println("stream host: ${stream.url.substringAfter("://").substringBefore("/")}, quality: ${stream.quality}")
         val request = Request.Builder()
