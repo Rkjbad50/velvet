@@ -1,12 +1,17 @@
 package com.velvet.app.data
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import com.velvet.app.BuildConfig
+import com.velvet.app.diagnostics.DiagnosticsLogger
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -23,7 +28,143 @@ sealed interface UpdateInstallResult {
 class Sha256MismatchException(message: String) : IOException(message)
 class CertificateMismatchException(message: String) : IOException(message)
 
+data class InstallStatusRecord(
+    val statusCode: Int,
+    val statusName: String,
+    val message: String,
+    val timestamp: Long = System.currentTimeMillis(),
+)
+
+data class InstallOutcome(
+    val didApply: Boolean,
+    val statusCode: Int,
+    val statusName: String,
+    val message: String,
+    val reportText: String,
+)
+
+/**
+ * Receiver invoked by Android PackageInstaller when an install session completes or requires user action.
+ */
+class InstallStatusReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            val confirmIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_INTENT)
+            }
+            confirmIntent?.let {
+                it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(it)
+            }
+        } else {
+            AppUpdater.recordInstallStatus(status, message)
+        }
+    }
+}
+
 object AppUpdater {
+    const val ACTION_INSTALL_STATUS = "com.velvet.app.INSTALL_STATUS"
+
+    @Volatile
+    var pendingInstallVersionCode: Int? = null
+
+    @Volatile
+    var lastInstallStatus: InstallStatusRecord? = null
+
+    fun statusToString(status: Int): String = when (status) {
+        PackageInstaller.STATUS_SUCCESS -> "STATUS_SUCCESS (0)"
+        PackageInstaller.STATUS_FAILURE -> "STATUS_FAILURE (1)"
+        PackageInstaller.STATUS_FAILURE_BLOCKED -> "STATUS_FAILURE_BLOCKED (2)"
+        PackageInstaller.STATUS_FAILURE_ABORTED -> "STATUS_FAILURE_ABORTED (3)"
+        PackageInstaller.STATUS_FAILURE_INVALID -> "STATUS_FAILURE_INVALID (4)"
+        PackageInstaller.STATUS_FAILURE_CONFLICT -> "STATUS_FAILURE_CONFLICT (5)"
+        PackageInstaller.STATUS_FAILURE_STORAGE -> "STATUS_FAILURE_STORAGE (6)"
+        PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "STATUS_FAILURE_INCOMPATIBLE (7)"
+        else -> "STATUS_UNKNOWN ($status)"
+    }
+
+    fun recordInstallStatus(status: Int, message: String?) {
+        val record = InstallStatusRecord(
+            statusCode = status,
+            statusName = statusToString(status),
+            message = message ?: if (status == PackageInstaller.STATUS_SUCCESS) "Installation succeeded" else "Package installation failed or was aborted by user",
+        )
+        lastInstallStatus = record
+        if (status != PackageInstaller.STATUS_SUCCESS) {
+            DiagnosticsLogger.w("PackageInstaller", "Update did not apply: ${record.statusName} - ${record.message}")
+        } else {
+            DiagnosticsLogger.i("PackageInstaller", "Package installation reported SUCCESS")
+        }
+    }
+
+    fun evaluateInstallOutcome(
+        installedVersionCode: Int,
+        pendingVersionCode: Int,
+        statusRecord: InstallStatusRecord? = null,
+    ): InstallOutcome {
+        val didApply = installedVersionCode >= pendingVersionCode
+        val record = statusRecord ?: InstallStatusRecord(
+            statusCode = PackageInstaller.STATUS_FAILURE_ABORTED,
+            statusName = statusToString(PackageInstaller.STATUS_FAILURE_ABORTED),
+            message = "Installation was cancelled or aborted before completion.",
+        )
+        val reportText = if (didApply) {
+            "Update applied successfully (code $installedVersionCode)"
+        } else {
+            "Update did not apply (${record.statusName}): ${record.message}"
+        }
+        return InstallOutcome(
+            didApply = didApply,
+            statusCode = record.statusCode,
+            statusName = record.statusName,
+            message = record.message,
+            reportText = reportText,
+        )
+    }
+
+    fun checkInstallResult(context: Context, onReport: (String) -> Unit) {
+        val pendingCode = pendingInstallVersionCode ?: return
+        pendingInstallVersionCode = null
+        val currentCode = getCurrentVersionCode(context)
+        val outcome = evaluateInstallOutcome(currentCode, pendingCode, lastInstallStatus)
+        if (!outcome.didApply) {
+            DiagnosticsLogger.w("PackageInstaller", "Update did not apply: ${outcome.statusName} - ${outcome.message}")
+            onReport(outcome.reportText)
+        }
+    }
+
+    fun getCurrentVersionCode(context: Context): Int {
+        return try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode
+            }
+        } catch (_: Exception) {
+            BuildConfig.VERSION_CODE
+        }
+    }
+
+    fun getApkVersionCode(context: Context, apkFile: File): Int? {
+        return try {
+            val archiveInfo = context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0) ?: return null
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                archiveInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                archiveInfo.versionCode
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun getUpdateFile(context: Context): File {
         val dir = File(context.cacheDir, "updates")
@@ -207,7 +348,7 @@ object AppUpdater {
      * Launches the Android system package installer for [apkFile].
      * Guides the user to "Install unknown apps" if permission is not granted on Android 8+.
      */
-    fun installApk(context: Context, apkFile: File): UpdateInstallResult {
+    fun installApk(context: Context, apkFile: File, targetVersionCode: Int? = null): UpdateInstallResult {
         if (!apkFile.exists()) {
             return UpdateInstallResult.Failure("Update package file not found.")
         }
@@ -223,6 +364,54 @@ object AppUpdater {
             }
         }
 
+        val targetCode = targetVersionCode ?: getApkVersionCode(context, apkFile) ?: (getCurrentVersionCode(context) + 1)
+        pendingInstallVersionCode = targetCode
+        lastInstallStatus = null
+
+        return try {
+            installViaPackageInstaller(context, apkFile)
+        } catch (e: Exception) {
+            DiagnosticsLogger.w("PackageInstaller", "PackageInstaller session failed (${e.message}); falling back to ACTION_VIEW")
+            installViaIntent(context, apkFile)
+        }
+    }
+
+    private fun installViaPackageInstaller(context: Context, apkFile: File): UpdateInstallResult {
+        val packageInstaller = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(context.packageName)
+        params.setSize(apkFile.length())
+
+        val sessionId = packageInstaller.createSession(params)
+        val session = packageInstaller.openSession(sessionId)
+        apkFile.inputStream().use { input ->
+            session.openOutputStream("velvet_update").use { output ->
+                input.copyTo(output)
+                session.fsync(output)
+            }
+        }
+
+        val receiverIntent = Intent(context, InstallStatusReceiver::class.java).apply {
+            action = ACTION_INSTALL_STATUS
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            sessionId,
+            receiverIntent,
+            flags,
+        )
+
+        session.commit(pendingIntent.intentSender)
+        session.close()
+        return UpdateInstallResult.PromptLaunched
+    }
+
+    private fun installViaIntent(context: Context, apkFile: File): UpdateInstallResult {
         return try {
             val uri = FileProvider.getUriForFile(
                 context,

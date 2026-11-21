@@ -13,14 +13,14 @@ internal const val UPSTREAM_RELEASES_URL = "https://github.com/Rkjbad50/velvet/r
 internal const val NEWPIPE_RELEASES_URL = "https://github.com/TeamNewPipe/NewPipeExtractor/releases"
 
 @Serializable
-internal data class ReleaseAsset(
+data class ReleaseAsset(
     val name: String,
     @SerialName("browser_download_url") val browserDownloadUrl: String,
     val size: Long = 0L,
 )
 
 @Serializable
-internal data class GitHubRelease(
+data class GitHubRelease(
     val tag_name: String,
     val name: String? = null,
     val body: String? = null,
@@ -30,7 +30,47 @@ internal data class GitHubRelease(
 )
 
 // Legacy alias for compatibility with existing tests and calls
-internal typealias Release = GitHubRelease
+typealias Release = GitHubRelease
+
+@Serializable
+data class UpdatePayload(
+    val versionName: String,
+    val versionCode: Int,
+    val sha256: String,
+    val apkName: String = "velvet.apk",
+)
+
+data class DependencyAdvisory(
+    val dependencyName: String,
+    val bundledVersion: String,
+    val upstreamVersion: String,
+    val isNewer: Boolean,
+    val message: String = "$dependencyName $upstreamVersion is available upstream (bundled $bundledVersion). Applying it requires a new app release.",
+)
+
+sealed interface AppUpdateState {
+    data class UpdateAvailable(
+        val latestVersionName: String,
+        val latestVersionCode: Int,
+        val downloadUrl: String,
+        val expectedSha256: String?,
+        val releaseNotes: String,
+        val releaseTitle: String,
+        val releaseUrl: String,
+        val isPrerelease: Boolean,
+    ) : AppUpdateState
+
+    data class UpToDate(
+        val currentVersionName: String,
+        val currentVersionCode: Int,
+    ) : AppUpdateState
+
+    data class Error(
+        val message: String,
+        val isRateLimited: Boolean = false,
+        val isOffline: Boolean = false,
+    ) : AppUpdateState
+}
 
 enum class UpdateTrigger {
     NONE,
@@ -40,10 +80,12 @@ enum class UpdateTrigger {
 }
 
 data class UpdateInfo(
-    val hasUpdate: Boolean,
-    val trigger: UpdateTrigger = UpdateTrigger.NONE,
+    val appUpdateState: AppUpdateState,
+    val dependencyAdvisories: List<DependencyAdvisory> = emptyList(),
     val latestVersion: String,
+    val latestVersionCode: Int = 0,
     val bundledVersion: String = BuildConfig.VERSION_NAME,
+    val bundledVersionCode: Int = BuildConfig.VERSION_CODE,
     val latestExtractorVersion: String = BuildConfig.NEWPIPE_VERSION,
     val bundledExtractorVersion: String = BuildConfig.NEWPIPE_VERSION,
     val releaseTitle: String = "",
@@ -55,7 +97,12 @@ data class UpdateInfo(
     val isRateLimited: Boolean = false,
     val isOffline: Boolean = false,
     val errorMessage: String? = null,
-)
+    val trigger: UpdateTrigger = if (appUpdateState is AppUpdateState.UpdateAvailable) UpdateTrigger.APP else UpdateTrigger.NONE,
+) {
+    /** True ONLY if there is a newer application release. Dependency advisories never affect this. */
+    val hasAppUpdate: Boolean get() = appUpdateState is AppUpdateState.UpdateAvailable
+    val hasUpdate: Boolean get() = hasAppUpdate
+}
 
 internal object ReleaseCheck {
     private const val APP_RELEASES_API = "https://api.github.com/repos/Rkjbad50/velvet/releases"
@@ -70,6 +117,104 @@ internal object ReleaseCheck {
     private var cachedUpdateInfo: UpdateInfo? = null
     private var lastCheckTimestamp: Long = 0L
     private var lastIncludedPrereleases: Boolean = false
+
+    /**
+     * Evaluates whether an application update is available.
+     * Compares installed versionCode with the release's versionCode from update.json.
+     * An update is available ONLY if release versionCode is strictly higher.
+     * Falls back to tag comparison ONLY if update.json is missing, and NEVER shows an update
+     * when the tag name equals the installed versionName.
+     */
+    fun evaluateAppUpdate(
+        targetRelease: GitHubRelease?,
+        updatePayload: UpdatePayload?,
+        installedVersionCode: Int,
+        installedVersionName: String,
+    ): AppUpdateState {
+        if (targetRelease == null) {
+            return AppUpdateState.UpToDate(installedVersionName, installedVersionCode)
+        }
+
+        // 1. If updatePayload is present (from update.json asset), compare versionCode strictly
+        if (updatePayload != null) {
+            val isNewer = updatePayload.versionCode > installedVersionCode
+            return if (isNewer) {
+                val apkAsset = targetRelease.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+                val downloadUrl = apkAsset?.browserDownloadUrl ?: targetRelease.html_url ?: UPSTREAM_RELEASES_URL
+                AppUpdateState.UpdateAvailable(
+                    latestVersionName = updatePayload.versionName,
+                    latestVersionCode = updatePayload.versionCode,
+                    downloadUrl = downloadUrl,
+                    expectedSha256 = updatePayload.sha256,
+                    releaseNotes = targetRelease.body.orEmpty(),
+                    releaseTitle = targetRelease.name ?: targetRelease.tag_name,
+                    releaseUrl = targetRelease.html_url ?: UPSTREAM_RELEASES_URL,
+                    isPrerelease = targetRelease.prerelease,
+                )
+            } else {
+                AppUpdateState.UpToDate(installedVersionName, installedVersionCode)
+            }
+        }
+
+        // 2. Fall back to tag comparison ONLY if update.json is missing
+        val cleanTag = targetRelease.tag_name.removePrefix("v").removePrefix("Version ").trim()
+        val cleanInstalled = installedVersionName.removePrefix("v").removePrefix("Version ").trim()
+
+        // Never show an update when the tag name equals the installed versionName
+        if (cleanTag.equals(cleanInstalled, ignoreCase = true)) {
+            return AppUpdateState.UpToDate(installedVersionName, installedVersionCode)
+        }
+
+        // Check if tag is newer via build number or SemVer
+        val buildRegex = Regex("(?:v[0-9.]+-)?build-([0-9]+)")
+        val legacyTitleRegex = Regex(".*[Bb]uild ([0-9]+).*")
+        val buildMatch = buildRegex.find(targetRelease.tag_name) ?: legacyTitleRegex.find(targetRelease.name.orEmpty())
+        val remoteBuild = buildMatch?.groupValues?.get(1)?.toIntOrNull()
+
+        val isNewer = if (remoteBuild != null && installedVersionCode > 0) {
+            remoteBuild > installedVersionCode
+        } else {
+            SemVer.isNewer(targetRelease.tag_name, installedVersionName)
+        }
+
+        return if (isNewer) {
+            val apkAsset = targetRelease.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+            val downloadUrl = apkAsset?.browserDownloadUrl ?: targetRelease.html_url ?: UPSTREAM_RELEASES_URL
+            AppUpdateState.UpdateAvailable(
+                latestVersionName = cleanTag,
+                latestVersionCode = remoteBuild ?: 0,
+                downloadUrl = downloadUrl,
+                expectedSha256 = extractSha256(targetRelease.body.orEmpty()),
+                releaseNotes = targetRelease.body.orEmpty(),
+                releaseTitle = targetRelease.name ?: targetRelease.tag_name,
+                releaseUrl = targetRelease.html_url ?: UPSTREAM_RELEASES_URL,
+                isPrerelease = targetRelease.prerelease,
+            )
+        } else {
+            AppUpdateState.UpToDate(installedVersionName, installedVersionCode)
+        }
+    }
+
+    /**
+     * Evaluates dependency advisories (e.g. NewPipeExtractor).
+     * These are purely informational and NEVER trigger an app update banner or button.
+     */
+    fun evaluateDependencyAdvisories(
+        latestExtractorTag: String?,
+        bundledExtractorVersion: String = BuildConfig.NEWPIPE_VERSION,
+    ): List<DependencyAdvisory> {
+        if (latestExtractorTag.isNullOrBlank()) return emptyList()
+        val isNewer = SemVer.isNewer(latestExtractorTag, bundledExtractorVersion)
+        return listOf(
+            DependencyAdvisory(
+                dependencyName = "NewPipeExtractor",
+                bundledVersion = bundledExtractorVersion,
+                upstreamVersion = latestExtractorTag,
+                isNewer = isNewer,
+                message = "NewPipeExtractor $latestExtractorTag is available upstream (bundled $bundledExtractorVersion). Applying it requires a new app release.",
+            )
+        )
+    }
 
     /**
      * Checks for updates against both VELVET GitHub repository and upstream TeamNewPipe/NewPipeExtractor.
@@ -164,50 +309,98 @@ internal object ReleaseCheck {
         }
 
         val targetRelease = eligibleReleases.firstOrNull() ?: appReleases.firstOrNull()
-        val latestAppTag = targetRelease?.tag_name.orEmpty()
-        val bundledAppVer = currentVersionName
-        val bundledExtractorVer = BuildConfig.NEWPIPE_VERSION
 
-        val appHasUpdate = if (latestAppTag.isNotEmpty()) {
-            SemVer.isNewer(latestAppTag, bundledAppVer)
-        } else {
-            false
+        // 3. Fetch update.json metadata if published with release
+        var updatePayload: UpdatePayload? = null
+        val updateJsonAsset = targetRelease?.assets?.firstOrNull { it.name.equals("update.json", ignoreCase = true) }
+        if (updateJsonAsset != null && !rateLimited && !offline) {
+            try {
+                val req = Request.Builder()
+                    .url(updateJsonAsset.browserDownloadUrl)
+                    .header("Accept", "application/json")
+                    .build()
+                val call = http.newCall(req)
+                call.timeout().timeout(5, TimeUnit.SECONDS)
+                call.execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val text = resp.body?.string().orEmpty()
+                        updatePayload = json.decodeFromString<UpdatePayload>(text)
+                    }
+                }
+            } catch (_: Exception) {
+                // Fall back to tag
+            }
         }
 
-        val extractorHasUpdate = if (latestExtractorTag != null) {
-            SemVer.isNewer(latestExtractorTag!!, bundledExtractorVer)
+        val installedCode = if (upstreamBuild > 0) upstreamBuild else BuildConfig.VERSION_CODE
+
+        val appUpdateState = if ((rateLimited || offline) && cached == null) {
+            AppUpdateState.Error(
+                message = errorMsg ?: "Failed to check for updates",
+                isRateLimited = rateLimited,
+                isOffline = offline,
+            )
+        } else if (cached != null && (rateLimited || offline)) {
+            cached.appUpdateState
         } else {
-            false
+            evaluateAppUpdate(
+                targetRelease = targetRelease,
+                updatePayload = updatePayload,
+                installedVersionCode = installedCode,
+                installedVersionName = currentVersionName,
+            )
         }
+
+        val advisories = evaluateDependencyAdvisories(
+            latestExtractorTag = latestExtractorTag,
+            bundledExtractorVersion = BuildConfig.NEWPIPE_VERSION,
+        )
 
         val trigger = when {
-            appHasUpdate && extractorHasUpdate -> UpdateTrigger.BOTH
-            appHasUpdate -> UpdateTrigger.APP
-            extractorHasUpdate -> UpdateTrigger.EXTRACTOR
+            appUpdateState is AppUpdateState.UpdateAvailable && advisories.any { it.isNewer } -> UpdateTrigger.BOTH
+            appUpdateState is AppUpdateState.UpdateAvailable -> UpdateTrigger.APP
+            advisories.any { it.isNewer } -> UpdateTrigger.EXTRACTOR
             else -> UpdateTrigger.NONE
         }
 
-        val apkAsset = targetRelease?.assets?.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
-        val downloadUrl = apkAsset?.browserDownloadUrl ?: targetRelease?.html_url ?: UPSTREAM_RELEASES_URL
-        val releaseNotes = targetRelease?.body.orEmpty()
-        val sha256 = extractSha256(releaseNotes)
+        val latestVersionName = when (appUpdateState) {
+            is AppUpdateState.UpdateAvailable -> appUpdateState.latestVersionName
+            is AppUpdateState.UpToDate -> appUpdateState.currentVersionName
+            is AppUpdateState.Error -> currentVersionName
+        }
+        val latestVersionCode = when (appUpdateState) {
+            is AppUpdateState.UpdateAvailable -> appUpdateState.latestVersionCode
+            is AppUpdateState.UpToDate -> appUpdateState.currentVersionCode
+            is AppUpdateState.Error -> installedCode
+        }
+        val downloadUrl = when (appUpdateState) {
+            is AppUpdateState.UpdateAvailable -> appUpdateState.downloadUrl
+            else -> targetRelease?.html_url ?: UPSTREAM_RELEASES_URL
+        }
+        val expectedSha256 = when (appUpdateState) {
+            is AppUpdateState.UpdateAvailable -> appUpdateState.expectedSha256
+            else -> extractSha256(targetRelease?.body.orEmpty())
+        }
 
         val result = UpdateInfo(
-            hasUpdate = appHasUpdate || extractorHasUpdate,
-            trigger = trigger,
-            latestVersion = if (latestAppTag.isNotEmpty()) latestAppTag.removePrefix("v").removePrefix("Version ") else bundledAppVer,
-            bundledVersion = bundledAppVer,
-            latestExtractorVersion = latestExtractorTag ?: bundledExtractorVer,
-            bundledExtractorVersion = bundledExtractorVer,
-            releaseTitle = targetRelease?.name ?: latestAppTag,
-            releaseNotes = releaseNotes,
+            appUpdateState = appUpdateState,
+            dependencyAdvisories = advisories,
+            latestVersion = latestVersionName,
+            latestVersionCode = latestVersionCode,
+            bundledVersion = currentVersionName,
+            bundledVersionCode = installedCode,
+            latestExtractorVersion = latestExtractorTag ?: BuildConfig.NEWPIPE_VERSION,
+            bundledExtractorVersion = BuildConfig.NEWPIPE_VERSION,
+            releaseTitle = targetRelease?.name ?: targetRelease?.tag_name.orEmpty(),
+            releaseNotes = targetRelease?.body.orEmpty(),
             downloadUrl = downloadUrl,
-            expectedSha256 = sha256,
+            expectedSha256 = expectedSha256,
             releaseUrl = targetRelease?.html_url ?: UPSTREAM_RELEASES_URL,
             isPrerelease = targetRelease?.prerelease ?: false,
             isRateLimited = rateLimited,
             isOffline = offline,
             errorMessage = errorMsg,
+            trigger = trigger,
         )
 
         if (!rateLimited && !offline) {
@@ -228,7 +421,7 @@ internal object ReleaseCheck {
     }
 
     fun hasNewerBuild(http: OkHttpClient, upstreamBuild: Int, currentVersionName: String = BuildConfig.VERSION_NAME): Boolean {
-        return checkUpdate(http, upstreamBuild, currentVersionName).hasUpdate
+        return checkUpdate(http, upstreamBuild, currentVersionName).hasAppUpdate
     }
 
     /**
@@ -246,6 +439,12 @@ internal object ReleaseCheck {
         val remoteBuild = buildMatch?.groupValues?.get(1)?.toIntOrNull()
         if (remoteBuild != null && upstreamBuild > 0) {
             return remoteBuild > upstreamBuild
+        }
+
+        val cleanTag = tag.removePrefix("v").removePrefix("Version ").trim()
+        val cleanCurrent = currentVersionName.removePrefix("v").removePrefix("Version ").trim()
+        if (cleanTag.equals(cleanCurrent, ignoreCase = true) && upstreamBuild <= 0) {
+            return false
         }
 
         val semverRegex = Regex("""(?:v|Version\s*)?(\d+)(?:\.(\d+))?(?:\.(\d+))?""")

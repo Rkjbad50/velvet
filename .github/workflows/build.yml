@@ -57,6 +57,15 @@ jobs:
           echo "Release tag: $TAG"
           echo "SHA256: $SHA256"
 
+          cat <<EOF > update.json
+          {
+            "versionName": "$VERSION",
+            "versionCode": $BUILD_NUMBER,
+            "sha256": "$SHA256",
+            "apkName": "velvet.apk"
+          }
+          EOF
+
           echo "### VELVET Version $VERSION Official Release" > release_notes.md
           echo "" >> release_notes.md
           echo "**SHA-256:** \`$SHA256\`" >> release_notes.md
@@ -70,7 +79,7 @@ jobs:
           echo "Direct download: **velvet.apk** below." >> release_notes.md
 
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
-          gh release create "$TAG" velvet.apk \
+          gh release create "$TAG" velvet.apk update.json \
             --repo "${{ github.repository }}" \
             --title "Version $VERSION" \
             --notes-file release_notes.md \

@@ -70,6 +70,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.velvet.app.VelvetApp
+import com.velvet.app.data.AppUpdater
 import com.velvet.app.data.LoadResult
 import com.velvet.app.data.YouTube
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -104,6 +105,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         PlayerConnection.connect(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppUpdater.checkInstallResult(this) { message ->
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onStop() {

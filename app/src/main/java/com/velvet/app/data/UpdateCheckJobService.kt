@@ -43,7 +43,7 @@ class UpdateCheckJobService : JobService() {
                     currentVersionName = BuildConfig.VERSION_NAME,
                     includePrereleases = VelvetApp.library.data.value.includePrereleases,
                 )
-                if (info.hasUpdate) {
+                if (info.hasAppUpdate) {
                     showUpdateNotification(this@UpdateCheckJobService, info)
                 }
             } catch (_: Exception) {

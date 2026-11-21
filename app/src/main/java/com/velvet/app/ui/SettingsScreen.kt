@@ -367,7 +367,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
 
         SettingsGroup("About") {
-            if (updateInfo?.hasUpdate == true) {
+            if (updateInfo?.hasAppUpdate == true) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
@@ -466,11 +466,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 title = "Check for updates",
                 subtitle = when {
                     checkingVersion -> "Checking GitHub…"
-                    updateInfo?.hasUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to review"
-                    updateInfo != null -> "Already on the latest version"
+                    updateInfo?.hasAppUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to review"
+                    updateInfo?.isRateLimited == true -> "GitHub API rate limit reached (cached info shown)"
+                    updateInfo?.isOffline == true -> "Offline: Check your internet connection"
+                    updateInfo != null -> "Up to date"
                     else -> "Check for a newer release"
                 },
-                readout = if (updateInfo?.hasUpdate == true) "v${updateInfo?.latestVersion}" else null,
+                readout = if (updateInfo?.hasAppUpdate == true) "v${updateInfo?.latestVersion}" else null,
                 enabled = !checkingVersion,
             ) {
                 if (!checkingVersion) {
@@ -492,8 +494,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 )
                             }
                             updateInfo = info
-                            updateDialogInfo = info
-                            showUpdateDialog = true
+                            if (info.hasAppUpdate) {
+                                updateDialogInfo = info
+                                showUpdateDialog = true
+                            } else {
+                                showToast("You're on the latest version", Toast.LENGTH_SHORT)
+                            }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (_: Exception) {
@@ -540,7 +546,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             },
             title = {
                 Text(
-                    text = if (info.hasUpdate) "Update Available" else "App is Up to Date",
+                    text = if (info.hasAppUpdate) "Update Available" else "App is Up to Date",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = velvetColors.text,
@@ -663,7 +669,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             },
             confirmButton = {
-                if (info.hasUpdate) {
+                if (info.hasAppUpdate) {
                     FilledTonalButton(
                         enabled = !isDownloading,
                         onClick = {
@@ -701,7 +707,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
                                     withContext(Dispatchers.Main) {
                                         downloadStatusText = "Installing..."
-                                        when (val result = AppUpdater.installApk(context, apkFile)) {
+                                        when (val result = AppUpdater.installApk(context, apkFile, info.latestVersionCode)) {
                                             is UpdateInstallResult.PromptLaunched -> {
                                                 showToast("Installing update...", Toast.LENGTH_SHORT)
                                                 showUpdateDialog = false
@@ -739,7 +745,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             },
             dismissButton = {
-                if (info.hasUpdate) {
+                if (info.hasAppUpdate) {
                     TextButton(
                         enabled = !isDownloading,
                         onClick = { showUpdateDialog = false }

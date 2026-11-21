@@ -191,16 +191,24 @@ fun DeveloperScreen(onBack: () -> Unit) {
                 isCheckingUpdate -> "Checking GitHub Releases..."
                 updateInfo?.isRateLimited == true -> "API Rate Limited (cached info shown)"
                 updateInfo?.isOffline == true -> "Network Offline (cached info shown)"
-                updateInfo?.hasUpdate == true -> when (updateInfo?.trigger) {
-                    UpdateTrigger.APP -> "Update Available (VELVET App)"
-                    UpdateTrigger.EXTRACTOR -> "Update Available (NewPipeExtractor)"
-                    UpdateTrigger.BOTH -> "Update Available (App & Extractor)"
-                    else -> "Update Available"
-                }
+                updateInfo?.hasAppUpdate == true -> "Update Available (v${updateInfo?.latestVersion}, code ${updateInfo?.latestVersionCode})"
                 updateInfo != null -> "Up to Date"
                 else -> "Not checked"
             }
             VersionRow("Update Status", statusText)
+
+            val activeAdvisories = updateInfo?.dependencyAdvisories?.filter { it.isNewer }.orEmpty()
+            if (activeAdvisories.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                activeAdvisories.forEach { advisory ->
+                    Text(
+                        text = advisory.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFE5A93C),
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                }
+            }
 
             Spacer(Modifier.height(8.dp))
             Row(
