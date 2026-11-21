@@ -24,6 +24,7 @@ data class Playlist(
     val playCount: Long = 0,
     val lastPlayedAt: Long = 0,
     val customCover: String? = null,
+    val description: String? = null,
 )
 
 internal fun List<Playlist>.homePlaylists(limit: Int = 2): List<Playlist> = asSequence()

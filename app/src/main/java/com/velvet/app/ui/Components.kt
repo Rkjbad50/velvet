@@ -9,6 +9,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -71,7 +73,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import com.velvet.app.data.Playlist
+import com.velvet.app.data.PlaylistNameValidator
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -709,6 +714,8 @@ fun CollectionHeader(
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     artworkBackdropSize: Dp = 300.dp,
+    onTitleClick: (() -> Unit)? = null,
+    onTitleLongClick: (() -> Unit)? = null,
     onSubtitleClick: (() -> Unit)? = null,
     topActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
@@ -737,7 +744,21 @@ fun CollectionHeader(
             art()
         }
         Column(Modifier.padding(horizontal = 20.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val titleModifier = if (onTitleClick != null || onTitleLongClick != null) {
+                Modifier.combinedClickable(
+                    onClick = { onTitleClick?.invoke() },
+                    onLongClick = { onTitleLongClick?.invoke() },
+                )
+            } else {
+                Modifier
+            }
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = titleModifier,
+            )
             if (subtitle.isNotBlank()) {
                 Text(
                     subtitle,
@@ -817,27 +838,111 @@ fun DownloadAllButton(songs: List<Song>) {
 fun NamePlaylistDialog(
     title: String,
     initial: String = "",
+    initialDescription: String = "",
+    currentPlaylistId: String? = null,
+    existingPlaylists: List<Playlist> = emptyList(),
+    allowDescription: Boolean = false,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirmWithDescription: (name: String, description: String?) -> Unit,
 ) {
     var name by remember { mutableStateOf(initial) }
+    var description by remember { mutableStateOf(initialDescription) }
+    val validation = PlaylistNameValidator.validate(name, currentPlaylistId, existingPlaylists)
+    val isValid = validation is PlaylistNameValidator.ValidationResult.Valid
+
+    fun submit() {
+        if (isValid) {
+            onConfirmWithDescription(name.trim(), description.trim().ifEmpty { null })
+            onDismiss()
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = velvetColors.surface,
         title = { Text(title, style = MaterialTheme.typography.headlineSmall) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                placeholder = { Text("My playlist") },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    placeholder = { Text("My playlist") },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    isError = validation is PlaylistNameValidator.ValidationResult.Error,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    if (validation is PlaylistNameValidator.ValidationResult.Error) {
+                        Text(
+                            text = validation.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = velvetColors.danger,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    Text(
+                        text = "${name.length}/${PlaylistNameValidator.MAX_LENGTH}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (name.length > PlaylistNameValidator.MAX_LENGTH) velvetColors.danger else velvetColors.muted,
+                    )
+                }
+
+                if (allowDescription) {
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = { description = it },
+                        placeholder = { Text("Add an optional description") },
+                        label = { Text("Description (optional)") },
+                        maxLines = 3,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         },
         confirmButton = {
-            TextButton(enabled = name.isNotBlank(), onClick = { onConfirm(name); onDismiss() }) { Text("Save") }
+            TextButton(
+                enabled = isValid,
+                onClick = { submit() },
+            ) {
+                Text("Save")
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = velvetColors.muted) } },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = velvetColors.muted)
+            }
+        },
+    )
+}
+
+@Composable
+fun NamePlaylistDialog(
+    title: String,
+    initial: String = "",
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    NamePlaylistDialog(
+        title = title,
+        initial = initial,
+        initialDescription = "",
+        currentPlaylistId = null,
+        existingPlaylists = emptyList(),
+        allowDescription = false,
+        onDismiss = onDismiss,
+        onConfirmWithDescription = { name, _ -> onConfirm(name) },
     )
 }
 

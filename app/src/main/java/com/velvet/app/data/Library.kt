@@ -193,6 +193,10 @@ class Library(dir: File) {
 
     fun renamePlaylist(id: String, name: String) = updatePlaylist(id) { it.copy(name = name.trim()) }
 
+    fun updatePlaylistDetails(id: String, name: String, description: String? = null) = updatePlaylist(id) {
+        it.copy(name = name.trim(), description = description?.trim()?.ifEmpty { null })
+    }
+
     fun setPlaylistCover(id: String, cover: String?) = updatePlaylist(id) { it.copy(customCover = cover) }
 
     fun deletePlaylist(id: String) = update { d -> d.copy(playlists = d.playlists.filterNot { it.id == id }) }

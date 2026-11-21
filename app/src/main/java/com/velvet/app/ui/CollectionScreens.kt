@@ -268,11 +268,14 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         BackPage(onBack) {
             item {
+                val trackCountText = "${activeSongs.size} ${if (activeSongs.size == 1) "track" else "tracks"}"
                 CollectionHeader(
                     title = playlist.name,
-                    subtitle = if (isEditing) "Editing playlist (${draftSongs.size} tracks)" else "",
-                    meta = "Playlist • " + songMeta(activeSongs),
+                    subtitle = if (isEditing) "Editing playlist ($trackCountText)" else playlist.description.orEmpty(),
+                    meta = "$trackCountText • " + songMeta(activeSongs),
                     tint = rememberArtColor(activeSongs.firstOrNull()?.thumb),
+                    onTitleClick = { if (!isEditing) renaming = true },
+                    onTitleLongClick = { if (!isEditing) renaming = true },
                     art = {
                         Box(
                             modifier = Modifier
@@ -287,11 +290,11 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                             )
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(8.dp)
-                                    .size(36.dp)
-                                    .background(velvetColors.surface.copy(alpha = 0.90f), CircleShape)
-                                    .border(1.dp, velvetColors.rule, CircleShape),
+                                .align(Alignment.BottomEnd)
+                                .padding(8.dp)
+                                .size(36.dp)
+                                .background(velvetColors.surface.copy(alpha = 0.90f), CircleShape)
+                                .border(1.dp, velvetColors.rule, CircleShape),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
@@ -309,6 +312,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     onShuffle = { shuffle(activeSongs, playlistId = id) },
                     topActions = {
                         if (!isEditing) {
+                            PanelIconButton(AppIcons.Pencil, "Rename playlist") { renaming = true }
                             PanelIconButton(Icons.Default.Edit, "Edit tracks") {
                                 draftSongs = playlist.songs
                                 isEditing = true
@@ -501,9 +505,18 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     }
 
     if (renaming) {
-        NamePlaylistDialog("Rename playlist", initial = playlist.name, onDismiss = { renaming = false }) {
-            library.renamePlaylist(playlist.id, it)
-        }
+        NamePlaylistDialog(
+            title = "Rename playlist",
+            initial = playlist.name,
+            initialDescription = playlist.description.orEmpty(),
+            currentPlaylistId = playlist.id,
+            existingPlaylists = data.playlists,
+            allowDescription = true,
+            onDismiss = { renaming = false },
+            onConfirmWithDescription = { newName, newDesc ->
+                library.updatePlaylistDetails(playlist.id, newName, newDesc)
+            },
+        )
     }
 
     if (showCoverPicker) {
