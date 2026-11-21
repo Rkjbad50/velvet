@@ -30,16 +30,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.text.font.FontWeight
 
@@ -66,6 +70,7 @@ import com.velvet.app.BuildConfig
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.ReleaseCheck
 import com.velvet.app.data.UPSTREAM_RELEASES_URL
+import com.velvet.app.data.UpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -81,8 +86,22 @@ fun SettingsScreen(onBack: () -> Unit) {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     var checkingVersion by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     HistoryDialog(confirm) { confirm = null }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val info = ReleaseCheck.checkUpdate(
+                VelvetApp.http,
+                BuildConfig.UPSTREAM_BUILD_NUMBER,
+                BuildConfig.VERSION_NAME
+            )
+            withContext(Dispatchers.Main) {
+                updateInfo = info
+            }
+        }
+    }
     // measuring files is disk work: do it off the main thread
     val downloadsMb by produceState(0L, data.downloads.size) {
         value = withContext(Dispatchers.IO) { VelvetApp.downloads.usedBytes() / (1024 * 1024) }
@@ -363,16 +382,70 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
 
         SettingsGroup("About") {
+            if (updateInfo?.hasUpdate == true) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .clickable {
+                            openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "New Version Available! ✨",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Version ${updateInfo?.latestVersion} is ready to install. Tap to download APK.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        FilledTonalButton(
+                            onClick = {
+                                openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
+                            },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        ) {
+                            Text("Update")
+                        }
+                    }
+                }
+            }
+
             ActionRow("Developer", "Narayan") {
                 openReleases(context, "https://github.com/Rkjbad50/velvet")
             }
             ActionRow(
                 title = "Version",
-                subtitle = if (checkingVersion) "Checking GitHub…" else "Check for a newer release",
-                readout = version,
+                subtitle = when {
+                    checkingVersion -> "Checking GitHub…"
+                    updateInfo?.hasUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to download"
+                    updateInfo != null -> "Already on the latest version"
+                    else -> "Check for a newer release"
+                },
+                readout = if (updateInfo?.hasUpdate == true) "$version → v${updateInfo?.latestVersion}" else version,
                 enabled = !checkingVersion,
             ) {
                 if (!checkingVersion) {
+                    if (updateInfo?.hasUpdate == true) {
+                        openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
+                        return@ActionRow
+                    }
                     checkingVersion = true
                     scope.launch {
                         try {
@@ -381,11 +454,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                             } else {
                                 BuildConfig.UPSTREAM_BUILD_NUMBER
                             }
-                            val newer = withContext(Dispatchers.IO) {
-                                ReleaseCheck.hasNewerBuild(VelvetApp.http, upstreamBuild, BuildConfig.VERSION_NAME)
+                            val info = withContext(Dispatchers.IO) {
+                                ReleaseCheck.checkUpdate(VelvetApp.http, upstreamBuild, BuildConfig.VERSION_NAME)
                             }
-                            if (newer) openReleases(context, UPSTREAM_RELEASES_URL)
-                            else Toast.makeText(context, "Already on the latest version", Toast.LENGTH_SHORT).show()
+                            updateInfo = info
+                            if (info?.hasUpdate == true) {
+                                openReleases(context, info.downloadUrl)
+                            } else {
+                                Toast.makeText(context, "Already on the latest version", Toast.LENGTH_SHORT).show()
+                            }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (_: Exception) {

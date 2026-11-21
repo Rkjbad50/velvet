@@ -10,6 +10,7 @@ captures/
 # signing key and its passwords never go to git
 signing/
 *.jks
+!keystore/velvet.jks
 *.keystore
 *.p12
 *.dpapi

@@ -25,14 +25,20 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "2.5"
+        versionName = "2.6"
         buildConfigField("int", "UPSTREAM_BUILD_NUMBER", upstreamBuildNumber.toString())
         buildConfigField("String", "RELEASES_URL", "\"${releaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
+    val localKeystore = rootProject.file("keystore/velvet.jks")
     signingConfigs {
-        if (keystorePath != null) {
-            create("release") {
+        create("release") {
+            if (localKeystore.exists()) {
+                storeFile = localKeystore
+                storePassword = System.getenv("VELVET_KEYSTORE_PASSWORD") ?: "velvetapp"
+                keyAlias = System.getenv("VELVET_KEY_ALIAS") ?: "velvet"
+                keyPassword = System.getenv("VELVET_KEY_PASSWORD") ?: "velvetapp"
+            } else if (keystorePath != null) {
                 storeFile = file(keystorePath)
                 storePassword = System.getenv("VELVET_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("VELVET_KEY_ALIAS")
@@ -47,7 +53,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = if (keystorePath != null) {
+            signingConfig = if (localKeystore.exists() || keystorePath != null) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

@@ -1,5 +1,6 @@
 package com.velvet.app.data
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -9,6 +10,28 @@ import java.util.concurrent.TimeUnit
 
 internal const val UPSTREAM_RELEASES_URL = "https://github.com/Rkjbad50/velvet/releases"
 
+@Serializable
+internal data class ReleaseAsset(
+    val name: String,
+    @SerialName("browser_download_url") val browserDownloadUrl: String,
+)
+
+@Serializable
+internal data class Release(
+    val tag_name: String,
+    val name: String? = null,
+    val html_url: String? = null,
+    val assets: List<ReleaseAsset> = emptyList(),
+)
+
+data class UpdateInfo(
+    val hasUpdate: Boolean,
+    val latestVersion: String,
+    val releaseTitle: String,
+    val downloadUrl: String,
+    val releaseUrl: String,
+)
+
 internal object ReleaseCheck {
     private const val latest = "https://api.github.com/repos/Rkjbad50/velvet/releases/latest"
     private val json = Json { ignoreUnknownKeys = true }
@@ -16,20 +39,34 @@ internal object ReleaseCheck {
     private val buildTag = Regex("(?:v[0-9.]+-)?build-([0-9]+)")
     private val legacyTitle = Regex(".*[Bb]uild ([0-9]+).*")
 
-    @Serializable
-    private data class Release(val tag_name: String, val name: String? = null)
-
-    fun hasNewerBuild(http: OkHttpClient, upstreamBuild: Int, currentVersionName: String = "2.0"): Boolean {
+    fun checkUpdate(http: OkHttpClient, upstreamBuild: Int, currentVersionName: String = "2.6"): UpdateInfo? {
         val request = Request.Builder().url(latest).header("Accept", "application/vnd.github+json").build()
         val call = http.newCall(request)
         call.timeout().timeout(8, TimeUnit.SECONDS)
-        return call.execute().use { response ->
-            if (!response.isSuccessful) throw IOException("GitHub returned ${response.code}")
-            isNewer(response.body?.string() ?: throw IOException("Missing release data"), upstreamBuild, currentVersionName)
-        }
+        return runCatching {
+            call.execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body?.string() ?: return null
+                val release = json.decodeFromString<Release>(body)
+                val isNew = isNewer(body, upstreamBuild, currentVersionName)
+                val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") }
+                val downloadUrl = apkAsset?.browserDownloadUrl ?: release.html_url ?: UPSTREAM_RELEASES_URL
+                UpdateInfo(
+                    hasUpdate = isNew,
+                    latestVersion = release.tag_name.removePrefix("v").removePrefix("Version "),
+                    releaseTitle = release.name ?: release.tag_name,
+                    downloadUrl = downloadUrl,
+                    releaseUrl = release.html_url ?: UPSTREAM_RELEASES_URL,
+                )
+            }
+        }.getOrNull()
     }
 
-    internal fun isNewer(body: String, upstreamBuild: Int, currentVersionName: String = "2.0"): Boolean {
+    fun hasNewerBuild(http: OkHttpClient, upstreamBuild: Int, currentVersionName: String = "2.6"): Boolean {
+        return checkUpdate(http, upstreamBuild, currentVersionName)?.hasUpdate ?: false
+    }
+
+    internal fun isNewer(body: String, upstreamBuild: Int, currentVersionName: String = "2.6"): Boolean {
         val release = json.decodeFromString<Release>(body)
         val tag = release.tag_name
         val name = release.name.orEmpty()

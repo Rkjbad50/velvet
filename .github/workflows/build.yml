@@ -34,26 +34,20 @@ jobs:
 
       - name: Configure APK signing
         id: signing
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/velvet.jks"
-            echo "VELVET_KEYSTORE=$RUNNER_TEMP/velvet.jks" >> "$GITHUB_ENV"
+          if [ -f "keystore/velvet.jks" ]; then
+            echo "Persistent release keystore found at keystore/velvet.jks."
+            echo "VELVET_KEYSTORE=$(pwd)/keystore/velvet.jks" >> "$GITHUB_ENV"
+            echo "VELVET_KEYSTORE_PASSWORD=velvetapp" >> "$GITHUB_ENV"
+            echo "VELVET_KEY_ALIAS=velvet" >> "$GITHUB_ENV"
+            echo "VELVET_KEY_PASSWORD=velvetapp" >> "$GITHUB_ENV"
             echo "is_signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_signed=false" >> "$GITHUB_OUTPUT"
-            echo "Using default debug signing."
+            echo "Keystore not found. Using debug signing."
           fi
 
       - name: Build release APK
-        env:
-          VELVET_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          VELVET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          VELVET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle testReleaseUnitTest assembleRelease --stacktrace
 
       - uses: actions/upload-artifact@v4
@@ -65,12 +59,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.5"
+          TAG="v2.6"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$APK_FILE" velvet.apk
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create "$TAG" velvet.apk \
             --repo "${{ github.repository }}" \
-            --title "Version 2.5" \
-            --notes "VELVET Version 2.5 Official Release. Highlights: Clean process and playback lifecycle termination when swiped from Recent Apps (no force-stop required), complete project-wide rebrand to VELVET across all components, pure Spotify-grade queue architecture, zero duplicate recommendations, and dynamic home playlists. Direct download: **velvet.apk** below." \
+            --title "Version 2.6" \
+            --notes "### VELVET Version 2.6 Official Release
+
+**Highlights in this update:**
+- **Persistent Playback State & Instant Resume**: Velvet now preserves the exact playback state across app closes. Opening the app restores the last played track, timeline position, duration, and queue without zeroing out (00:00) or failing on play. Pressing Play starts instantly right where you left off.
+- **Unified Release Key Signing (Fixes Package Name / Update Conflict)**: Integrated a permanent release keystore committed directly into the build pipeline. Future APK updates and in-app upgrades install seamlessly over existing installations without 'Package conflicts with an existing package' or requiring uninstallation.
+- **In-App Update Detection & Banner in About**: Settings > About now checks GitHub Releases automatically on launch and displays a high-visibility update banner with the latest release details and one-tap direct APK download/install.
+
+**Direct Download**: Download **velvet.apk** below to install or update." \
             --latest

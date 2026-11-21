@@ -135,6 +135,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        persistCurrentState()
         exo.pause()
         exo.stop()
         exo.clearMediaItems()
@@ -143,6 +144,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        persistCurrentState()
         crossfadeMonitorJob?.cancel()
         fadeInJob?.cancel()
         scope.cancel()
@@ -156,6 +158,23 @@ class PlaybackService : MediaSessionService() {
         }
         session = null
         super.onDestroy()
+    }
+
+    private fun persistCurrentState() {
+        if (!::exo.isInitialized) return
+        val currentSong = exo.currentMediaItem?.toSong() ?: return
+        PlaybackStateManager.save(
+            context = this,
+            song = currentSong,
+            positionMs = exo.currentPosition.coerceAtLeast(0L),
+            durationMs = exo.duration.coerceAtLeast(0L),
+            upNext = com.velvet.app.ui.PlayerConnection.upNext.map { it.song },
+            userQueue = com.velvet.app.ui.PlayerConnection.userQueue.map { it.song },
+            history = com.velvet.app.ui.PlayerConnection.history.map { it.song },
+            playlistId = com.velvet.app.ui.PlayerConnection.currentPlaylistId,
+            isRadio = com.velvet.app.ui.PlayerConnection.isRadioActive,
+            shuffleMode = com.velvet.app.ui.PlayerConnection.shuffleMode,
+        )
     }
 
     /** Effects and external equalizers follow the player's real audio session. */

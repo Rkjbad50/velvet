@@ -23,7 +23,9 @@ import com.velvet.app.data.isDuplicateOf
 import com.velvet.app.data.isOriginalMusicAudio
 import com.velvet.app.data.isPureMusic
 import com.velvet.app.data.isSameTrackAs
+import com.velvet.app.playback.PersistedPlaybackState
 import com.velvet.app.playback.PlaybackService
+import com.velvet.app.playback.PlaybackStateManager
 import com.velvet.app.playback.PlaylistStart
 import com.velvet.app.playback.QueueExoAdapter
 import com.velvet.app.playback.QueueItem
@@ -54,6 +56,8 @@ object PlayerConnection {
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
         private set
     var durationMs by mutableLongStateOf(0L)
+        private set
+    var savedInitialPositionMs by mutableLongStateOf(0L)
         private set
     var error by mutableStateOf<String?>(null)
     var currentPlaylistId by mutableStateOf<String?>(null)
@@ -101,9 +105,14 @@ object PlayerConnection {
         queue = queueManager.visibleQueue
     }
 
-    private fun syncToExoPlayer(playlistStart: PlaylistStart? = null, isRadio: Boolean = isRadioActive) {
+    private fun syncToExoPlayer(
+        playlistStart: PlaylistStart? = null,
+        isRadio: Boolean = isRadioActive,
+        autoPlay: Boolean = true,
+        startPositionMs: Long = 0L,
+    ) {
         withController { c ->
-            QueueExoAdapter.syncToExoPlayer(c, queueManager.state, playlistStart, isRadio)
+            QueueExoAdapter.syncToExoPlayer(c, queueManager.state, playlistStart, isRadio, autoPlay, startPositionMs)
         }
     }
 
@@ -116,6 +125,9 @@ object PlayerConnection {
     fun connect(context: Context) {
         appContext = context.applicationContext
         started = true
+        if (current == null) {
+            restoreSavedPlaybackState(null)
+        }
         ensureConnected()
     }
 
@@ -149,6 +161,9 @@ object PlayerConnection {
             c.addListener(listener)
             controller = c
             syncBasicState(c)
+            if (c.mediaItemCount == 0) {
+                restoreSavedPlaybackState(c)
+            }
             while (pending.isNotEmpty()) pending.removeFirst().invoke(c)
         }, ContextCompat.getMainExecutor(context))
     }
@@ -189,8 +204,74 @@ object PlayerConnection {
         }
         isPlaying = p.isPlaying
         isBuffering = p.playbackState == Player.STATE_BUFFERING
-        durationMs = p.duration.coerceAtLeast(0)
+        durationMs = if (p.duration > 0L) p.duration else (current?.durationSec?.times(1000L)?.coerceAtLeast(0L) ?: 0L)
         repeatMode = p.repeatMode
+        if (p.currentPosition > 0L) {
+            savedInitialPositionMs = p.currentPosition
+        }
+        if (!p.isPlaying && p.currentPosition > 0L) {
+            persistState()
+        }
+    }
+
+    fun persistState() {
+        val cur = current ?: return
+        val ctx = appContext ?: return
+        val pos = controller?.currentPosition ?: savedInitialPositionMs
+        PlaybackStateManager.save(
+            context = ctx,
+            song = cur,
+            positionMs = pos,
+            durationMs = durationMs,
+            upNext = upNext.map { it.song },
+            userQueue = userQueue.map { it.song },
+            history = history.map { it.song },
+            playlistId = currentPlaylistId,
+            isRadio = isRadioActive,
+            shuffleMode = shuffleMode,
+        )
+    }
+
+    fun restoreSavedPlaybackState(c: MediaController? = controller) {
+        val context = appContext ?: return
+        val saved = PlaybackStateManager.load(context)
+            ?: VelvetApp.library.data.value.recent.firstOrNull()?.let {
+                PersistedPlaybackState(
+                    song = it,
+                    durationMs = it.durationSec * 1000L,
+                )
+            } ?: return
+
+        val song = saved.song
+        current = song
+        currentPlaylistId = saved.playlistId
+        isRadioActive = saved.isRadio
+        savedInitialPositionMs = saved.positionMs
+        durationMs = if (saved.durationMs > 0L) saved.durationMs else (song.durationSec * 1000L)
+
+        val fullList = (saved.history + listOf(song) + saved.upNext).distinctBy { it.id }
+        val startIndex = fullList.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+        queueManager.start(fullList, startIndex = startIndex, shuffled = false)
+        if (saved.userQueue.isNotEmpty()) {
+            saved.userQueue.forEach { queueManager.playNext(it) }
+        }
+        if (saved.shuffleMode == ShuffleMode.STANDARD) {
+            queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = false)
+        } else if (saved.shuffleMode == ShuffleMode.SMART && isUserPlaylistActive) {
+            queueManager.setShuffleMode(ShuffleMode.SMART, allowSmartShuffle = true)
+        }
+        syncQueueState()
+
+        c?.let { controller ->
+            QueueExoAdapter.syncToExoPlayer(
+                player = controller,
+                state = queueManager.state,
+                playlistStart = null,
+                isRadio = saved.isRadio,
+                autoPlay = false,
+                startPositionMs = saved.positionMs,
+            )
+        }
     }
 
     private fun withController(replaces: Boolean = false, action: (MediaController) -> Unit) {
@@ -375,11 +456,17 @@ object PlayerConnection {
     }
 
     fun togglePlay() = withController { c ->
-        if (c.isPlaying) c.pause()
-        else {
-            if (c.playbackState == Player.STATE_IDLE) c.prepare()
-            if (c.playbackState == Player.STATE_ENDED) c.seekToDefaultPosition()
-            c.play()
+        if (c.isPlaying) {
+            c.pause()
+            persistState()
+        } else {
+            if (c.mediaItemCount == 0 && current != null) {
+                syncToExoPlayer(autoPlay = true, startPositionMs = savedInitialPositionMs)
+            } else {
+                if (c.playbackState == Player.STATE_IDLE) c.prepare()
+                if (c.playbackState == Player.STATE_ENDED) c.seekToDefaultPosition()
+                c.play()
+            }
         }
     }
 
@@ -468,7 +555,17 @@ object PlayerConnection {
         }
     }
 
-    fun seekTo(ms: Long) = withController { it.seekTo(ms) }
+    fun seekTo(ms: Long) {
+        savedInitialPositionMs = ms
+        withController { c ->
+            if (c.mediaItemCount == 0 && current != null) {
+                syncToExoPlayer(autoPlay = false, startPositionMs = ms)
+            } else {
+                c.seekTo(ms)
+            }
+            persistState()
+        }
+    }
 
     // Legacy compat shims — delegate to qid-based API
     fun jumpTo(i: Int) {
@@ -500,5 +597,8 @@ object PlayerConnection {
         syncToExoPlayer()
     }
 
-    fun positionMs(): Long = controller?.currentPosition ?: 0L
+    fun positionMs(): Long {
+        val pos = controller?.currentPosition ?: 0L
+        return if (pos > 0L) pos else savedInitialPositionMs
+    }
 }

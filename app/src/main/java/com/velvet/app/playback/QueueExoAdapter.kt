@@ -19,6 +19,8 @@ object QueueExoAdapter {
         state: QueueState,
         playlistStart: PlaylistStart? = null,
         isRadio: Boolean = false,
+        autoPlay: Boolean = true,
+        startPositionMs: Long = 0L,
     ) {
         val currentItem = state.current
         if (currentItem == null) {
@@ -39,9 +41,12 @@ object QueueExoAdapter {
                     playlistStart = if (i == 0) playlistStart else null,
                 )
             }
-            player.setMediaItems(allItems, 0, 0L)
+            val pos = if (startPositionMs > 0L) startPositionMs else 0L
+            player.setMediaItems(allItems, 0, pos)
             player.prepare()
-            player.play()
+            if (autoPlay) {
+                player.play()
+            }
             return
         }
 
