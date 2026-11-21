@@ -1,6 +1,5 @@
 package com.velvet.app.playback
 
-import com.velvet.app.data.RepeatMode
 import com.velvet.app.data.Song
 import kotlin.math.PI
 import kotlin.math.cos

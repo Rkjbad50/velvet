@@ -1,11 +1,11 @@
 package com.velvet.app.unit
 
-import com.velvet.app.data.RepeatMode
 import com.velvet.app.data.Song
 import com.velvet.app.playback.Clock
 import com.velvet.app.playback.CrossfadeEngine
 import com.velvet.app.playback.CrossfadeEqualPower
 import com.velvet.app.playback.CrossfadePlayer
+import com.velvet.app.playback.RepeatMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
