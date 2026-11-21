@@ -1,7 +1,5 @@
 package com.velvet.app.unit
 
-import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.HttpDataSource
 import com.velvet.app.diagnostics.CheckResult
 import com.velvet.app.diagnostics.DiagnosticStep
 import com.velvet.app.diagnostics.DiagnosticsVerdict
@@ -206,12 +204,7 @@ class DiagnosticsVerdictTest {
                     pass(DiagnosticStep.STREAM_HEAD_RANGE),
                     fail(
                         DiagnosticStep.EXOPLAYER_BUFFER,
-                        exception = HttpDataSource.InvalidResponseCodeException(
-                            403,
-                            "Forbidden",
-                            emptyMap(),
-                            DataSpec(android.net.Uri.EMPTY)
-                        ),
+                        exception = IOException("Response code: 403 Forbidden"),
                         httpStatus = 403
                     ),
                 ),
