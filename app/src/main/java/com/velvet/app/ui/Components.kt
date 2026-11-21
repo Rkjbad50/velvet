@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
@@ -339,7 +341,13 @@ fun Modifier.prefetchOnTouch(songId: String): Modifier = pointerInput(songId) {
 }
 
 /** Opens the song actions sheet; provided by the app root so there's only ever one sheet. */
-class SongMenuRequest(val song: Song, val playlistId: String? = null)
+class SongMenuRequest(
+    val song: Song,
+    val playlistId: String? = null,
+    val queueItemId: String? = null,
+    val onMoveUp: (() -> Unit)? = null,
+    val onMoveDown: (() -> Unit)? = null,
+)
 
 val LocalSongMenu = staticCompositionLocalOf<(SongMenuRequest) -> Unit> { {} }
 
@@ -481,6 +489,18 @@ fun SongActionsSheet(request: SongMenuRequest, onDismiss: () -> Unit) {
             }
         }
         SheetAction(Icons.Default.Share, "Share") { shareSong(context, song); onDismiss() }
+        if (request.onMoveUp != null) {
+            SheetAction(Icons.Default.KeyboardArrowUp, "Move up") {
+                request.onMoveUp.invoke()
+                onDismiss()
+            }
+        }
+        if (request.onMoveDown != null) {
+            SheetAction(Icons.Default.KeyboardArrowDown, "Move down") {
+                request.onMoveDown.invoke()
+                onDismiss()
+            }
+        }
         if (request.playlistId != null) {
             SheetAction(Icons.Default.Delete, "Remove from this playlist") {
                 confirm = ConfirmRequest(

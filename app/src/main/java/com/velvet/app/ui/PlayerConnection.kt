@@ -88,6 +88,14 @@ object PlayerConnection {
     var queueState by mutableStateOf(queueManager.state)
         private set
 
+    var isQueueLocked by mutableStateOf(false)
+
+    /** Standby hook for crossfade or preloading engines when next item changes. */
+    var onNextItemChangedListener: ((QueueItem?) -> Unit)? = null
+
+    private fun getNextItem(): QueueItem? =
+        queueManager.userQueue.firstOrNull() ?: queueManager.upNext.firstOrNull()
+
     val userQueue: List<QueueItem> get() = queueState.userQueue
     val upNext: List<QueueItem> get() = queueState.upNext
     val history: List<QueueItem> get() = queueState.history
@@ -405,9 +413,14 @@ object PlayerConnection {
             play(listOf(song))
             return
         }
+        val oldNext = getNextItem()
         queueManager.playNext(song)
         syncQueueState()
         syncToExoPlayer()
+        val newNext = getNextItem()
+        if (oldNext?.qid != newNext?.qid) {
+            onNextItemChangedListener?.invoke(newNext)
+        }
         appContext?.let { Toast.makeText(it, "\"${song.title}\" will play next", Toast.LENGTH_SHORT).show() }
     }
 
@@ -430,20 +443,51 @@ object PlayerConnection {
 
     /** Move a queue item (by qid) to the top of the upcoming list (play next). */
     fun moveToTop(qid: String) {
+        if (isQueueLocked) return
+        val oldNext = getNextItem()
         val moved = queueManager.moveToTop(qid)
         if (moved) {
             syncQueueState()
             syncToExoPlayer()
+            val newNext = getNextItem()
+            if (oldNext?.qid != newNext?.qid) {
+                onNextItemChangedListener?.invoke(newNext)
+            }
         }
     }
 
     /** Remove a queue item by qid. */
     fun removeItem(qid: String) {
+        if (isQueueLocked) return
+        val oldNext = getNextItem()
         val removed = queueManager.removeItem(qid)
         if (removed) {
             syncQueueState()
             syncToExoPlayer()
+            val newNext = getNextItem()
+            if (oldNext?.qid != newNext?.qid) {
+                onNextItemChangedListener?.invoke(newNext)
+            }
         }
+    }
+
+    /**
+     * Reorders an item identified by [qid] to [newPosition] within its own section (userQueue or upNext).
+     * Respects [isQueueLocked]. Emits [onNextItemChangedListener] if the immediate next item changed.
+     */
+    fun reorder(qid: String, newPosition: Int): Boolean {
+        if (isQueueLocked) return false
+        val oldNext = getNextItem()
+        val moved = queueManager.reorder(qid, newPosition, isLocked = isQueueLocked)
+        if (moved) {
+            syncQueueState()
+            syncToExoPlayer()
+            val newNext = getNextItem()
+            if (oldNext?.qid != newNext?.qid) {
+                onNextItemChangedListener?.invoke(newNext)
+            }
+        }
+        return moved
     }
 
     /** Jump to a specific queue item by qid. */

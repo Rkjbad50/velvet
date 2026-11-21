@@ -69,11 +69,17 @@ class QueueManager(initialState: QueueState = QueueState()) {
     var state: QueueState = initialState
         private set
 
+    var queueVersion: Long = 0L
+        private set
+
     /** Update current state via a pure transformation function. */
     fun update(transform: (QueueState) -> QueueState): QueueState {
         val nextState = transform(state)
-        state = nextState
-        return nextState
+        if (nextState != state) {
+            state = nextState
+            queueVersion++
+        }
+        return state
     }
 
     // Instance convenience delegates
@@ -182,6 +188,21 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
     fun reorderUpNext(fromIndex: Int, toIndex: Int) {
         update { Companion.reorderUpNext(it, fromIndex, toIndex) }
+    }
+
+    /**
+     * Reorders an item identified by [qid] to [newPosition] within its own section (userQueue or upNext).
+     * Rejects moves if [isLocked] is true or [qid] is current/invalid or position is unchanged.
+     */
+    fun reorder(qid: String, newPosition: Int, isLocked: Boolean = false): Boolean {
+        if (isLocked) return false
+        var moved = false
+        update {
+            val (newState, success) = Companion.reorder(it, qid, newPosition)
+            moved = success
+            newState
+        }
+        return moved
     }
 
     fun enableShuffle(mode: ShuffleMode = ShuffleMode.STANDARD, allowSmartShuffle: Boolean = true, rng: Random = Random()): ShuffleMode {
@@ -509,6 +530,36 @@ class QueueManager(initialState: QueueState = QueueState()) {
             val item = list.removeAt(fromIndex)
             list.add(toIndex, item)
             return state.copy(upNext = list)
+        }
+
+        /**
+         * Reorder item by [qid] within its own section (userQueue or upNext) to [newPosition].
+         * Bounds are clamped to the section's indices.
+         * Returns (newState, true) if moved, or (state, false) if no-op or invalid qid.
+         */
+        fun reorder(state: QueueState, qid: String, newPosition: Int): Pair<QueueState, Boolean> {
+            if (qid == "current" || qid == state.current?.qid) {
+                return Pair(state, false)
+            }
+            val userIdx = state.userQueue.indexOfFirst { it.qid == qid }
+            if (userIdx >= 0) {
+                val target = newPosition.coerceIn(0, state.userQueue.size - 1)
+                if (userIdx == target) return Pair(state, false)
+                val list = state.userQueue.toMutableList()
+                val item = list.removeAt(userIdx)
+                list.add(target, item)
+                return Pair(state.copy(userQueue = list), true)
+            }
+            val upNextIdx = state.upNext.indexOfFirst { it.qid == qid }
+            if (upNextIdx >= 0) {
+                val target = newPosition.coerceIn(0, state.upNext.size - 1)
+                if (upNextIdx == target) return Pair(state, false)
+                val list = state.upNext.toMutableList()
+                val item = list.removeAt(upNextIdx)
+                list.add(target, item)
+                return Pair(state.copy(upNext = list), true)
+            }
+            return Pair(state, false)
         }
 
         /**

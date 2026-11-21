@@ -11,7 +11,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.IconButton
-import androidx.compose.runtime.saveable.rememberSaveable
 import kotlin.math.roundToInt
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -21,8 +20,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -80,6 +82,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,13 +103,19 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -955,7 +964,124 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     val listState = rememberLazyListState()
     val openMenu = LocalSongMenu.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    var isQueueLocked by rememberSaveable { mutableStateOf(false) }
+    val isQueueLocked = PlayerConnection.isQueueLocked
+
+    var draggingQid by remember { mutableStateOf<String?>(null) }
+    var draggingIsUserQueue by remember { mutableStateOf(false) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var dragStartVersion by remember { mutableLongStateOf(-1L) }
+    var previewUserQueue by remember { mutableStateOf<List<QueueItem>?>(null) }
+    var previewUpNext by remember { mutableStateOf<List<QueueItem>?>(null) }
+
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val coroutineScope = rememberCoroutineScope()
+    val itemHeightPx = with(density) { 58.dp.toPx() }
+
+    // Safe discard if queue mutated underneath during drag
+    LaunchedEffect(PlayerConnection.queueManager.queueVersion) {
+        if (draggingQid != null && PlayerConnection.queueManager.queueVersion != dragStartVersion) {
+            draggingQid = null
+            dragOffsetY = 0f
+            previewUserQueue = null
+            previewUpNext = null
+        }
+    }
+
+    val onDragStart: (String, Boolean) -> Unit = { qid, isUserQueue ->
+        if (!isQueueLocked) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            draggingQid = qid
+            draggingIsUserQueue = isUserQueue
+            dragOffsetY = 0f
+            dragStartVersion = PlayerConnection.queueManager.queueVersion
+            if (isUserQueue) {
+                previewUserQueue = userQueue.toList()
+                previewUpNext = null
+            } else {
+                previewUpNext = upNext.toList()
+                previewUserQueue = null
+            }
+        }
+    }
+
+    val onDragDelta: (Float) -> Unit = { deltaY ->
+        if (draggingQid != null) {
+            dragOffsetY += deltaY
+            val qid = draggingQid
+            if (draggingIsUserQueue) {
+                val list = (previewUserQueue ?: userQueue).toMutableList()
+                val idx = list.indexOfFirst { it.qid == qid }
+                if (idx >= 0) {
+                    if (dragOffsetY > itemHeightPx && idx < list.size - 1) {
+                        val item = list.removeAt(idx)
+                        list.add(idx + 1, item)
+                        previewUserQueue = list
+                        dragOffsetY -= itemHeightPx
+                    } else if (dragOffsetY < -itemHeightPx && idx > 0) {
+                        val item = list.removeAt(idx)
+                        list.add(idx - 1, item)
+                        previewUserQueue = list
+                        dragOffsetY += itemHeightPx
+                    }
+                }
+            } else {
+                val list = (previewUpNext ?: upNext).toMutableList()
+                val idx = list.indexOfFirst { it.qid == qid }
+                if (idx >= 0) {
+                    if (dragOffsetY > itemHeightPx && idx < list.size - 1) {
+                        val item = list.removeAt(idx)
+                        list.add(idx + 1, item)
+                        previewUpNext = list
+                        dragOffsetY -= itemHeightPx
+                    } else if (dragOffsetY < -itemHeightPx && idx > 0) {
+                        val item = list.removeAt(idx)
+                        list.add(idx - 1, item)
+                        previewUpNext = list
+                        dragOffsetY += itemHeightPx
+                    }
+                }
+            }
+            if (dragOffsetY < -itemHeightPx && listState.firstVisibleItemIndex > 0) {
+                coroutineScope.launch { listState.scrollBy(-15f) }
+            } else if (dragOffsetY > itemHeightPx && listState.canScrollForward) {
+                coroutineScope.launch { listState.scrollBy(15f) }
+            }
+        }
+    }
+
+    val onDragEnd: () -> Unit = {
+        val qid = draggingQid
+        val isUserQueue = draggingIsUserQueue
+        val startVer = dragStartVersion
+        if (qid != null && !isQueueLocked && PlayerConnection.queueManager.queueVersion == startVer) {
+            if (isUserQueue) {
+                val targetIndex = previewUserQueue?.indexOfFirst { it.qid == qid } ?: -1
+                if (targetIndex >= 0) {
+                    PlayerConnection.reorder(qid, targetIndex)
+                }
+            } else {
+                val targetIndex = previewUpNext?.indexOfFirst { it.qid == qid } ?: -1
+                if (targetIndex >= 0) {
+                    PlayerConnection.reorder(qid, targetIndex)
+                }
+            }
+        }
+        draggingQid = null
+        dragOffsetY = 0f
+        previewUserQueue = null
+        previewUpNext = null
+    }
+
+    val onDragCancel: () -> Unit = {
+        draggingQid = null
+        dragOffsetY = 0f
+        previewUserQueue = null
+        previewUpNext = null
+    }
+
+    val displayUserQueue = previewUserQueue ?: userQueue
+    val displayUpNext = previewUpNext ?: upNext
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -976,10 +1102,10 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                 )
             }
             IconButton(onClick = {
-                isQueueLocked = !isQueueLocked
+                PlayerConnection.isQueueLocked = !PlayerConnection.isQueueLocked
                 android.widget.Toast.makeText(
                     context,
-                    if (isQueueLocked) "Queue Locked" else "Queue Unlocked",
+                    if (PlayerConnection.isQueueLocked) "Queue Locked" else "Queue Unlocked",
                     android.widget.Toast.LENGTH_SHORT,
                 ).show()
             }) {
@@ -1012,7 +1138,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                 }
             }
 
-            if (userQueue.isNotEmpty()) {
+            if (displayUserQueue.isNotEmpty()) {
                 item(key = "header_next_in_queue") {
                     Text(
                         "NEXT IN QUEUE",
@@ -1022,18 +1148,29 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                         modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
                     )
                 }
-                items(userQueue, key = { it.qid }) { item ->
+                itemsIndexed(displayUserQueue, key = { _, item -> item.qid }) { index, item ->
+                    val isDraggingThis = draggingQid == item.qid
                     QueueRow(
                         item = item,
                         isCurrent = false,
                         isQueueLocked = isQueueLocked,
                         context = context,
                         openMenu = openMenu,
+                        isDragging = isDraggingThis,
+                        dragOffsetY = if (isDraggingThis) dragOffsetY else 0f,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < displayUserQueue.size - 1,
+                        onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
+                        onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                        onDragStart = { onDragStart(item.qid, true) },
+                        onDragDelta = onDragDelta,
+                        onDragEnd = onDragEnd,
+                        onDragCancel = onDragCancel,
                     )
                 }
             }
 
-            if (upNext.isNotEmpty()) {
+            if (displayUpNext.isNotEmpty()) {
                 val sourceLabel = when {
                     PlayerConnection.isRadioActive -> "RADIO"
                     !PlayerConnection.currentPlaylistId.isNullOrBlank() -> "PLAYLIST"
@@ -1048,13 +1185,24 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                         modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
                     )
                 }
-                items(upNext, key = { it.qid }) { item ->
+                itemsIndexed(displayUpNext, key = { _, item -> item.qid }) { index, item ->
+                    val isDraggingThis = draggingQid == item.qid
                     QueueRow(
                         item = item,
                         isCurrent = false,
                         isQueueLocked = isQueueLocked,
                         context = context,
                         openMenu = openMenu,
+                        isDragging = isDraggingThis,
+                        dragOffsetY = if (isDraggingThis) dragOffsetY else 0f,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < displayUpNext.size - 1,
+                        onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
+                        onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                        onDragStart = { onDragStart(item.qid, false) },
+                        onDragDelta = onDragDelta,
+                        onDragEnd = onDragEnd,
+                        onDragCancel = onDragCancel,
                     )
                 }
             }
@@ -1064,12 +1212,22 @@ private fun QueueSheet(onDismiss: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun QueueRow(
+private fun LazyItemScope.QueueRow(
     item: QueueItem,
     isCurrent: Boolean,
     isQueueLocked: Boolean,
     context: android.content.Context,
     openMenu: (SongMenuRequest) -> Unit,
+    isDragging: Boolean = false,
+    dragOffsetY: Float = 0f,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
+    onDragStart: () -> Unit = {},
+    onDragDelta: (Float) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+    onDragCancel: () -> Unit = {},
 ) {
     val isSmart = item.isSmartRecommended
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -1077,9 +1235,24 @@ private fun QueueRow(
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .animateItem()
+            .graphicsLayer {
+                if (isDragging) {
+                    translationY = dragOffsetY
+                    scaleX = 1.03f
+                    scaleY = 1.03f
+                    shadowElevation = 8.dp.toPx()
+                } else {
+                    translationY = 0f
+                    scaleX = 1f
+                    scaleY = 1f
+                    shadowElevation = 0f
+                }
+            }
+            .zIndex(if (isDragging) 2f else 0f)
             .offset { androidx.compose.ui.unit.IntOffset(offsetX.roundToInt(), 0) }
             .then(
-                if (!isCurrent && !isQueueLocked) {
+                if (!isCurrent && !isQueueLocked && !isDragging) {
                     Modifier.pointerInput(item.qid) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
@@ -1123,9 +1296,40 @@ private fun QueueRow(
                         PlayerConnection.moveToTop(item.qid)
                         android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
                     }
-                    openMenu(SongMenuRequest(item.song))
+                    openMenu(
+                        SongMenuRequest(
+                            song = item.song,
+                            queueItemId = item.qid,
+                            onMoveUp = if (!isCurrent && !isQueueLocked && canMoveUp) onMoveUp else null,
+                            onMoveDown = if (!isCurrent && !isQueueLocked && canMoveDown) onMoveDown else null,
+                        )
+                    )
                 },
             )
+            .semantics {
+                if (!isCurrent && !isQueueLocked) {
+                    val actions = mutableListOf<CustomAccessibilityAction>()
+                    if (canMoveUp) {
+                        actions.add(
+                            CustomAccessibilityAction("Move up") {
+                                onMoveUp()
+                                true
+                            }
+                        )
+                    }
+                    if (canMoveDown) {
+                        actions.add(
+                            CustomAccessibilityAction("Move down") {
+                                onMoveDown()
+                                true
+                            }
+                        )
+                    }
+                    if (actions.isNotEmpty()) {
+                        customActions = actions
+                    }
+                }
+            }
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1203,6 +1407,29 @@ private fun QueueRow(
                 }
                 DockButton(Icons.Default.Close, "Remove", tint = velvetColors.muted) {
                     PlayerConnection.removeItem(item.qid)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .pointerInput(item.qid) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { onDragStart() },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    onDragDelta(dragAmount.y)
+                                },
+                                onDragEnd = { onDragEnd() },
+                                onDragCancel = { onDragCancel() },
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        AppIcons.DragHandle,
+                        contentDescription = "Reorder",
+                        tint = velvetColors.muted,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
         }
