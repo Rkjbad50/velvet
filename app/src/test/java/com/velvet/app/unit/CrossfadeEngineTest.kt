@@ -76,7 +76,7 @@ class CrossfadeEngineTest {
         id = id,
         title = title,
         artist = "Test Artist",
-        duration = 100,
+        durationSec = 100L,
     )
 
     // ── 1. Mathematical Equal-Power Curve Tests ──────────────────────────────
