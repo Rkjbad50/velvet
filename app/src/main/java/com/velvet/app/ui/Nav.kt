@@ -20,6 +20,7 @@ sealed interface Route {
     @Serializable data object Settings : Route
     @Serializable data object Equalizer : Route
     @Serializable data object Import : Route
+    @Serializable data object Developer : Route
     @Serializable data class LocalPlaylist(val id: String) : Route
     @Serializable data class Album(val album: AlbumRef) : Route
     @Serializable data class Artist(val artist: ArtistRef) : Route
@@ -50,8 +51,8 @@ class Navigator(initial: NavState = NavState()) {
     }
 
     fun selectTab(i: Int) {
-        // Modal / utility routes (Settings, Equalizer, Import) should never stick as persistent tab destinations
-        stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import } }
+        // Modal / utility routes (Settings, Equalizer, Import, Developer) should never stick as persistent tab destinations
+        stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import || r is Route.Developer } }
         // tapping the current tab again pops back to its root
         if (i == tab) stacks[i].clear() else tab = i
     }
@@ -61,7 +62,7 @@ class Navigator(initial: NavState = NavState()) {
             nowPlayingOpen -> nowPlayingOpen = false
             stacks[tab].isNotEmpty() -> stacks[tab].removeAt(stacks[tab].lastIndex)
             else -> {
-                stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import } }
+                stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import || r is Route.Developer } }
                 tab = 0
             }
         }

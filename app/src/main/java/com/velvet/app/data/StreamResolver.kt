@@ -2,6 +2,7 @@ package com.velvet.app.data
 
 import com.grack.nanojson.JsonObject
 import com.velvet.app.data.YouTube.toSong
+import com.velvet.app.diagnostics.LastErrorTracker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,6 +67,25 @@ object StreamResolver {
     @Volatile
     var dataSaver = false
 
+    /** Developer options toggle: force full NewPipe extractor instead of AndroidReel fast path. */
+    @Volatile
+    var forceFullExtractor = false
+
+    fun togglePreferredClient(): String {
+        forceFullExtractor = !forceFullExtractor
+        return if (forceFullExtractor) "NewPipeExtractor (Full)" else "Android Reel (Fast) + Fallback"
+    }
+
+    /** Clears all in-memory stream URLs and related metadata caches. */
+    fun clearCache() {
+        cache.clear()
+        relatedCache.clear()
+        fullOnly.clear()
+        fastPlaybackFailures.set(0)
+        fastLookupFailuresInARow.set(0)
+        fastPausedUntilMs = 0L
+    }
+
     private fun key(videoId: String, saver: Boolean) = videoId + if (saver) "|lo" else "|hi"
 
     /** The cached stream for a song at the current quality, if resolved recently. Never blocks. */
@@ -89,12 +109,35 @@ object StreamResolver {
         val saver = dataSaver
         peek(videoId, saver)?.let { return it }
         val k = key(videoId, saver)
-        synchronized(locks.getOrPut(k) { Any() }) {
-            peek(videoId, saver)?.let { return it }
-            val resolved = (if (fastPathAllowed(videoId)) fetchFastOrNull(videoId, saver) else null)
-                ?: fetchFull(videoId, saver)
-            cache[k] = resolved
-            return resolved
+        val startTime = System.currentTimeMillis()
+        var clientName = "Unknown"
+        try {
+            synchronized(locks.getOrPut(k) { Any() }) {
+                peek(videoId, saver)?.let { return it }
+                val isFastAllowed = fastPathAllowed(videoId)
+                val resolved = (if (isFastAllowed) {
+                    clientName = "AndroidReel (Fast)"
+                    fetchFastOrNull(videoId, saver)
+                } else null) ?: run {
+                    clientName = "NewPipeExtractor (Full)"
+                    fetchFull(videoId, saver)
+                }
+                cache[k] = resolved
+                val duration = System.currentTimeMillis() - startTime
+                LastErrorTracker.lastResolvedVideoId = videoId
+                LastErrorTracker.lastResolvedClient = clientName
+                LastErrorTracker.lastResolveDurationMs = duration
+                return resolved
+            }
+        } catch (e: Exception) {
+            val duration = System.currentTimeMillis() - startTime
+            LastErrorTracker.record(
+                error = e,
+                videoId = videoId,
+                clientUsed = clientName,
+                resolveDurationMs = duration
+            )
+            throw e
         }
     }
 
@@ -141,7 +184,7 @@ object StreamResolver {
     }
 
     private fun fastPathAllowed(videoId: String) =
-        fullOnly[videoId] == null && System.currentTimeMillis() >= fastPausedUntilMs
+        !forceFullExtractor && fullOnly[videoId] == null && System.currentTimeMillis() >= fastPausedUntilMs
 
     private fun pauseFastPath() {
         fastPausedUntilMs = System.currentTimeMillis() + FAST_PATH_PAUSE_MS

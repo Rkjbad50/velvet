@@ -53,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
@@ -86,6 +87,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     var checkingVersion by remember { mutableStateOf(false) }
+    var versionTaps by remember { mutableIntStateOf(0) }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     HistoryDialog(confirm) { confirm = null }
@@ -441,6 +443,26 @@ fun SettingsScreen(onBack: () -> Unit) {
                 readout = if (updateInfo?.hasUpdate == true) "$version → v${updateInfo?.latestVersion}" else version,
                 enabled = !checkingVersion,
             ) {
+                // Developer options unlock: tap version text 7 times
+                versionTaps++
+                if (data.developerOptionsUnlocked) {
+                    if (versionTaps >= 7) {
+                        versionTaps = 0
+                        Toast.makeText(context, "Developer options already enabled", Toast.LENGTH_SHORT).show()
+                        nav.open(Route.Developer)
+                    }
+                } else {
+                    if (versionTaps in 4..6) {
+                        val remaining = 7 - versionTaps
+                        Toast.makeText(context, "You are now $remaining step${if (remaining > 1) "s" else ""} away from developer options", Toast.LENGTH_SHORT).show()
+                    } else if (versionTaps >= 7) {
+                        versionTaps = 0
+                        library.setDeveloperOptions(true)
+                        Toast.makeText(context, "Developer options unlocked! 🚀", Toast.LENGTH_LONG).show()
+                        nav.open(Route.Developer)
+                    }
+                }
+
                 if (!checkingVersion) {
                     if (updateInfo?.hasUpdate == true) {
                         openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
@@ -471,6 +493,16 @@ fun SettingsScreen(onBack: () -> Unit) {
                             checkingVersion = false
                         }
                     }
+                }
+            }
+
+            if (data.developerOptionsUnlocked) {
+                ActionRow(
+                    title = "Developer options",
+                    subtitle = "Diagnostics, system versions, last error & log viewer",
+                    readout = "Enabled",
+                ) {
+                    nav.open(Route.Developer)
                 }
             }
             val releasesUrl = BuildConfig.RELEASES_URL

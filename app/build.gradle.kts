@@ -1,4 +1,7 @@
+import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import java.io.ByteArrayOutputStream
+import java.time.Instant
 
 plugins {
     id("com.android.application")
@@ -7,27 +10,60 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val catalogs = extensions.getByType<VersionCatalogsExtension>()
+val libs = catalogs.named("libs")
+
+val newpipeVersion = libs.findVersion("newpipe").get().requiredVersion
+val media3Version = libs.findVersion("media3").get().requiredVersion
+val okhttpVersion = libs.findVersion("okhttp").get().requiredVersion
+val composeVersion = libs.findVersion("compose-bom").get().requiredVersion
+val kotlinVersion = libs.findVersion("kotlin").get().requiredVersion
+val compileSdkVer = libs.findVersion("compileSdk").get().requiredVersion.toInt()
+val minSdkVer = libs.findVersion("minSdk").get().requiredVersion.toInt()
+val targetSdkVer = libs.findVersion("targetSdk").get().requiredVersion.toInt()
+
+val gitCommit = try {
+    val stdout = ByteArrayOutputStream()
+    exec {
+        commandLine("git", "rev-parse", "--short", "HEAD")
+        standardOutput = stdout
+    }
+    stdout.toString().trim().ifBlank { "f897992" }
+} catch (_: Exception) {
+    "f897992"
+}
+val buildTime = Instant.now().toString()
+
 // CI passes the build number so every build installs as an update over the previous one
 val buildNumber = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 2
 val upstreamBuildNumber = System.getenv("VELVET_UPSTREAM_BUILD")?.toIntOrNull() ?: 51
 val keystorePath: String? = System.getenv("VELVET_KEYSTORE")
 val releaseUrl = System.getenv("VELVET_RELEASES_URL")
-
     ?: System.getenv("GITHUB_REPOSITORY")?.let { "https://github.com/$it/releases/latest" }
     ?: "https://github.com/Rkjbad50/velvet/releases/latest"
 
 android {
     namespace = "com.velvet.app"
-    compileSdk = 35
+    compileSdk = compileSdkVer
 
     defaultConfig {
         applicationId = System.getenv("VELVET_APPLICATION_ID")?.takeIf { it.isNotBlank() } ?: "com.velvet.app"
-        minSdk = 26
-        targetSdk = 35
+        minSdk = minSdkVer
+        targetSdk = targetSdkVer
         versionCode = buildNumber
         versionName = "2.6"
         buildConfigField("int", "UPSTREAM_BUILD_NUMBER", upstreamBuildNumber.toString())
         buildConfigField("String", "RELEASES_URL", "\"${releaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
+        buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
+        buildConfigField("String", "NEWPIPE_VERSION", "\"$newpipeVersion\"")
+        buildConfigField("String", "MEDIA3_VERSION", "\"$media3Version\"")
+        buildConfigField("String", "OKHTTP_VERSION", "\"$okhttpVersion\"")
+        buildConfigField("String", "COMPOSE_VERSION", "\"$composeVersion\"")
+        buildConfigField("String", "KOTLIN_VERSION", "\"$kotlinVersion\"")
+        buildConfigField("int", "COMPILE_SDK_VERSION", compileSdkVer.toString())
+        buildConfigField("int", "MIN_SDK_VERSION", minSdkVer.toString())
+        buildConfigField("int", "TARGET_SDK_VERSION", targetSdkVer.toString())
     }
 
     val localKeystore = rootProject.file("keystore/velvet.jks")
@@ -105,27 +141,27 @@ tasks.withType<Test>().configureEach {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.3")
 
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+    implementation(libs.findLibrary("newpipe-extractor").get())
     // the extractor's JSON library, same commit it uses; needed to read player responses directly
-    implementation("com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation(libs.findLibrary("nanojson").get())
+    implementation(libs.findLibrary("okhttp").get())
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
-    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation(platform(libs.findLibrary("compose-bom").get()))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
 
-    implementation("androidx.media3:media3-exoplayer:1.5.1")
-    implementation("androidx.media3:media3-session:1.5.1")
-    implementation("androidx.media3:media3-datasource:1.5.1")
-    implementation("androidx.media3:media3-database:1.5.1")
-    implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
+    implementation(libs.findLibrary("media3-exoplayer").get())
+    implementation(libs.findLibrary("media3-session").get())
+    implementation(libs.findLibrary("media3-datasource").get())
+    implementation(libs.findLibrary("media3-database").get())
+    implementation(libs.findLibrary("media3-datasource-okhttp").get())
     // installs the Compose libraries' bundled startup profiles on sideloaded installs
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.palette:palette-ktx:1.0.0")

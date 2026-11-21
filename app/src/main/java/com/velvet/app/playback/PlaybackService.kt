@@ -34,6 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.velvet.app.R
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.StreamResolver
+import com.velvet.app.diagnostics.LastErrorTracker
 import com.velvet.app.data.isDuplicateOf
 import com.velvet.app.data.isValidVideoId
 import com.velvet.app.ui.MainActivity
@@ -305,6 +306,7 @@ class PlaybackService : MediaSessionService() {
     private fun handleError(error: PlaybackException) {
         val id = exo.currentMediaItem?.mediaId ?: return
         failuresInARow++
+        LastErrorTracker.record(error, videoId = id)
 
         // offline, rate-limited or YouTube having a bad moment: wait instead of burning through the queue
         if (isTemporaryOutage(error)) {
@@ -442,6 +444,26 @@ class PlaybackService : MediaSessionService() {
         fun reloadCurrent() {
             val p = player ?: return
             reloadQueue(p, resume = p.playWhenReady)
+        }
+
+        /** Clears stream resolver in-memory cache and ExoPlayer cache for current playback. */
+        fun clearStreamCache() {
+            StreamResolver.clearCache()
+            runCatching {
+                sharedCache?.keys?.forEach { key ->
+                    sharedCache?.removeResource(key)
+                }
+            }
+        }
+
+        /** Invalidate current song stream and reload/retry playback immediately. */
+        fun reResolveAndRetryCurrent() {
+            val p = player ?: return
+            val currentId = p.currentMediaItem?.mediaId
+            if (currentId != null) {
+                StreamResolver.invalidate(currentId)
+            }
+            reloadQueue(p, resume = true)
         }
 
         // a fresh media source for the current song, at the same position

@@ -61,6 +61,7 @@ data class LibraryData(
     val musicLanguages: List<String> = listOf("Hindi", "English"),
     val seekbarStyle: String = "MINIMAL",
     val crossfadeSeconds: Float = 0f,
+    val developerOptionsUnlocked: Boolean = false,
 ) {
     companion object {
         const val CURRENT_VERSION = 2
@@ -288,6 +289,8 @@ class Library(dir: File) {
     fun setSeekbarStyle(style: String) = update { it.copy(seekbarStyle = style) }
 
     fun setCrossfadeSeconds(seconds: Float) = update { it.copy(crossfadeSeconds = seconds) }
+
+    fun setDeveloperOptions(unlocked: Boolean) = update { it.copy(developerOptionsUnlocked = unlocked) }
 
     fun setPlaylistSongs(playlistId: String, songs: List<Song>) = updatePlaylist(playlistId) { it.copy(songs = songs) }
 
