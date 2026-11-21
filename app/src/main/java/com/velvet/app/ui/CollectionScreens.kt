@@ -2,6 +2,8 @@ package com.velvet.app.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.Person
 import com.velvet.app.data.ContextRecentsManager
 import com.velvet.app.data.PlaybackContext
 import com.velvet.app.data.RecentItem
@@ -401,18 +403,18 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     var showUndoToast by remember { mutableStateOf(false) }
 
     val activeSongs = if (isEditing) draftSongs else playlist.songs
+    val trackCountText = "${activeSongs.size} ${if (activeSongs.size == 1) "track" else "tracks"}"
+    val playbackContext = PlaybackContext(
+        id = playlist.id,
+        type = RecentType.LOCAL_PLAYLIST,
+        title = playlist.name,
+        subtitle = trackCountText,
+        artworkUrl = activeSongs.firstOrNull()?.thumb ?: playlist.customCover,
+    )
 
     Box(Modifier.fillMaxSize()) {
         BackPage(onBack) {
             item {
-                val trackCountText = "${activeSongs.size} ${if (activeSongs.size == 1) "track" else "tracks"}"
-                val playbackContext = PlaybackContext(
-                    id = playlist.id,
-                    type = RecentType.LOCAL_PLAYLIST,
-                    title = playlist.name,
-                    subtitle = trackCountText,
-                    artworkUrl = activeSongs.firstOrNull()?.thumb ?: playlist.customCover,
-                )
                 CollectionHeader(
                     title = playlist.name,
                     subtitle = if (isEditing) "Editing playlist ($trackCountText)" else playlist.description.orEmpty(),

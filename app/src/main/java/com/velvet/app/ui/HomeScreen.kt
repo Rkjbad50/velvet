@@ -259,6 +259,10 @@ fun HomeScreen(vm: HomeViewModel) {
         (userPicks + freshDiscovery).take(9)
     }
 
+    val filteredRecents = remember(data.contextRecents, data.playlists) {
+        ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
+    }
+
     val greeting = remember {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         when (hour) {
@@ -337,9 +341,6 @@ fun HomeScreen(vm: HomeViewModel) {
             }
         }
 
-        val filteredRecents = remember(data.contextRecents, data.playlists) {
-            ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
-        }
         if (filteredRecents.isNotEmpty()) {
             item(key = "home-recently-played") {
                 BrowseSection("Recently played", action = "See all") { nav.open(Route.Recent) }
