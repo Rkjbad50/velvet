@@ -34,6 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.velvet.app.R
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.StreamResolver
+import com.velvet.app.diagnostics.DiagnosticsLogger
 import com.velvet.app.diagnostics.LastErrorTracker
 import com.velvet.app.data.isDuplicateOf
 import com.velvet.app.data.isValidVideoId
@@ -78,6 +79,10 @@ class PlaybackService : MediaSessionService() {
     private var crossfadeMonitorJob: Job? = null
     private var fadeInJob: Job? = null
     private var isFadingOut = false
+
+    // Gap measurement between track A and B (for debug diagnostics)
+    private var lastAudibleTimestampA = 0L
+    private var lastAudibleTrackId: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -268,6 +273,9 @@ class PlaybackService : MediaSessionService() {
 
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                if (lastAudibleTimestampA == 0L) {
+                    lastAudibleTimestampA = System.currentTimeMillis()
+                }
                 val crossfadeSec = VelvetApp.library.data.value.crossfadeSeconds
                 if (crossfadeSec > 0f) {
                     fadeInTrack(crossfadeSec)
@@ -277,6 +285,8 @@ class PlaybackService : MediaSessionService() {
                 }
             } else {
                 // Manual change by user (Seek, Next, Previous, Jump) — DO NOT crossfade
+                lastAudibleTimestampA = 0L
+                lastAudibleTrackId = null
                 isFadingOut = false
                 fadeInJob?.cancel()
                 exo.volume = 1.0f
@@ -288,14 +298,26 @@ class PlaybackService : MediaSessionService() {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) {
                 failuresInARow = 0
-                exo.currentMediaItem?.mediaId?.let { id ->
+                val curId = exo.currentMediaItem?.mediaId
+                curId?.let { id ->
                     healingLadder.onPlaybackSuccess(id)
+                }
+                if (lastAudibleTimestampA > 0L) {
+                    val gapMs = (System.currentTimeMillis() - lastAudibleTimestampA).coerceAtLeast(0L)
+                    DiagnosticsLogger.i(
+                        "Crossfade",
+                        "Track transition gap measured: ${gapMs}ms between '$lastAudibleTrackId' and '$curId'",
+                    )
+                    lastAudibleTimestampA = 0L
+                    lastAudibleTrackId = null
                 }
             }
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) {
+                lastAudibleTimestampA = System.currentTimeMillis()
+                lastAudibleTrackId = exo.currentMediaItem?.mediaId
                 if (exo.hasNextMediaItem()) {
                     exo.seekToNextMediaItem()
                     exo.prepare()
@@ -450,6 +472,10 @@ class PlaybackService : MediaSessionService() {
                     val progress = (remainingMs.toFloat() / fadeMs.toFloat()).coerceIn(0.01f, 1f)
                     val smoothVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0.01f, 1f)
                     exo.volume = smoothVol
+                    if (smoothVol <= 0.05f && lastAudibleTimestampA == 0L) {
+                        lastAudibleTimestampA = System.currentTimeMillis()
+                        lastAudibleTrackId = exo.currentMediaItem?.mediaId
+                    }
                 } else if (isFadingOut && remainingMs > fadeMs) {
                     isFadingOut = false
                     exo.volume = 1.0f
