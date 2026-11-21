@@ -87,7 +87,14 @@ fun SettingsScreen(onBack: () -> Unit) {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     var checkingVersion by remember { mutableStateOf(false) }
-    var versionTaps by remember { mutableIntStateOf(0) }
+    val tapCounter = remember { VersionTapCounter() }
+    var currentToast by remember { mutableStateOf<Toast?>(null) }
+    val showToast = { text: String, duration: Int ->
+        currentToast?.cancel()
+        val toast = Toast.makeText(context, text, duration)
+        currentToast = toast
+        toast.show()
+    }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     HistoryDialog(confirm) { confirm = null }
@@ -434,35 +441,38 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             ActionRow(
                 title = "Version",
+                subtitle = "Velvet for Android",
+                readout = version,
+            ) {
+                // Developer options unlock: tap version text 7 times
+                when (val event = tapCounter.onVersionTapped(System.currentTimeMillis(), data.developerOptionsUnlocked)) {
+                    is VersionTapEvent.Silent -> {}
+                    is VersionTapEvent.StepsRemaining -> {
+                        val steps = event.steps
+                        showToast("You are now $steps step${if (steps > 1) "s" else ""} away from developer options", Toast.LENGTH_SHORT)
+                    }
+                    is VersionTapEvent.Unlocked -> {
+                        library.setDeveloperOptions(true)
+                        showToast("Developer options unlocked! 🚀", Toast.LENGTH_LONG)
+                        nav.open(Route.Developer)
+                    }
+                    is VersionTapEvent.AlreadyEnabled -> {
+                        showToast("Developer options are already enabled", Toast.LENGTH_SHORT)
+                    }
+                }
+            }
+
+            ActionRow(
+                title = "Check for updates",
                 subtitle = when {
                     checkingVersion -> "Checking GitHub…"
                     updateInfo?.hasUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to download"
                     updateInfo != null -> "Already on the latest version"
                     else -> "Check for a newer release"
                 },
-                readout = if (updateInfo?.hasUpdate == true) "$version → v${updateInfo?.latestVersion}" else version,
+                readout = if (updateInfo?.hasUpdate == true) "v${updateInfo?.latestVersion}" else null,
                 enabled = !checkingVersion,
             ) {
-                // Developer options unlock: tap version text 7 times
-                versionTaps++
-                if (data.developerOptionsUnlocked) {
-                    if (versionTaps >= 7) {
-                        versionTaps = 0
-                        Toast.makeText(context, "Developer options already enabled", Toast.LENGTH_SHORT).show()
-                        nav.open(Route.Developer)
-                    }
-                } else {
-                    if (versionTaps in 4..6) {
-                        val remaining = 7 - versionTaps
-                        Toast.makeText(context, "You are now $remaining step${if (remaining > 1) "s" else ""} away from developer options", Toast.LENGTH_SHORT).show()
-                    } else if (versionTaps >= 7) {
-                        versionTaps = 0
-                        library.setDeveloperOptions(true)
-                        Toast.makeText(context, "Developer options unlocked! 🚀", Toast.LENGTH_LONG).show()
-                        nav.open(Route.Developer)
-                    }
-                }
-
                 if (!checkingVersion) {
                     if (updateInfo?.hasUpdate == true) {
                         openReleases(context, updateInfo?.downloadUrl ?: UPSTREAM_RELEASES_URL)
@@ -483,12 +493,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                             if (info?.hasUpdate == true) {
                                 openReleases(context, info.downloadUrl)
                             } else {
-                                Toast.makeText(context, "Already on the latest version", Toast.LENGTH_SHORT).show()
+                                showToast("Already on the latest version", Toast.LENGTH_SHORT)
                             }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (_: Exception) {
-                            Toast.makeText(context, "Couldn't check for updates. Try again.", Toast.LENGTH_SHORT).show()
+                            showToast("Couldn't check for updates. Try again.", Toast.LENGTH_SHORT)
                         } finally {
                             checkingVersion = false
                         }
