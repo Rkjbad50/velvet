@@ -56,14 +56,21 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * The invisible "backend": an ExoPlayer that keeps playing with the screen off, exposed
- * through a MediaSession so the notification, lock screen and headphones can control it.
+ * The invisible "backend": dual ExoPlayers managed by [CrossfadeEngine], exposed
+ * through a single [CrossfadeForwardingPlayer] and [MediaSession] so the notification,
+ * lock screen, Bluetooth, and UI interact with the active player seamlessly.
  */
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
 
     private var session: MediaSession? = null
-    private lateinit var exo: ExoPlayer
+    private lateinit var playerA: ExoPlayer
+    private lateinit var playerB: ExoPlayer
+    private lateinit var crossfadePlayerA: ExoCrossfadePlayer
+    private lateinit var crossfadePlayerB: ExoCrossfadePlayer
+    private lateinit var forwardingPlayer: CrossfadeForwardingPlayer
+    private lateinit var crossfadeEngine: CrossfadeEngine
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val requestNumber = AtomicLong()
 
@@ -75,10 +82,8 @@ class PlaybackService : MediaSessionService() {
     /** Bumped whenever the queue is replaced. */
     private var queueGeneration = 0
 
-    // Crossfade automix state
-    private var crossfadeMonitorJob: Job? = null
-    private var fadeInJob: Job? = null
-    private var isFadingOut = false
+    // Crossfade engine loop
+    private var crossfadeJob: Job? = null
 
     // Gap measurement between track A and B (for debug diagnostics)
     private var lastAudibleTimestampA = 0L
@@ -90,9 +95,99 @@ class PlaybackService : MediaSessionService() {
             DefaultMediaNotificationProvider.Builder(this).build().apply { setSmallIcon(R.drawable.ic_velvet_mono) },
         )
 
-        // The stream is resolved first, so the cache key names the exact audio file (rendition);
-        // downloaded songs come back as file:// and skip the streaming cache entirely.
-        // The app's OkHttp client keeps warm HTTP/2 connections to googlevideo.
+        // Dual ExoPlayer setup: Player A and Player B share the exact same audioSessionId
+        // so AudioFx / Equalizer doesn't glitch across track transitions.
+        playerA = buildExoPlayer()
+        val baseSessionId = playerA.audioSessionId
+        playerB = buildExoPlayer(baseSessionId)
+
+        crossfadePlayerA = ExoCrossfadePlayer(playerA, "playerA")
+        crossfadePlayerB = ExoCrossfadePlayer(playerB, "playerB")
+
+        forwardingPlayer = CrossfadeForwardingPlayer(playerA)
+        forwardingPlayer.attachTo(playerA)
+        forwardingPlayer.attachTo(playerB)
+
+        playerA.addListener(listener)
+        playerB.addListener(listener)
+
+        player = playerA
+        onAudioSession(baseSessionId)
+
+        scope.launch {
+            VelvetApp.library.data.map { it.eq }.distinctUntilChanged().collect { AudioFx.apply(it) }
+        }
+        scope.launch(Dispatchers.IO) { File(cacheDir, "media").deleteRecursively() }
+
+        crossfadeEngine = CrossfadeEngine(
+            clock = SystemClock(),
+            playerA = crossfadePlayerA,
+            playerB = crossfadePlayerB,
+            getNextSong = {
+                PlayerConnection.userQueue.firstOrNull()?.song
+                    ?: PlayerConnection.upNext.firstOrNull()?.song
+            },
+            getCrossfadeSeconds = { VelvetApp.library.data.value.crossfadeSeconds },
+            getRepeatMode = { PlayerConnection.queueState.repeatMode },
+            onTrackTransition = { nextSong ->
+                PlayerConnection.onAutoTransitionTrack(nextSong)
+                VelvetApp.library.addRecent(nextSong)
+                VelvetApp.sessionHistory.record(nextSong)
+            },
+            onGapMeasured = { gapMs ->
+                DiagnosticsLogger.i(
+                    "Crossfade",
+                    "Track transition gap measured: ${gapMs}ms (True crossfade)",
+                )
+            },
+            onPreloadTrack = { song ->
+                StreamResolver.prefetch(song.id)
+            },
+        )
+
+        crossfadeEngine.onActivePlayerChanged = { active ->
+            val newActive = if (active.id == "playerA") playerA else playerB
+            forwardingPlayer.setActive(newActive)
+            player = newActive
+            onAudioSession(newActive.audioSessionId)
+        }
+
+        forwardingPlayer.onUserPause = { crossfadeEngine.onPause() }
+        forwardingPlayer.onUserResume = { crossfadeEngine.onResume() }
+        forwardingPlayer.onUserSeek = { pos -> crossfadeEngine.onSeek(pos) }
+
+        PlayerConnection.onNextItemChangedListener = { item ->
+            crossfadeEngine.onNextItemChanged(item?.song)
+        }
+        PlayerConnection.onManualTransition = { song ->
+            if (VelvetApp.library.data.value.crossfadeSeconds > 0f) {
+                crossfadeEngine.manualTransition(song)
+            }
+        }
+
+        val openApp = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        session = MediaSession.Builder(this, forwardingPlayer)
+            .setCallback(callback)
+            .setSessionActivity(openApp)
+            .build()
+
+        startCrossfadeLoop()
+    }
+
+    private fun startCrossfadeLoop() {
+        crossfadeJob?.cancel()
+        crossfadeJob = scope.launch {
+            while (isActive) {
+                delay(25)
+                crossfadeEngine.tick()
+            }
+        }
+    }
+
+    private fun buildExoPlayer(sessionId: Int? = null): ExoPlayer {
         val cached = CacheDataSource.Factory()
             .setCache(cache(this))
             .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(VelvetApp.http))
@@ -100,7 +195,7 @@ class PlaybackService : MediaSessionService() {
         val routed = DefaultDataSource.Factory(this, cached)
         val resolving = ResolvingDataSource.Factory(routed) { spec -> resolve(spec) }
 
-        exo = ExoPlayer.Builder(this)
+        val p = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(resolving))
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -111,32 +206,16 @@ class PlaybackService : MediaSessionService() {
             )
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
-            // start after half a second of audio instead of the default 2.5 s
             .setLoadControl(
                 DefaultLoadControl.Builder()
                     .setBufferDurationsMs(15_000, 60_000, 500, 2_000)
                     .build()
             )
             .build()
-        exo.addListener(listener)
-        player = exo
-        onAudioSession(exo.audioSessionId)
-        scope.launch {
-            VelvetApp.library.data.map { it.eq }.distinctUntilChanged().collect { AudioFx.apply(it) }
+        if (sessionId != null && sessionId != C.AUDIO_SESSION_ID_UNSET) {
+            p.setAudioSessionId(sessionId)
         }
-        // the cache before rendition-keyed entries; its keys can't be trusted any more
-        scope.launch(Dispatchers.IO) { File(cacheDir, "media").deleteRecursively() }
-
-        val openApp = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        session = MediaSession.Builder(this, exo)
-            .setCallback(callback)
-            .setSessionActivity(openApp)
-            .build()
-
-        monitorCrossfade()
+        return p
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
@@ -144,24 +223,26 @@ class PlaybackService : MediaSessionService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         persistCurrentState()
-        exo.pause()
-        exo.stop()
-        exo.clearMediaItems()
+        forwardingPlayer.pause()
+        forwardingPlayer.stop()
+        forwardingPlayer.clearMediaItems()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
         persistCurrentState()
-        crossfadeMonitorJob?.cancel()
-        fadeInJob?.cancel()
+        crossfadeJob?.cancel()
         scope.cancel()
         AudioFx.release()
         SleepTimer.cancel()
         announce(announcedSessionId, open = false)
         player = null
+        PlayerConnection.onNextItemChangedListener = null
+        PlayerConnection.onManualTransition = null
         session?.run {
-            exo.release()
+            playerA.release()
+            playerB.release()
             release()
         }
         session = null
@@ -169,13 +250,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun persistCurrentState() {
-        if (!::exo.isInitialized) return
-        val currentSong = exo.currentMediaItem?.toSong() ?: return
+        val activeExo = player ?: return
+        val currentSong = activeExo.currentMediaItem?.toSong() ?: return
         PlaybackStateManager.save(
             context = this,
             song = currentSong,
-            positionMs = exo.currentPosition.coerceAtLeast(0L),
-            durationMs = exo.duration.coerceAtLeast(0L),
+            positionMs = activeExo.currentPosition.coerceAtLeast(0L),
+            durationMs = activeExo.duration.coerceAtLeast(0L),
             upNext = com.velvet.app.ui.PlayerConnection.upNext.map { it.song },
             userQueue = com.velvet.app.ui.PlayerConnection.userQueue.map { it.song },
             history = com.velvet.app.ui.PlayerConnection.history.map { it.song },
@@ -224,7 +305,6 @@ class PlaybackService : MediaSessionService() {
         } catch (e: Exception) {
             throw IOException("Couldn't load stream for $id", e)
         }
-        // Same request shape NewPipe's player uses for googlevideo URLs
         return spec.buildUpon()
             .setUri(stream.url + "&rn=" + requestNumber.incrementAndGet())
             .setHttpMethod(DataSpec.HTTP_METHOD_POST)
@@ -235,7 +315,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     private val callback = object : MediaSession.Callback {
-        // Items from controllers arrive without their URI: rebuild it from a validated media id
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
@@ -250,9 +329,9 @@ class PlaybackService : MediaSessionService() {
     private val listener = object : Player.Listener {
         private var countedPlaylistStart: String? = null
 
-        override fun onEvents(player: Player, events: Player.Events) {
-            if (!player.isPlaying) return
-            val start = player.currentMediaItem?.playlistStart() ?: return
+        override fun onEvents(p: Player, events: Player.Events) {
+            if (!p.isPlaying) return
+            val start = p.currentMediaItem?.playlistStart() ?: return
             if (start.token == countedPlaylistStart) return
             countedPlaylistStart = start.token
             VelvetApp.library.recordPlaylistPlay(start.playlistId)
@@ -268,29 +347,9 @@ class PlaybackService : MediaSessionService() {
             if (mediaItem.mediaId != retriedId) retriedId = null
             VelvetApp.library.addRecent(mediaItem.toSong())
             VelvetApp.sessionHistory.record(mediaItem.toSong())
-            trimPlayedHistory()
-            prefetchNext()
-
-            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
-                reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-                if (lastAudibleTimestampA == 0L) {
-                    lastAudibleTimestampA = System.currentTimeMillis()
-                }
-                val crossfadeSec = VelvetApp.library.data.value.crossfadeSeconds
-                if (crossfadeSec > 0f) {
-                    fadeInTrack(crossfadeSec)
-                } else {
-                    isFadingOut = false
-                    exo.volume = 1.0f
-                }
-            } else {
-                // Manual change by user (Seek, Next, Previous, Jump) — DO NOT crossfade
-                lastAudibleTimestampA = 0L
-                lastAudibleTrackId = null
-                isFadingOut = false
-                fadeInJob?.cancel()
-                exo.volume = 1.0f
-            }
+            val active = player ?: playerA
+            trimPlayedHistory(active)
+            prefetchNext(active)
         }
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {}
@@ -298,30 +357,21 @@ class PlaybackService : MediaSessionService() {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) {
                 failuresInARow = 0
-                val curId = exo.currentMediaItem?.mediaId
+                val active = player ?: playerA
+                val curId = active.currentMediaItem?.mediaId
                 curId?.let { id ->
                     healingLadder.onPlaybackSuccess(id)
-                }
-                if (lastAudibleTimestampA > 0L) {
-                    val gapMs = (System.currentTimeMillis() - lastAudibleTimestampA).coerceAtLeast(0L)
-                    DiagnosticsLogger.i(
-                        "Crossfade",
-                        "Track transition gap measured: ${gapMs}ms between '$lastAudibleTrackId' and '$curId'",
-                    )
-                    lastAudibleTimestampA = 0L
-                    lastAudibleTrackId = null
                 }
             }
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            val active = player ?: playerA
             if (playbackState == Player.STATE_ENDED) {
-                lastAudibleTimestampA = System.currentTimeMillis()
-                lastAudibleTrackId = exo.currentMediaItem?.mediaId
-                if (exo.hasNextMediaItem()) {
-                    exo.seekToNextMediaItem()
-                    exo.prepare()
-                    exo.play()
+                if (active.hasNextMediaItem()) {
+                    active.seekToNextMediaItem()
+                    active.prepare()
+                    active.play()
                 }
             }
         }
@@ -330,11 +380,26 @@ class PlaybackService : MediaSessionService() {
             if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) SleepTimer.onSongEndPause()
         }
 
-        override fun onPlayerError(error: PlaybackException) = handleError(error)
+        override fun onPlayerError(error: PlaybackException) {
+            val active = player ?: playerA
+            // Check if error came from standby player
+            if (::crossfadeEngine.isInitialized) {
+                val standbyExo = if (crossfadeEngine.standbyPlayer.id == "playerA") playerA else playerB
+                if (active !== standbyExo) {
+                    val standbyId = crossfadeEngine.preloadingSongId
+                    if (standbyId != null) {
+                        StreamResolver.invalidate(standbyId)
+                    }
+                    crossfadeEngine.onStandbyError()
+                    return
+                }
+            }
+            handleError(error, active)
+        }
     }
 
-    private fun handleError(error: PlaybackException) {
-        val id = exo.currentMediaItem?.mediaId ?: return
+    private fun handleError(error: PlaybackException, targetPlayer: ExoPlayer) {
+        val id = targetPlayer.currentMediaItem?.mediaId ?: return
         healingLadder.selfHealingEnabled = VelvetApp.library.data.value.selfHealingEnabled
         failuresInARow++
         LastErrorTracker.record(error, videoId = id)
@@ -345,17 +410,17 @@ class PlaybackService : MediaSessionService() {
                 return
             }
             if (failuresInARow >= MAX_FAILURES_IN_A_ROW) {
-                exo.pause()
+                targetPlayer.pause()
                 toast("Playback keeps failing. Check your connection, then press play")
                 failuresInARow = 0
                 return
             }
-            val title = exo.currentMediaItem?.mediaMetadata?.title ?: "song"
+            val title = targetPlayer.currentMediaItem?.mediaMetadata?.title ?: "song"
             toast("Couldn't play $title")
-            if (exo.hasNextMediaItem()) {
-                exo.seekToNextMediaItem()
-                exo.prepare()
-                exo.play()
+            if (targetPlayer.hasNextMediaItem()) {
+                targetPlayer.seekToNextMediaItem()
+                targetPlayer.prepare()
+                targetPlayer.play()
             }
             return
         }
@@ -370,45 +435,45 @@ class PlaybackService : MediaSessionService() {
 
         when (decision) {
             is HealingDecision.NoAction -> {
-                val title = exo.currentMediaItem?.mediaMetadata?.title ?: "song"
+                val title = targetPlayer.currentMediaItem?.mediaMetadata?.title ?: "song"
                 toast("Couldn't play $title")
-                if (exo.hasNextMediaItem()) {
-                    exo.seekToNextMediaItem()
-                    exo.prepare()
-                    exo.play()
+                if (targetPlayer.hasNextMediaItem()) {
+                    targetPlayer.seekToNextMediaItem()
+                    targetPlayer.prepare()
+                    targetPlayer.play()
                 }
             }
             is HealingDecision.RetryTransient -> {
                 scope.launch {
                     delay(decision.backoffMs)
-                    exo.prepare()
-                    exo.play()
+                    targetPlayer.prepare()
+                    targetPlayer.play()
                 }
             }
             is HealingDecision.InvalidateAndReResolve -> {
                 StreamResolver.invalidate(decision.videoId)
-                reloadQueue(exo, resume = true)
+                reloadQueue(targetPlayer, resume = true)
             }
             is HealingDecision.TryNextCandidate -> {
                 StreamResolver.invalidate(decision.videoId)
-                reloadQueue(exo, resume = true)
+                reloadQueue(targetPlayer, resume = true)
             }
             is HealingDecision.TryNextClient -> {
                 StreamResolver.togglePreferredClient()
                 StreamResolver.invalidate(decision.videoId)
-                reloadQueue(exo, resume = true)
+                reloadQueue(targetPlayer, resume = true)
             }
             is HealingDecision.SkipTrack -> {
-                val title = exo.currentMediaItem?.mediaMetadata?.title ?: "song"
+                val title = targetPlayer.currentMediaItem?.mediaMetadata?.title ?: "song"
                 toast("Couldn't play $title. Skipping to next...")
-                if (exo.hasNextMediaItem()) {
-                    exo.seekToNextMediaItem()
-                    exo.prepare()
-                    exo.play()
+                if (targetPlayer.hasNextMediaItem()) {
+                    targetPlayer.seekToNextMediaItem()
+                    targetPlayer.prepare()
+                    targetPlayer.play()
                 }
             }
             is HealingDecision.CircuitBreakerTrip -> {
-                exo.pause()
+                targetPlayer.pause()
                 if (decision.showBanner) {
                     PlayerConnection.showStreamingBrokenBanner(decision.bannerMessage)
                 }
@@ -430,75 +495,17 @@ class PlaybackService : MediaSessionService() {
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
     /** Resolve the next song's stream early so skipping is instant. */
-    private fun prefetchNext() {
-        val next = exo.nextMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: return
-        val id = exo.getMediaItemAt(next).mediaId
+    private fun prefetchNext(targetPlayer: ExoPlayer) {
+        val next = targetPlayer.nextMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: return
+        val id = targetPlayer.getMediaItemAt(next).mediaId
         if (VelvetApp.downloads.fileFor(id) != null) return
         StreamResolver.prefetch(id)
     }
 
     /** Keeps at most [HISTORY_KEPT] already-played songs in the queue so long sessions stay light. */
-    private fun trimPlayedHistory() {
-        val index = exo.currentMediaItemIndex
-        if (index > HISTORY_KEPT + 10) exo.removeMediaItems(0, index - HISTORY_KEPT)
-    }
-
-
-
-    private fun monitorCrossfade() {
-        crossfadeMonitorJob?.cancel()
-        crossfadeMonitorJob = scope.launch {
-            while (isActive) {
-                delay(50)
-                if (!::exo.isInitialized || !exo.isPlaying) continue
-                val crossfadeSec = VelvetApp.library.data.value.crossfadeSeconds
-                if (crossfadeSec <= 0f) {
-                    if (isFadingOut) {
-                        isFadingOut = false
-                        exo.volume = 1.0f
-                    }
-                    continue
-                }
-
-                val duration = exo.duration
-                val position = exo.currentPosition
-                if (duration <= 0 || position <= 0) continue
-
-                val remainingMs = duration - position
-                val fadeMs = (crossfadeSec * 1000L).toLong()
-
-                if (remainingMs in 1..fadeMs && exo.hasNextMediaItem()) {
-                    isFadingOut = true
-                    val progress = (remainingMs.toFloat() / fadeMs.toFloat()).coerceIn(0.01f, 1f)
-                    val smoothVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0.01f, 1f)
-                    exo.volume = smoothVol
-                    if (smoothVol <= 0.05f && lastAudibleTimestampA == 0L) {
-                        lastAudibleTimestampA = System.currentTimeMillis()
-                        lastAudibleTrackId = exo.currentMediaItem?.mediaId
-                    }
-                } else if (isFadingOut && remainingMs > fadeMs) {
-                    isFadingOut = false
-                    exo.volume = 1.0f
-                }
-            }
-        }
-    }
-
-    private fun fadeInTrack(crossfadeSec: Float) {
-        fadeInJob?.cancel()
-        fadeInJob = scope.launch {
-            isFadingOut = false
-            val fadeDurationMs = (crossfadeSec * 800L).toLong().coerceIn(400L, 4000L)
-            val steps = 30
-            val stepDelay = (fadeDurationMs / steps).coerceAtLeast(15L)
-            for (i in 0..steps) {
-                val progress = (i.toFloat() / steps).coerceIn(0f, 1f)
-                val smoothVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0.05f, 1f)
-                exo.volume = smoothVol
-                delay(stepDelay)
-            }
-            exo.volume = 1.0f
-        }
+    private fun trimPlayedHistory(targetPlayer: ExoPlayer) {
+        val index = targetPlayer.currentMediaItemIndex
+        if (index > HISTORY_KEPT + 10) targetPlayer.removeMediaItems(0, index - HISTORY_KEPT)
     }
 
     companion object {
@@ -508,13 +515,12 @@ class PlaybackService : MediaSessionService() {
         private const val CACHE_KEY_VERSION = "v2"
         private const val CACHE_BYTES = 512L * 1024 * 1024
 
-        /** The live player, for the sleep timer and equalizer. Null when the service isn't running. */
+        /** The live active player, for the sleep timer and equalizer. Null when the service isn't running. */
         var player: ExoPlayer? = null
             private set
 
         private var sharedCache: SimpleCache? = null
 
-        // SimpleCache allows one instance per folder per process, and the service can be recreated
         @Synchronized
         internal fun cache(context: Context): SimpleCache = sharedCache ?: SimpleCache(
             File(context.cacheDir, "media2"),
