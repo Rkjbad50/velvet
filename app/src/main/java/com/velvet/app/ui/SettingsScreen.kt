@@ -330,55 +330,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 library::setAutoLyrics,
             )
 
-            // Crossfade automix (0.5s to 10.0s)
-            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("Crossfade automix", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            if (data.crossfadeSeconds > 0f) "${data.crossfadeSeconds}s automix during auto track transition" else "Off · Instant transition",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (data.crossfadeSeconds > 0f) velvetColors.accentText else velvetColors.muted,
-                        )
-                    }
-                    VelvetSwitch(
-                        checked = data.crossfadeSeconds > 0f,
-                        onCheckedChange = { on ->
-                            library.setCrossfadeSeconds(if (on) 3.0f else 0f)
-                        },
-                    )
-                }
-                if (data.crossfadeSeconds > 0f) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("0.5s", style = MaterialTheme.typography.labelSmall, color = velvetColors.muted)
-                        Slider(
-                            value = data.crossfadeSeconds,
-                            onValueChange = { raw ->
-                                val rounded = (Math.round(raw * 2) / 2.0f).coerceIn(0.5f, 10.0f)
-                                library.setCrossfadeSeconds(rounded)
-                            },
-                            valueRange = 0.5f..10.0f,
-                            steps = 18,
-                            modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                            colors = SliderDefaults.colors(
-                                thumbColor = velvetColors.accentText,
-                                activeTrackColor = velvetColors.accent,
-                                inactiveTrackColor = velvetColors.track,
-                            ),
-                        )
-                        Text("10s", style = MaterialTheme.typography.labelSmall, color = velvetColors.muted)
-                    }
-                }
-            }
-
             ActionRow("Equalizer & ULT Bass", "Bass boost, 5-band EQ, 3D sound and loudness") { nav.open(Route.Equalizer) }
         }
 

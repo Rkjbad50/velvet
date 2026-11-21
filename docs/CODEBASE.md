@@ -35,7 +35,7 @@ VELVET is a modern, single-activity Android application built with Kotlin, Jetpa
 - **`SettingsScreen.kt`**: Preferences for typography (System, Inter, Outfit, Space Grotesk, Source Serif), accent colors, streaming cache size, auto lyrics, and update checker.
 
 ### Audio & Playback Engine (`com.velvet.app.playback`)
-- **`PlaybackService.kt`**: Foreground `MediaSessionService` coordinating ExoPlayer, audio focus, lock-screen controls, and system media notifications.
+- **`PlaybackService.kt`**: Foreground `MediaSessionService` coordinating ExoPlayer, audio focus, lock-screen controls, and system media notifications. Track transitions are direct and gapless-friendly via ahead-of-time prefetching (`StreamResolver.prefetch`); crossfade automix has been completely removed.
 - **`AudioFx.kt`**: Audio processing engine providing 5-band graphic equalizer, Bass Boost, Virtualizer (3D audio stage), and LoudnessEnhancer.
 - **`SleepTimer.kt`**: Audio countdown timer with graceful volume fade-out.
 

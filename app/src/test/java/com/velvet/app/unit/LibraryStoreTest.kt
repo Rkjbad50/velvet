@@ -1,5 +1,6 @@
 package com.velvet.app.unit
 
+import com.velvet.app.data.BackupCodec
 import com.velvet.app.data.Library
 import com.velvet.app.data.LibraryData
 import com.velvet.app.data.LibraryStore
@@ -124,17 +125,58 @@ class LibraryStoreTest {
     }
 
     @Test
-    fun crossfadeAndSeekbarStylePersistCorrectly() {
+    fun seekbarStylePersistsCorrectly() {
         val library = Library(tmp.root)
-        assertEquals(0f, library.data.value.crossfadeSeconds)
         assertEquals("MINIMAL", library.data.value.seekbarStyle)
 
-        library.setCrossfadeSeconds(4.5f)
         library.setSeekbarStyle("DOT_MATRIX")
         library.flushBlocking()
 
         val loaded = (LibraryStore(tmp.root).load() as LoadResult.Loaded).data
-        assertEquals(4.5f, loaded.crossfadeSeconds)
         assertEquals("DOT_MATRIX", loaded.seekbarStyle)
+    }
+
+    @Test
+    fun legacyLibraryFileWithCrossfadeSecondsLoadsCleanlyWithoutErrors() {
+        // Old library.json containing crossfadeSeconds must deserialize cleanly ignoring the unknown field
+        File(tmp.root, "library.json").writeText(
+            """{"version":2,"liked":[{"id":"dQw4w9WgXcQ","title":"T","artist":"A"}],"crossfadeSeconds":4.5,"seekbarStyle":"DOT_MATRIX"}"""
+        )
+        val result = LibraryStore(tmp.root).load()
+        assertTrue(result is LoadResult.Loaded)
+        val data = (result as LoadResult.Loaded).data
+        assertEquals("DOT_MATRIX", data.seekbarStyle)
+        assertEquals(1, data.liked.size)
+        assertEquals("dQw4w9WgXcQ", data.liked.first().id)
+    }
+
+    @Test
+    fun legacyBackupFileWithCrossfadeSecondsDecodesAndRestoresCleanly() {
+        // Backup JSON containing crossfadeSeconds must decode and merge cleanly
+        val legacyBackupJson = """
+            {
+              "app": "VELVET",
+              "backupVersion": 1,
+              "exportedAt": 1700000000000,
+              "library": {
+                "version": 2,
+                "liked": [
+                  {"id": "dQw4w9WgXcQ", "title": "Never Gonna Give You Up", "artist": "Rick Astley", "durationSec": 213}
+                ],
+                "crossfadeSeconds": 6.0,
+                "seekbarStyle": "RETRO_WAVE"
+              }
+            }
+        """.trimIndent()
+
+        val incoming = BackupCodec.decode(legacyBackupJson)
+        assertEquals("RETRO_WAVE", incoming.seekbarStyle)
+        assertEquals(1, incoming.liked.size)
+        assertEquals("dQw4w9WgXcQ", incoming.liked.first().id)
+
+        val merged = mergeLibraries(LibraryData(), incoming)
+        assertEquals(1, merged.liked.size)
+        assertEquals("dQw4w9WgXcQ", merged.liked.first().id)
+        assertEquals("RETRO_WAVE", merged.seekbarStyle)
     }
 }

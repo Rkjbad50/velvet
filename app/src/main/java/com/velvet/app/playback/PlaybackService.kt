@@ -74,11 +74,6 @@ class PlaybackService : MediaSessionService() {
     /** Bumped whenever the queue is replaced. */
     private var queueGeneration = 0
 
-    // Crossfade automix state
-    private var crossfadeMonitorJob: Job? = null
-    private var fadeInJob: Job? = null
-    private var isFadingOut = false
-
     override fun onCreate() {
         super.onCreate()
         setMediaNotificationProvider(
@@ -130,8 +125,6 @@ class PlaybackService : MediaSessionService() {
             .setCallback(callback)
             .setSessionActivity(openApp)
             .build()
-
-        monitorCrossfade()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
@@ -148,8 +141,6 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         persistCurrentState()
-        crossfadeMonitorJob?.cancel()
-        fadeInJob?.cancel()
         scope.cancel()
         AudioFx.release()
         SleepTimer.cancel()
@@ -265,22 +256,7 @@ class PlaybackService : MediaSessionService() {
             VelvetApp.sessionHistory.record(mediaItem.toSong())
             trimPlayedHistory()
             prefetchNext()
-
-            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
-                reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-                val crossfadeSec = VelvetApp.library.data.value.crossfadeSeconds
-                if (crossfadeSec > 0f) {
-                    fadeInTrack(crossfadeSec)
-                } else {
-                    isFadingOut = false
-                    exo.volume = 1.0f
-                }
-            } else {
-                // Manual change by user (Seek, Next, Previous, Jump) — DO NOT crossfade
-                isFadingOut = false
-                fadeInJob?.cancel()
-                exo.volume = 1.0f
-            }
+            exo.volume = 1.0f
         }
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {}
@@ -419,60 +395,6 @@ class PlaybackService : MediaSessionService() {
     private fun trimPlayedHistory() {
         val index = exo.currentMediaItemIndex
         if (index > HISTORY_KEPT + 10) exo.removeMediaItems(0, index - HISTORY_KEPT)
-    }
-
-
-
-    private fun monitorCrossfade() {
-        crossfadeMonitorJob?.cancel()
-        crossfadeMonitorJob = scope.launch {
-            while (isActive) {
-                delay(50)
-                if (!::exo.isInitialized || !exo.isPlaying) continue
-                val crossfadeSec = VelvetApp.library.data.value.crossfadeSeconds
-                if (crossfadeSec <= 0f) {
-                    if (isFadingOut) {
-                        isFadingOut = false
-                        exo.volume = 1.0f
-                    }
-                    continue
-                }
-
-                val duration = exo.duration
-                val position = exo.currentPosition
-                if (duration <= 0 || position <= 0) continue
-
-                val remainingMs = duration - position
-                val fadeMs = (crossfadeSec * 1000L).toLong()
-
-                if (remainingMs in 1..fadeMs && exo.hasNextMediaItem()) {
-                    isFadingOut = true
-                    val progress = (remainingMs.toFloat() / fadeMs.toFloat()).coerceIn(0.01f, 1f)
-                    val smoothVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0.01f, 1f)
-                    exo.volume = smoothVol
-                } else if (isFadingOut && remainingMs > fadeMs) {
-                    isFadingOut = false
-                    exo.volume = 1.0f
-                }
-            }
-        }
-    }
-
-    private fun fadeInTrack(crossfadeSec: Float) {
-        fadeInJob?.cancel()
-        fadeInJob = scope.launch {
-            isFadingOut = false
-            val fadeDurationMs = (crossfadeSec * 800L).toLong().coerceIn(400L, 4000L)
-            val steps = 30
-            val stepDelay = (fadeDurationMs / steps).coerceAtLeast(15L)
-            for (i in 0..steps) {
-                val progress = (i.toFloat() / steps).coerceIn(0f, 1f)
-                val smoothVol = kotlin.math.sin(progress * (Math.PI / 2.0)).toFloat().coerceIn(0.05f, 1f)
-                exo.volume = smoothVol
-                delay(stepDelay)
-            }
-            exo.volume = 1.0f
-        }
     }
 
     companion object {

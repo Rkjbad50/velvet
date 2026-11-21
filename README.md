@@ -23,6 +23,7 @@
 - 📥 **Offline Downloads & Cache**: Save individual songs or complete playlists to your device with lossless playback and a persistent 512 MB smart streaming cache.
 - 📑 **Playlist Management**: Easy reordering, instant removal with 2-second undo toast, and dynamic multi-attribute sorting (A-Z, artist, duration).
 - 🔀 **Smart Queue Control**: Swipe right on any queued song to immediately play next, and lock/unlock queue reordering.
+- ⚡ **Direct Gapless Transitions**: Instant track switching with smart ahead-of-time stream prefetching and zero volume dips (crossfade automix removed).
 - 🔒 **Privacy First**: No account required, zero telemetry or tracking, and your entire library stays encrypted locally on your phone.
 
 ---
