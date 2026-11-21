@@ -947,8 +947,6 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
 private fun QueueSheet(onDismiss: () -> Unit) {
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
