@@ -8,7 +8,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.roundToInt
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
