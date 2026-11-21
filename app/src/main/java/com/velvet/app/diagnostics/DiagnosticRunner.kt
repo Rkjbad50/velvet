@@ -1,8 +1,6 @@
 package com.velvet.app.diagnostics
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -14,9 +12,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.StreamResolver
-import com.velvet.app.data.YouTube
 import com.velvet.app.data.YtDownloader
 import com.velvet.app.playback.PlaybackService
+import com.velvet.app.playback.songUri
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -24,12 +22,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Headers
 import okhttp3.Request
 import org.schabi.newpipe.extractor.NewPipe
-import java.io.IOException
+import org.schabi.newpipe.extractor.localization.ContentCountry
+import org.schabi.newpipe.extractor.localization.Localization
 import java.net.InetAddress
+import java.util.Locale
 
 /**
  * Executes the 6 sequential diagnostic checks specified in W3-A:
@@ -54,6 +53,15 @@ object DiagnosticRunner {
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    fun resetExtractor(context: Context) {
+        val locale = Locale.getDefault()
+        NewPipe.init(
+            YtDownloader(VelvetApp.http),
+            Localization.fromLocale(locale),
+            ContentCountry(locale.country.ifEmpty { "US" }),
+        )
+    }
 
     suspend fun runDiagnostics(context: Context): DiagnosticReport = withContext(Dispatchers.IO) {
         _state.value = State(isRunning = true, currentStep = DiagnosticStep.INTERNET, results = emptyList(), verdict = null)
@@ -186,7 +194,9 @@ object DiagnosticRunner {
     private fun checkExtractorInit(context: Context): CheckResult {
         val start = System.currentTimeMillis()
         return try {
-            YouTube.init(context)
+            if (NewPipe.getDownloader() == null) {
+                resetExtractor(context)
+            }
             val downloader = NewPipe.getDownloader()
             val latency = System.currentTimeMillis() - start
             if (downloader != null) {
@@ -234,9 +244,11 @@ object DiagnosticRunner {
     private fun checkStreamHeadRange(resolved: StreamResolver.Resolved): CheckResult {
         val start = System.currentTimeMillis()
         return try {
+            val headersBuilder = Headers.Builder()
+            resolved.headers.forEach { (k, v) -> headersBuilder.add(k, v) }
             val request = Request.Builder()
                 .url(resolved.url)
-                .headers(Headers.of(resolved.headers))
+                .headers(headersBuilder.build())
                 .header("Range", "bytes=0-1024")
                 .get()
                 .build()
@@ -303,8 +315,8 @@ object DiagnosticRunner {
                 .build()
 
             val mediaItem = MediaItem.Builder()
-                .setUri(PlaybackService.songUri(videoId))
                 .setMediaId(videoId)
+                .setUri(songUri(videoId))
                 .build()
 
             player.addListener(object : Player.Listener {

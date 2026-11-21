@@ -432,7 +432,7 @@ class PlaybackService : MediaSessionService() {
 
         // SimpleCache allows one instance per folder per process, and the service can be recreated
         @Synchronized
-        private fun cache(context: Context): SimpleCache = sharedCache ?: SimpleCache(
+        internal fun cache(context: Context): SimpleCache = sharedCache ?: SimpleCache(
             File(context.cacheDir, "media2"),
             LeastRecentlyUsedCacheEvictor(CACHE_BYTES),
             StandaloneDatabaseProvider(context),

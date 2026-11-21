@@ -284,7 +284,7 @@ fun DeveloperScreen(onBack: () -> Unit) {
                 },
             )
 
-            HorizontalDivider(color = velvetColors.card, thickness = 1.dp)
+            HorizontalDivider(color = velvetColors.rule, thickness = 1.dp)
 
             ActionTile(
                 title = "Re-resolve Current Song & Retry",
@@ -295,7 +295,7 @@ fun DeveloperScreen(onBack: () -> Unit) {
                 },
             )
 
-            HorizontalDivider(color = velvetColors.card, thickness = 1.dp)
+            HorizontalDivider(color = velvetColors.rule, thickness = 1.dp)
 
             ActionTile(
                 title = "Switch Preferred Client",
@@ -306,18 +306,18 @@ fun DeveloperScreen(onBack: () -> Unit) {
                 },
             )
 
-            HorizontalDivider(color = velvetColors.card, thickness = 1.dp)
+            HorizontalDivider(color = velvetColors.rule, thickness = 1.dp)
 
             ActionTile(
                 title = "Reset Extractor",
                 subtitle = "Reinitializes NewPipeExtractor network engine",
                 onClick = {
-                    YouTube.init(context)
+                    DiagnosticRunner.resetExtractor(context)
                     Toast.makeText(context, "Extractor reset", Toast.LENGTH_SHORT).show()
                 },
             )
 
-            HorizontalDivider(color = velvetColors.card, thickness = 1.dp)
+            HorizontalDivider(color = velvetColors.rule, thickness = 1.dp)
 
             Row(
                 Modifier
@@ -401,7 +401,7 @@ fun DeveloperScreen(onBack: () -> Unit) {
                     .height(280.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF101214))
-                    .border(1.dp, velvetColors.card, RoundedCornerShape(8.dp))
+                    .border(1.dp, velvetColors.rule, RoundedCornerShape(8.dp))
                     .verticalScroll(rememberScrollState())
                     .padding(8.dp),
             ) {
@@ -541,7 +541,7 @@ private fun FilterChip(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(if (selected) velvetColors.accent else velvetColors.card)
+            .background(if (selected) velvetColors.accent else velvetColors.raised)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
