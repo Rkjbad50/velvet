@@ -1119,6 +1119,19 @@ private fun PlayerBottomCards(
 }
 
 @Composable
+private fun DockButton(icon: ImageVector, label: String, iconSize: Int = 24, tint: Color = velvetColors.text, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, label, tint = tint, modifier = Modifier.size(iconSize.dp))
+    }
+}
+
+@Composable
 private fun TimeLabel(ms: Long) {
     Text(formatDuration(ms / 1000), style = MaterialTheme.typography.labelSmall, color = velvetColors.muted)
 }
