@@ -291,6 +291,15 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = velvetColors.rule)
 
+            ToggleRow(
+                title = "Pulse wave visualizer",
+                subtitle = "Show beat-synchronized waveform animation in player",
+                checked = data.showPulseWave,
+                onChange = library::setShowPulseWave,
+            )
+
+            HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = velvetColors.rule)
+
             // Multiple choice music listening languages
             var languagesDialogOpen by remember { mutableStateOf(false) }
             val currentLangs = data.musicLanguages.ifEmpty { listOf("Hindi", "English") }

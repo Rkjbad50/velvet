@@ -437,12 +437,13 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     )
             )
 
-            val gap = if (maxHeight < 720.dp) 6.dp else 12.dp
+            val gap = if (maxHeight < 720.dp) 6.dp else 10.dp
+            val bottomPadding = if (maxHeight < 720.dp) 14.dp else 22.dp
             Column(
                 Modifier
                     .fillMaxSize()
                     .systemBarsPadding()
-                    .padding(start = 20.dp, end = 20.dp, bottom = gap),
+                    .padding(start = 20.dp, end = 20.dp, bottom = bottomPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -645,6 +646,18 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     }
                 }
 
+                // Pulse Wave Visualizer (Positioned BETWEEN Cover Art and Song Title)
+                if (settings.showPulseWave) {
+                    Spacer(Modifier.height(gap))
+                    AudioWaveformVisualizer(
+                        isPlaying = isPlaying,
+                        accent = accent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp),
+                    )
+                }
+
                 Spacer(Modifier.height(gap))
 
                 // Track Info & Favorite Row
@@ -659,48 +672,23 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             song.title,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 23.sp,
+                                fontSize = 22.sp,
                             ),
                             color = Color.White,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                song.artist,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 15.sp,
-                                ),
-                                color = Color(0xFFB0B0B0),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = if (openArtist != null) Modifier.clickable(onClick = openArtist) else Modifier,
-                            )
-                            val badgeText = quality?.uppercase()?.let {
-                                if (it.contains("OPUS") || it.contains("160")) "OPUS 161K" else it
-                            } ?: "OPUS 161K"
-                            Spacer(Modifier.width(10.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(accent.copy(alpha = 0.15f))
-                                    .border(1.dp, accent.copy(alpha = 0.85f), RoundedCornerShape(6.dp))
-                                    .clickable { PlayerConnection.setHiRes(!hiRes) }
-                                    .padding(horizontal = 7.dp, vertical = 2.dp),
-                            ) {
-                                Text(
-                                    badgeText,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 0.5.sp,
-                                    ),
-                                    color = accent,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
+                        Text(
+                            song.artist,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 15.sp,
+                            ),
+                            color = Color(0xFFB0B0B0),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = if (openArtist != null) Modifier.clickable(onClick = openArtist) else Modifier,
+                        )
                     }
 
                     // Heart/Favorite inside circular button with glowing theme accent border
@@ -724,15 +712,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
                 Spacer(Modifier.height(gap))
 
-                // Poweramp-style Waveform Audio Visualizer (Fully Theme Accent Colored)
-                AudioWaveformVisualizer(
-                    progress = progress,
-                    isPlaying = isPlaying,
-                    accent = accent,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                )
-
-                // Dynamic Seekbar (Synchronized with Settings: MINIMAL, WIDE, DOT_MATRIX) & Timers
+                // Dynamic Seekbar & Timers (with Plain Text Streaming Resolution Tag in Center)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -753,8 +733,10 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 2.dp, vertical = 1.dp),
+                            .padding(horizontal = 2.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        // Elapsed Time (left)
                         Text(
                             formatDuration((seekPreview?.let { (it * duration).toLong() } ?: position) / 1000),
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -762,7 +744,27 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             ),
                             color = Color(0xFF9E9E9E),
                         )
+
                         Spacer(Modifier.weight(1f))
+
+                        // Streaming resolution tag: plain text, accent color, no outer box/border, between seekbar & controls
+                        val badgeText = quality?.uppercase()?.let {
+                            if (it.contains("OPUS") || it.contains("160")) "OPUS 161K" else it
+                        } ?: "OPUS 161K"
+                        Text(
+                            badgeText,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.5.sp,
+                            ),
+                            color = accent,
+                            modifier = Modifier.clickable { PlayerConnection.setHiRes(!hiRes) },
+                        )
+
+                        Spacer(Modifier.weight(1f))
+
+                        // Duration (right)
                         Text(
                             formatDuration(duration / 1000),
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -805,21 +807,12 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
 @Composable
 private fun AudioWaveformVisualizer(
-    progress: Float,
     isPlaying: Boolean,
     accent: Color,
     modifier: Modifier = Modifier,
 ) {
-    val barCount = 44
-    val baseWave = remember {
-        floatArrayOf(
-            0.20f, 0.35f, 0.55f, 0.45f, 0.75f, 0.65f, 0.95f, 0.80f, 0.50f, 0.35f,
-            0.70f, 0.85f, 0.60f, 0.80f, 0.95f, 0.70f, 0.45f, 0.60f, 0.80f, 1.00f,
-            0.85f, 0.60f, 0.45f, 0.70f, 0.90f, 0.55f, 0.65f, 0.80f, 0.95f, 0.65f,
-            0.50f, 0.75f, 0.90f, 0.60f, 0.40f, 0.65f, 0.80f, 0.60f, 0.45f, 0.50f,
-            0.35f, 0.30f, 0.25f, 0.20f,
-        )
-    }
+    val barCount = 41
+    val centerIdx = 20f
 
     // Poweramp Equalizer Beat Synchronization (~125 BPM cadence: 480ms/beat, 1920ms for 4 beats)
     val beatTransition = rememberInfiniteTransition(label = "powerampBeat")
@@ -837,56 +830,67 @@ private fun AudioWaveformVisualizer(
         remember { mutableFloatStateOf(0f) }
     }
 
-    Canvas(modifier = modifier.fillMaxWidth().height(26.dp)) {
-        val width = size.width
-        val maxHeight = size.height
-        val totalBars = barCount
-        val barSpacing = width / totalBars
-        val barWidth = (barSpacing * 0.58f).coerceAtLeast(2.dp.toPx())
+    // Toned down theme accent color for refined luminous acoustic aesthetic
+    val tonedAccent = remember(accent) { accent.copy(alpha = 0.88f) }
 
-        for (i in 0 until totalBars) {
-            val cx = i * barSpacing + barSpacing / 2f
-            val base = baseWave[i % baseWave.size]
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(38.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Soft warm luminous ambient glow behind center bars
+        Box(
+            modifier = Modifier
+                .width(180.dp)
+                .height(38.dp)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.35f),
+                            accent.copy(alpha = 0.10f),
+                            Color.Transparent,
+                        ),
+                        radius = 240f,
+                    )
+                )
+        )
 
-            // Multi-frequency Poweramp dynamics:
-            // 1. Bass punch on lower frequency bands (0..13)
-            val bassFactor = (1.0f - (i / 14f)).coerceIn(0f, 1f)
-            val bassBounce = if (isPlaying) {
-                val b = kotlin.math.abs(kotlin.math.sin((beatCycle * 0.5).toDouble())).toFloat()
-                b * b * 1.35f
-            } else 0f
+        Canvas(modifier = Modifier.fillMaxWidth().height(38.dp)) {
+            val width = size.width
+            val maxHeight = size.height
+            val totalBars = barCount
+            val barSpacing = width / totalBars
+            val barWidth = 2.2.dp.toPx()
 
-            // 2. Mid harmonic ripple on vocal/melody bands (14..28)
-            val midFactor = (1.0f - kotlin.math.abs((i - 21) / 8f)).coerceIn(0f, 1f)
-            val midBounce = if (isPlaying) {
-                0.5f + 0.5f * kotlin.math.sin((beatCycle * 1.5 + i * 0.35).toDouble()).toFloat()
-            } else 0f
+            for (i in 0 until totalBars) {
+                val cx = i * barSpacing + barSpacing / 2f
+                val normalizedDist = kotlin.math.abs(i - centerIdx) / centerIdx
+                // Symmetrical Gaussian diamond/bell envelope (peak in center, smooth taper to ends)
+                val envelope = kotlin.math.exp(-3.2 * normalizedDist * normalizedDist).toFloat()
 
-            // 3. Crisp treble shimmer on high bands (29..43)
-            val highFactor = ((i - 28) / 15f).coerceIn(0f, 1f)
-            val trebleFlutter = if (isPlaying) {
-                0.35f + 0.65f * kotlin.math.abs(kotlin.math.sin((beatCycle * 3.0 + i * 0.7).toDouble())).toFloat()
-            } else 0f
+                // Beat dynamic bounce: center bass punch & harmonic wave ripple
+                val beatBounce = if (isPlaying) {
+                    val b = kotlin.math.abs(kotlin.math.sin((beatCycle * 1.5 + (i - centerIdx) * 0.28).toDouble())).toFloat()
+                    0.40f + 0.60f * b
+                } else {
+                    0.72f
+                }
 
-            val dynamicMod = if (isPlaying) {
-                0.38f + 0.62f * (bassFactor * bassBounce + midFactor * midBounce + highFactor * trebleFlutter).coerceIn(0.12f, 1.45f)
-            } else {
-                0.45f
+                val barH = (maxHeight * envelope * beatBounce).coerceIn(2.5.dp.toPx(), maxHeight)
+                val top = (maxHeight - barH) / 2f
+
+                // Toned down theme color with center brightness falloff
+                val barAlpha = (0.28f + 0.72f * envelope).coerceIn(0.25f, 1f)
+                val barColor = tonedAccent.copy(alpha = barAlpha)
+
+                drawRoundRect(
+                    color = barColor,
+                    topLeft = Offset(cx - barWidth / 2f, top),
+                    size = Size(barWidth, barH),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                )
             }
-
-            val barH = (maxHeight * base * dynamicMod).coerceIn(3.dp.toPx(), maxHeight)
-            val top = (maxHeight - barH) / 2f
-
-            // Fully colored in theme accent (Played = 1.0f accent, Unplayed = 0.55f accent - zero grey!)
-            val isPlayed = (cx / width) <= progress
-            val barColor = if (isPlayed) accent else accent.copy(alpha = 0.55f)
-
-            drawRoundRect(
-                color = barColor,
-                topLeft = Offset(cx - barWidth / 2f, top),
-                size = Size(barWidth, barH),
-                cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
-            )
         }
     }
 }
