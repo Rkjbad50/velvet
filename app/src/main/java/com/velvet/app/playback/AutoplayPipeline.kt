@@ -827,7 +827,6 @@ class AutoplayPipeline(
             }
         }
 
-        val tasteProfile = tasteProfileProvider?.invoke() ?: TasteProfile()
         val userTaste = userTasteProvider?.invoke() ?: UserTasteProfile()
 
         // 6. Score (multi-term ranking formula with personal taste)
