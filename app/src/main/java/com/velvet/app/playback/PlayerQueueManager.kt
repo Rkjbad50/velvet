@@ -574,8 +574,8 @@ class QueueManager(initialState: QueueState = QueueState()) {
             state: QueueState,
             mode: ShuffleMode = ShuffleMode.STANDARD,
             allowSmartShuffle: Boolean = true,
-            skipNearDuplicates: Boolean = true,
             rng: Random = Random(),
+            skipNearDuplicates: Boolean = true,
         ): QueueState {
             val targetMode = if (mode == ShuffleMode.SMART && !allowSmartShuffle) ShuffleMode.STANDARD else mode
             val currentItem = state.current ?: return state.copy(shuffleMode = targetMode)

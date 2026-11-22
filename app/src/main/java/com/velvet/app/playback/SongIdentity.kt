@@ -489,9 +489,7 @@ object SongIdentity {
                 'व' -> sb.append("v")
                 'श', 'ष', 'स' -> sb.append("s")
                 'ह' -> sb.append("h")
-                'ड़' -> sb.append("d")
-                'ज़' -> sb.append("z")
-                'फ़' -> sb.append("f")
+                '\u093C' -> { /* nukta: ignore */ }
                 else -> sb.append(c)
             }
             i++

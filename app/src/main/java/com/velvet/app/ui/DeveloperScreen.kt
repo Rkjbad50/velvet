@@ -87,6 +87,8 @@ import java.util.Locale
 fun DeveloperScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val library = VelvetApp.library
+    val libraryData by library.data.collectAsStateWithLifecycle()
 
     val lastError by LastErrorTracker.lastError.collectAsStateWithLifecycle()
     val diagState by DiagnosticRunner.state.collectAsStateWithLifecycle()
@@ -412,7 +414,7 @@ fun DeveloperScreen(onBack: () -> Unit) {
                     )
                 }
                 Switch(
-                    checked = data.skipNearDuplicatesInShuffle,
+                    checked = libraryData.skipNearDuplicatesInShuffle,
                     onCheckedChange = { library.setSkipNearDuplicatesInShuffle(it) },
                 )
             }
