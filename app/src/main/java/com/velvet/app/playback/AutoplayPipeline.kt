@@ -484,6 +484,8 @@ class AutoplayPipeline(
     private val libraryTracksProvider: (suspend () -> List<Song>)? = null,
     private val recentCompletedProvider: (suspend () -> List<Song>)? = null,
     private val timeboxMs: Long = 1500L,
+    private val persistedPlayedGroupIdsProvider: (() -> List<String>)? = null,
+    private val tasteProfileProvider: (() -> TasteProfile)? = null,
 ) {
     private val releaseYearCache = BoundedCache<String, Int>(200)
     private val candidatePoolCache = BoundedCache<String, List<CandidatePoolItem>>(50)
@@ -693,11 +695,14 @@ class AutoplayPipeline(
         // 5. Dedupe (history + queueSnapshot + group by SongIdentity)
         val queueKeys = queueSnapshot.map { canonicalKey(it.title, it.artist) }.toSet()
         val queueIds = queueSnapshot.map { it.id }.toSet()
+        val persistedGroups = persistedPlayedGroupIdsProvider?.invoke()?.toSet() ?: emptySet()
+        val tasteProfile = tasteProfileProvider?.invoke() ?: TasteProfile()
 
         val nonDuplicatePool = mutableListOf<CandidatePoolItem>()
         for (item in filteredPool) {
             val candidate = item.song
             val key = canonicalKey(candidate.title, candidate.artist)
+            val groupId = SongIdentity.canonicalGroupId(candidate)
             if (candidate.id == seed.id || key == seedKey || areSameRecording(seed, candidate) || SongIdentity.isStrictMatch(seed, candidate)) {
                 removedDedupe++
                 continue
@@ -707,6 +712,14 @@ class AutoplayPipeline(
                 continue
             }
             if (history.contains(candidate) || history.contains(key, candidate.id)) {
+                removedDedupe++
+                continue
+            }
+            if (groupId in persistedGroups) {
+                removedDedupe++
+                continue
+            }
+            if (groupId in tasteProfile.fatiguedGroupIds) {
                 removedDedupe++
                 continue
             }

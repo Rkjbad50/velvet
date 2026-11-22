@@ -408,6 +408,14 @@ object SongIdentity {
     }
 
     /**
+     * Computes the canonical group ID for a single song based on its normalized comparison key and artist.
+     */
+    fun canonicalGroupId(song: Song): String {
+        val parsed = normalizeTitle(song.title)
+        return "group:${parsed.comparisonKey}|${song.artist.lowercase(Locale.ROOT).take(15)}"
+    }
+
+    /**
      * Selects the highest-quality representative upload inside a duplicate group:
      * 1. If user already played or liked a member, keep that videoId so history stays consistent.
      * 2. Official audio (ATV / ends with '- Topic' / preferredMusicSource) > Official video (OMV) > UGC/Lyrical.

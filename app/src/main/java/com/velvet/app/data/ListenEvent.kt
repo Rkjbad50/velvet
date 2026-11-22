@@ -35,4 +35,5 @@ data class ListenEvent(
     val endReason: ListenEndReason = ListenEndReason.COMPLETED,
     val context: ListenContext = ListenContext.AUTOPLAY,
     val liked: Boolean = false,
+    val addedToPlaylist: Boolean = false,
 )

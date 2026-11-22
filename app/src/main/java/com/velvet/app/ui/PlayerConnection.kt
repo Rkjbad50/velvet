@@ -181,6 +181,54 @@ object PlayerConnection {
         }, ContextCompat.getMainExecutor(context))
     }
 
+    private var trackStartedAt: Long = System.currentTimeMillis()
+    private var lastRecordedEventSongId: String? = null
+
+    fun recordCurrentPlaybackEnd(endReason: com.velvet.app.data.ListenEndReason? = null) {
+        val song = current ?: return
+        if (song.id == lastRecordedEventSongId && endReason == null) return
+        val posMs = controller?.currentPosition ?: savedInitialPositionMs
+        val dur = if (durationMs > 0) durationMs else (song.durationSec.toLong() * 1000L)
+        val pct = if (dur > 0) (posMs.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
+
+        val reason = endReason ?: if (pct >= 0.85f || (dur > 0 && dur - posMs < 5000L)) {
+            com.velvet.app.data.ListenEndReason.COMPLETED
+        } else if (posMs < 30_000L) {
+            com.velvet.app.data.ListenEndReason.SKIP_EARLY
+        } else {
+            com.velvet.app.data.ListenEndReason.SKIP_LATE
+        }
+
+        val ctx = when {
+            isRadioActive -> com.velvet.app.data.ListenContext.AUTOPLAY
+            currentPlaylistId != null -> com.velvet.app.data.ListenContext.PLAYLIST
+            else -> com.velvet.app.data.ListenContext.QUEUE
+        }
+        val isLiked = VelvetApp.library.isLiked(song.id)
+        val songGroupId = com.velvet.app.playback.SongIdentity.canonicalGroupId(song)
+        val parsed = com.velvet.app.playback.SongIdentity.normalizeTitle(song.title)
+        val artists = com.velvet.app.playback.SongIdentity.normalizeArtists(song.artist).toList()
+
+        val event = com.velvet.app.data.ListenEvent(
+            songGroupId = songGroupId,
+            videoId = song.id,
+            artistSet = artists,
+            movie = parsed.movie ?: song.album,
+            year = null,
+            language = null,
+            startedAt = trackStartedAt,
+            playedMs = posMs,
+            durationMs = dur,
+            completionPct = pct,
+            endReason = reason,
+            context = ctx,
+            liked = isLiked,
+        )
+        VelvetApp.library.recordListenEvent(event)
+        lastRecordedEventSongId = song.id
+        trackStartedAt = System.currentTimeMillis()
+    }
+
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) = syncBasicState(player)
         override fun onPlayerError(error: PlaybackException) { this@PlayerConnection.error = error.message }
@@ -188,6 +236,12 @@ object PlayerConnection {
             // When ExoPlayer auto-advances (track finished naturally), pop from our queue
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                val endReason = if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                    com.velvet.app.data.ListenEndReason.REPLAY
+                } else {
+                    com.velvet.app.data.ListenEndReason.COMPLETED
+                }
+                recordCurrentPlaybackEnd(endReason = endReason)
                 queueManager.advance(manual = false)
                 syncQueueState()
                 syncToExoPlayer()
@@ -200,6 +254,8 @@ object PlayerConnection {
     private fun syncBasicState(p: Player) {
         val exoCurrent = p.currentMediaItem?.toSong()
         if (exoCurrent != null && exoCurrent.id != current?.id) {
+            trackStartedAt = System.currentTimeMillis()
+            lastRecordedEventSongId = null
             if (queueManager.current?.id != exoCurrent.id) {
                 if (queueManager.userQueue.firstOrNull()?.song?.id == exoCurrent.id ||
                     queueManager.upNext.firstOrNull()?.song?.id == exoCurrent.id) {
@@ -306,6 +362,9 @@ object PlayerConnection {
         context: PlaybackContext? = null,
     ) {
         if (songs.isEmpty()) return
+        if (current != null) {
+            recordCurrentPlaybackEnd(endReason = null)
+        }
         if (context != null) {
             VelvetApp.library.addContextRecent(context)
         }
@@ -482,6 +541,7 @@ object PlayerConnection {
 
     /** Jump to a specific queue item by qid. */
     fun jumpToQid(qid: String) {
+        recordCurrentPlaybackEnd(endReason = null)
         val targetSong = queueManager.jumpToQid(qid) ?: return
         syncQueueState()
         syncToExoPlayer()
@@ -521,6 +581,7 @@ object PlayerConnection {
     }
 
     fun next() {
+        recordCurrentPlaybackEnd(endReason = null)
         val nextSong = queueManager.advance(manual = true)
         if (nextSong != null) {
             syncQueueState()

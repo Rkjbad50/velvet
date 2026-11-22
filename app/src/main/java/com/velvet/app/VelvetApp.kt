@@ -81,7 +81,11 @@ class VelvetApp : Application(), ImageLoaderFactory {
                     frequentClusters = allUserSongs.groupingBy { com.velvet.app.playback.detectCluster(it) }.eachCount(),
                     frequentMoods = allUserSongs.groupingBy { com.velvet.app.playback.detectMood(it) }.eachCount(),
                 )
-            }
+            },
+            persistedPlayedGroupIdsProvider = { library.data.value.playedGroupIds },
+            tasteProfileProvider = {
+                com.velvet.app.playback.TasteEngine.getOrComputeProfile(library.data.value.listenEvents)
+            },
         )
     }
 
