@@ -239,8 +239,8 @@ private val RETRO_ARTISTS = setOf(
 
 private val BOLLYWOOD_90S_ARTISTS = setOf(
     "kumar sanu", "udit narayan", "alka yagnik", "abhijeet", "sonu nigam",
-    "kavita krishnamurthy", "sadhana sargam", "shaan", "kk", "babul supriyo",
-    "lucky ali", "jatin lalit", "nadeem shravan", "anu malik", "himesh reshammiya",
+    "kavita krishnamurthy", "sadhana sargam", "babul supriyo",
+    "lucky ali", "jatin lalit", "nadeem shravan", "anu malik",
 )
 
 private val ROMANTIC_POP_ARTISTS = setOf(
@@ -378,16 +378,18 @@ fun detectEra(song: Song, releaseYear: Int? = null): SongEra {
         }
     }
     val normArtist = normalizePrimaryArtist(song.artist)
-    if (RETRO_ARTISTS.any { normArtist.contains(it) }) {
+    if (containsTerm(normArtist, RETRO_ARTISTS) || RETRO_ARTISTS.any { normArtist.contains(it) }) {
         return SongEra.VINTAGE_RETRO
     }
-    if (BOLLYWOOD_90S_ARTISTS.any { normArtist.contains(it) }) {
-        return SongEra.EIGHTIES_NINETIES
-    }
-    if (TWO_THOUSANDS_ARTISTS.any { normArtist.contains(it) }) {
+    if (containsTerm(normArtist, TWO_THOUSANDS_ARTISTS) || TWO_THOUSANDS_ARTISTS.any { normArtist.contains(it) }) {
         return SongEra.TWO_THOUSANDS
     }
-    if (ROMANTIC_POP_ARTISTS.any { normArtist.contains(it) } || PUNJABI_ARTISTS.any { normArtist.contains(it) }) {
+    if (containsTerm(normArtist, BOLLYWOOD_90S_ARTISTS) || BOLLYWOOD_90S_ARTISTS.any { normArtist.contains(it) }) {
+        return SongEra.EIGHTIES_NINETIES
+    }
+    if (containsTerm(normArtist, ROMANTIC_POP_ARTISTS) || containsTerm(normArtist, PUNJABI_ARTISTS) ||
+        ROMANTIC_POP_ARTISTS.any { normArtist.contains(it) } || PUNJABI_ARTISTS.any { normArtist.contains(it) }
+    ) {
         return SongEra.MODERN_CONTEMPORARY
     }
     return SongEra.UNKNOWN

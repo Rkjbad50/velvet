@@ -416,18 +416,33 @@ class AutoplayPipelineTest {
     fun testScoring_priority2_tempoMatchBreaksTies() = runBlocking {
         val seed = makeSong("seed_fast", "Saturday Dance Club Beat", "Dance DJ")
         val candFast = makeSong("c_fast", "Friday Night Party Remix", "Pop DJ - Topic", preferred = true)
-        val candSlow = makeSong("c_slow", "Midnight Sad Ballad (Acoustic)", "Pop DJ - Topic", preferred = true)
+        val candMedium = makeSong("c_med", "Everyday Pop Melody", "Pop DJ - Topic", preferred = true)
 
         val pipeline = AutoplayPipeline(
-            sources = listOf(CandidateSource { listOf(candSlow, candFast) }),
+            sources = listOf(CandidateSource { listOf(candMedium, candFast) }),
             history = history,
         )
 
         val next = pipeline.next(seed, n = 2)
         assertEquals(2, next.size)
-        // Fast candidate with matching tempo must rank first ahead of slow candidate
+        // Fast candidate with matching tempo must rank first ahead of medium tempo candidate
         assertEquals("c_fast", next[0].id)
-        assertEquals("c_slow", next[1].id)
+        assertEquals("c_med", next[1].id)
+    }
+
+    @Test
+    fun testScoring_priority2_tempoClashSeverelyPenalized() = runBlocking {
+        val seed = makeSong("seed_fast", "Saturday Dance Club Beat", "Dance DJ")
+        val candSlow = makeSong("c_slow", "Midnight Sad Ballad (Acoustic)", "Slow Singer - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candSlow) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 2)
+        // A slow sad acoustic ballad clashes with fast party dance seed and is eliminated
+        assertEquals(0, next.size)
     }
 
     @Test
