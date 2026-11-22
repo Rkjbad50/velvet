@@ -1,11 +1,11 @@
 package com.velvet.app.unit
 
-import com.velvet.app.data.CandidateSource
 import com.velvet.app.data.ListenContext
 import com.velvet.app.data.ListenEndReason
 import com.velvet.app.data.ListenEvent
 import com.velvet.app.data.Song
 import com.velvet.app.playback.AutoplayPipeline
+import com.velvet.app.playback.CandidateSource
 import com.velvet.app.playback.SeedProfile
 import com.velvet.app.playback.SessionHistory
 import com.velvet.app.playback.SongIdentity
@@ -162,9 +162,7 @@ class TasteProfileTest {
 
         val c1Group = SongIdentity.canonicalGroupId(candidate1)
 
-        val source = object : CandidateSource {
-            override suspend fun candidates(seed: Song): List<Song> = listOf(candidate1, candidate2)
-        }
+        val source = CandidateSource { listOf(candidate1, candidate2) }
 
         val pipeline = AutoplayPipeline(
             sources = listOf(source),
@@ -185,9 +183,7 @@ class TasteProfileTest {
 
         val c1Group = SongIdentity.canonicalGroupId(candidate1)
 
-        val source = object : CandidateSource {
-            override suspend fun candidates(seed: Song): List<Song> = listOf(candidate1, candidate2)
-        }
+        val source = CandidateSource { listOf(candidate1, candidate2) }
 
         val pipeline = AutoplayPipeline(
             sources = listOf(source),
