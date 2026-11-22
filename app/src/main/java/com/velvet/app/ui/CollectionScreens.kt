@@ -265,8 +265,10 @@ fun RecentScreen(onBack: () -> Unit) {
             item { EmptyHint("Your recently played albums, artists and playlists will appear here.") }
         }
         itemsIndexed(recents, key = { _, item -> "${item.type}:${item.id}" }) { _, item ->
+            val playlist = if (item.type == RecentType.LOCAL_PLAYLIST) data.playlists.find { it.id == item.id } else null
             RecentItemRow(
                 item = item,
+                playlist = playlist,
                 onClick = {
                     when (item.type) {
                         RecentType.LOCAL_PLAYLIST -> nav.open(Route.LocalPlaylist(item.id))
@@ -305,10 +307,12 @@ fun RecentScreen(onBack: () -> Unit) {
 @Composable
 fun RecentItemRow(
     item: RecentItem,
+    playlist: Playlist? = null,
     onClick: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val isArtist = item.type == RecentType.ARTIST
+    val isLocalPlaylist = item.type == RecentType.LOCAL_PLAYLIST
     Row(
         Modifier
             .fillMaxWidth()
@@ -329,6 +333,15 @@ fun RecentItemRow(
             ) {
                 Artwork(item.artworkUrl, 48.dp, corner = 24.dp, placeholder = Icons.Default.Person)
             }
+        } else if (isLocalPlaylist && playlist != null) {
+            PlaylistCover(
+                songs = playlist.songs,
+                size = 52.dp,
+                corner = 14.dp,
+                customCover = playlist.customCover,
+                coverMode = playlist.coverMode,
+                coverRef = playlist.coverRef,
+            )
         } else {
             Artwork(item.artworkUrl, 52.dp, corner = 14.dp, placeholder = AppIcons.Album)
         }
@@ -338,19 +351,23 @@ fun RecentItemRow(
                 .padding(horizontal = 14.dp),
         ) {
             Text(
-                item.title,
+                playlist?.name ?: item.title,
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                item.subtitle.ifEmpty {
-                    when (item.type) {
-                        RecentType.LOCAL_PLAYLIST, RecentType.REMOTE_PLAYLIST -> "Playlist"
-                        RecentType.ALBUM -> "Album"
-                        RecentType.ARTIST -> "Artist"
-                        RecentType.GENRE_MIX -> "Mix"
-                        RecentType.UNKNOWN -> ""
+                if (isLocalPlaylist && playlist != null) {
+                    "Playlist • ${songCountLabel(playlist.songs.size)}"
+                } else {
+                    item.subtitle.ifEmpty {
+                        when (item.type) {
+                            RecentType.LOCAL_PLAYLIST, RecentType.REMOTE_PLAYLIST -> "Playlist"
+                            RecentType.ALBUM -> "Album"
+                            RecentType.ARTIST -> "Artist"
+                            RecentType.GENRE_MIX -> "Mix"
+                            RecentType.UNKNOWN -> ""
+                        }
                     }
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -433,12 +450,19 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     var showUndoToast by remember { mutableStateOf(false) }
 
     val songCountStr = songCountLabel(activeEntries.size)
+    val coverUrl = when (playlist.coverMode) {
+        CoverMode.CUSTOM_IMAGE -> playlist.coverRef?.let { "file://${File(File(context.filesDir, "covers"), it).absolutePath}" }
+        CoverMode.PRESET -> playlist.customCover ?: "preset:${playlist.coverRef}"
+        CoverMode.TRACK_ART -> activeSongs.find { it.id == playlist.coverRef }?.thumb ?: activeSongs.firstOrNull()?.thumb
+        CoverMode.AUTO -> activeSongs.firstOrNull()?.thumb
+    } ?: playlist.customCover ?: activeSongs.firstOrNull()?.thumb
+
     val playbackContext = PlaybackContext(
         id = playlist.id,
         type = RecentType.LOCAL_PLAYLIST,
         title = playlist.name,
         subtitle = songCountStr,
-        artworkUrl = activeSongs.firstOrNull()?.thumb ?: playlist.customCover,
+        artworkUrl = coverUrl,
     )
 
     Box(Modifier.fillMaxSize()) {

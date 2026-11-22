@@ -2,6 +2,7 @@ package com.velvet.app.unit
 
 import com.velvet.app.data.BackupCodec
 import com.velvet.app.data.ContextRecentsManager
+import com.velvet.app.data.CoverMode
 import com.velvet.app.data.Library
 import com.velvet.app.data.LibraryData
 import com.velvet.app.data.PlaybackContext
@@ -175,5 +176,38 @@ class ContextRecentsTest {
         val decoded = BackupCodec.decode(encoded)
         assertEquals(1, decoded.contextRecents.size)
         assertEquals("album-123", decoded.contextRecents[0].id)
+    }
+
+    @Test
+    fun testPlaylistCoverAndTitleUpdateInContextRecentsWhenPlaylistIsUpdated() {
+        val dir = tempFolder.newFolder("playlist_recents_sync")
+        val library = Library(dir)
+
+        val plId = library.createPlaylist("Original Playlist")
+        library.addSongToPlaylist(plId, Song("s1", "Song 1", "Artist 1", 180, thumb = "http://thumb1"))
+
+        // Playlist is played, recording into contextRecents
+        library.addContextRecent(
+            PlaybackContext(
+                id = plId,
+                type = RecentType.LOCAL_PLAYLIST,
+                title = "Original Playlist",
+                subtitle = "1 song",
+                artworkUrl = "http://thumb1",
+            )
+        )
+        assertEquals(1, library.data.value.contextRecents.size)
+        assertEquals("Original Playlist", library.data.value.contextRecents[0].title)
+        assertEquals("http://thumb1", library.data.value.contextRecents[0].artworkUrl)
+
+        // User updates playlist cover to PRESET 3 in Library
+        library.setPlaylistCover(plId, CoverMode.PRESET, "3")
+        // User renames playlist in Library
+        library.updatePlaylistDetails(plId, "Renamed Vibes")
+
+        // contextRecents must sync with the updated playlist cover and title
+        val recent = library.data.value.contextRecents.first { it.id == plId }
+        assertEquals("Renamed Vibes", recent.title)
+        assertEquals("preset:3", recent.artworkUrl)
     }
 }

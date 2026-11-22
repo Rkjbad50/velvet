@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.velvet.app.R
 import com.velvet.app.data.ContextRecentsManager
+import com.velvet.app.data.Playlist
 import com.velvet.app.data.RecentItem
 import com.velvet.app.data.RecentType
 import com.velvet.app.data.isPureMusic
@@ -351,8 +352,10 @@ fun HomeScreen(vm: HomeViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     items(filteredRecents.take(10), key = { "hr-${it.type}-${it.id}" }) { item ->
+                        val playlist = if (item.type == RecentType.LOCAL_PLAYLIST) data.playlists.find { it.id == item.id } else null
                         RecentContextTile(
                             item = item,
+                            playlist = playlist,
                             onClick = {
                                 when (item.type) {
                                     RecentType.LOCAL_PLAYLIST -> nav.open(Route.LocalPlaylist(item.id))
@@ -821,9 +824,11 @@ private fun TrendingRail(songs: List<Song>) {
 @Composable
 private fun RecentContextTile(
     item: RecentItem,
+    playlist: Playlist? = null,
     onClick: () -> Unit,
 ) {
     val isArtist = item.type == RecentType.ARTIST
+    val isLocalPlaylist = item.type == RecentType.LOCAL_PLAYLIST
     Column(
         Modifier
             .width(130.dp)
@@ -840,24 +845,37 @@ private fun RecentContextTile(
             ) {
                 Artwork(item.artworkUrl, 114.dp, corner = 57.dp, placeholder = Icons.Default.Person)
             }
+        } else if (isLocalPlaylist && playlist != null) {
+            PlaylistCover(
+                songs = playlist.songs,
+                size = 130.dp,
+                corner = 22.dp,
+                customCover = playlist.customCover,
+                coverMode = playlist.coverMode,
+                coverRef = playlist.coverRef,
+            )
         } else {
             Artwork(item.artworkUrl, 130.dp, corner = 22.dp, placeholder = AppIcons.Album)
         }
         Text(
-            item.title,
+            playlist?.name ?: item.title,
             style = MaterialTheme.typography.titleSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            item.subtitle.ifEmpty {
-                when (item.type) {
-                    RecentType.LOCAL_PLAYLIST, RecentType.REMOTE_PLAYLIST -> "Playlist"
-                    RecentType.ALBUM -> "Album"
-                    RecentType.ARTIST -> "Artist"
-                    RecentType.GENRE_MIX -> "Mix"
-                    RecentType.UNKNOWN -> ""
+            if (isLocalPlaylist && playlist != null) {
+                "Playlist • ${songCountLabel(playlist.songs.size)}"
+            } else {
+                item.subtitle.ifEmpty {
+                    when (item.type) {
+                        RecentType.LOCAL_PLAYLIST, RecentType.REMOTE_PLAYLIST -> "Playlist"
+                        RecentType.ALBUM -> "Album"
+                        RecentType.ARTIST -> "Artist"
+                        RecentType.GENRE_MIX -> "Mix"
+                        RecentType.UNKNOWN -> ""
+                    }
                 }
             },
             style = MaterialTheme.typography.bodySmall,

@@ -408,7 +408,32 @@ class Library(dir: File) {
     }
 
     private fun updatePlaylist(id: String, change: (Playlist) -> Playlist) = update { d ->
-        d.copy(playlists = d.playlists.map { if (it.id == id) change(it).copy(updatedAt = now()) else it })
+        var updatedPlaylist: Playlist? = null
+        val updatedPlaylists = d.playlists.map {
+            if (it.id == id) {
+                val updated = change(it).copy(updatedAt = now())
+                updatedPlaylist = updated
+                updated
+            } else it
+        }
+        val updatedRecents = if (updatedPlaylist != null) {
+            d.contextRecents.map { item ->
+                if (item.type == RecentType.LOCAL_PLAYLIST && item.id == id) {
+                    val p = updatedPlaylist!!
+                    val coverUrl = when (p.coverMode) {
+                        CoverMode.CUSTOM_IMAGE -> p.coverRef?.let { "file://${File(coversDir, it).absolutePath}" }
+                        CoverMode.PRESET -> p.customCover ?: "preset:${p.coverRef}"
+                        CoverMode.TRACK_ART -> p.songs.find { it.id == p.coverRef }?.thumb ?: p.songs.firstOrNull()?.thumb
+                        CoverMode.AUTO -> p.songs.firstOrNull()?.thumb
+                    } ?: p.customCover ?: p.songs.firstOrNull()?.thumb
+                    item.copy(
+                        title = p.name,
+                        artworkUrl = coverUrl,
+                    )
+                } else item
+            }
+        } else d.contextRecents
+        d.copy(playlists = updatedPlaylists, contextRecents = updatedRecents)
     }
 
     // ---------------------------------------------------------------- albums & artists
