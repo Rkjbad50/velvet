@@ -15,9 +15,12 @@ import kotlin.math.roundToInt
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -28,6 +31,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -98,6 +103,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -365,15 +371,56 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                 .pointerInput(Unit) { detectTapGestures { } },
         ) {
             PaperBackground()
+            val accent = velvetColors.accent
             val isDark = velvetColors.surface.luminance() < 0.5f
-            val artColor = rememberArtColor(song.thumb, fallback = velvetColors.accent)
+            val artColor = rememberArtColor(song.thumb, fallback = accent)
+            val isPlaying = PlayerConnection.isPlaying
 
-            // 1. Subtle glowing color-bleeding ambient backdrop derived from cover art
+            // 1. Dynamic Breathing Gradient driven by Cover Art Palette (artColor)
+            val breathTransition = rememberInfiniteTransition(label = "npBreathTransition")
+            val breathPulse by if (isPlaying) {
+                breathTransition.animateFloat(
+                    initialValue = 0.85f,
+                    targetValue = 1.25f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 2800, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse,
+                    ),
+                    label = "artBreathPulse",
+                )
+            } else {
+                remember { mutableFloatStateOf(1.0f) }
+            }
+
+            val breathAlpha = (if (isDark) 0.36f else 0.22f) * breathPulse
+
+            // Background: Pure dark base
             Box(
                 Modifier
                     .fillMaxSize()
                     .background(Color(0xFF0A0C0E))
             )
+
+            // Dynamic top-to-bottom cover art accent gradient with breathing motion
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                artColor.copy(alpha = (breathAlpha * 1.15f).coerceIn(0.12f, 0.55f)),
+                                artColor.copy(alpha = (breathAlpha * 0.65f).coerceIn(0.06f, 0.35f)),
+                                artColor.copy(alpha = (breathAlpha * 0.25f).coerceIn(0.02f, 0.15f)),
+                                Color.Transparent,
+                                Color.Transparent,
+                            ),
+                            startY = 0f,
+                            endY = 1600f,
+                        )
+                    )
+            )
+
+            // Soft radial ambient bloom directly behind artwork area
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -381,11 +428,11 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     .background(
                         Brush.radialGradient(
                             colors = listOf(
-                                artColor.copy(alpha = if (isDark) 0.35f else 0.20f),
-                                artColor.copy(alpha = if (isDark) 0.12f else 0.06f),
+                                artColor.copy(alpha = (breathAlpha * 0.90f).coerceIn(0.10f, 0.45f)),
+                                artColor.copy(alpha = (breathAlpha * 0.35f).coerceIn(0.04f, 0.20f)),
                                 Color.Transparent,
                             ),
-                            radius = 700f,
+                            radius = 700f * breathPulse,
                         )
                     )
             )
@@ -399,15 +446,16 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                // Top Bar
-                Row(
+                // Top Bar - Mathematically Centered
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Left: Close Button
                     Box(
                         modifier = Modifier
+                            .align(Alignment.CenterStart)
                             .size(42.dp)
                             .clip(CircleShape)
                             .background(Color(0x24FFFFFF))
@@ -422,8 +470,9 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                         )
                     }
 
+                    // Center: "Now Playing" + Theme Accent Indicator
                     Column(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
@@ -441,11 +490,13 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 .width(36.dp)
                                 .height(3.dp)
                                 .clip(RoundedCornerShape(2.dp))
-                                .background(Color(0xFF00E676)),
+                                .background(accent),
                         )
                     }
 
+                    // Right: Lyrics & MoreVert Menu
                     Row(
+                        modifier = Modifier.align(Alignment.CenterEnd),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -463,7 +514,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             Icon(
                                 AppIcons.Lyrics,
                                 contentDescription = "Lyrics",
-                                tint = if (showLyrics) Color(0xFF00E676) else Color.White,
+                                tint = if (showLyrics) accent else Color.White,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -487,39 +538,95 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
                 Spacer(Modifier.height(gap))
 
-                // Artwork with floating Share button
+                // Artwork with Fuller & Edge-Blended Style + floating Share button directly below 3-dot icon
                 BoxWithConstraints(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    val artworkSize = minOf(maxWidth - 12.dp, maxHeight, 330.dp)
+                    val artworkSize = minOf(maxWidth - 2.dp, maxHeight, 345.dp)
                     if (artworkSize > 16.dp) {
+                        val artworkCorner = 24.dp
                         Box(
-                            Modifier
+                            modifier = Modifier
                                 .size(artworkSize)
                                 .graphicsLayer {
                                     translationX = artDrag
                                     alpha = 1f - (abs(artDrag) / 900f).coerceAtMost(0.5f)
                                 }
-                                .swipeToSkip({ artDrag }, { artDrag = it })
-                                .shadow(
-                                    elevation = 28.dp,
-                                    shape = RoundedCornerShape(20.dp),
-                                    spotColor = artColor.copy(alpha = 0.55f),
-                                    ambientColor = artColor.copy(alpha = 0.35f),
-                                )
-                                .clip(RoundedCornerShape(20.dp)),
+                                .swipeToSkip({ artDrag }, { artDrag = it }),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Artwork(song.thumb, artworkSize, corner = 20.dp)
+                            // Ambient bloom behind artwork
+                            Box(
+                                Modifier
+                                    .size(artworkSize + 22.dp)
+                                    .background(
+                                        Brush.radialGradient(
+                                            colors = listOf(
+                                                artColor.copy(alpha = 0.45f),
+                                                artColor.copy(alpha = 0.12f),
+                                                Color.Transparent,
+                                            )
+                                        )
+                                    )
+                            )
 
-                            // Floating Share Button in top right of album art
+                            // Main artwork container with soft corner rounding and deep shadow
+                            Box(
+                                Modifier
+                                    .size(artworkSize)
+                                    .shadow(
+                                        elevation = 24.dp,
+                                        shape = RoundedCornerShape(artworkCorner),
+                                        spotColor = artColor.copy(alpha = 0.60f),
+                                        ambientColor = artColor.copy(alpha = 0.35f),
+                                    )
+                                    .clip(RoundedCornerShape(artworkCorner)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Artwork(song.thumb, artworkSize, corner = artworkCorner)
+
+                                // Soft bottom gradient blend into background
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color.Transparent,
+                                                    Color.Transparent,
+                                                    Color(0x330A0C0E),
+                                                    Color(0x880A0C0E),
+                                                    Color(0xDD0A0C0E),
+                                                )
+                                            )
+                                        )
+                                )
+
+                                // Edge blend vignette
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .background(
+                                            Brush.radialGradient(
+                                                colors = listOf(
+                                                    Color.Transparent,
+                                                    Color.Transparent,
+                                                    Color(0x440A0C0E),
+                                                    Color(0x880A0C0E),
+                                                )
+                                            )
+                                        )
+                                )
+                            }
+
+                            // Floating Share Button directly positioned underneath top bar's 3-dot icon
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .padding(12.dp)
+                                    .padding(top = 10.dp, end = 6.dp)
                                     .size(42.dp)
                                     .clip(CircleShape)
                                     .background(Color(0x66000000))
@@ -577,8 +684,8 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0x1F00E676))
-                                    .border(1.dp, Color(0xFF00E676), RoundedCornerShape(6.dp))
+                                    .background(accent.copy(alpha = 0.15f))
+                                    .border(1.dp, accent.copy(alpha = 0.85f), RoundedCornerShape(6.dp))
                                     .clickable { PlayerConnection.setHiRes(!hiRes) }
                                     .padding(horizontal = 7.dp, vertical = 2.dp),
                             ) {
@@ -589,27 +696,27 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 0.5.sp,
                                     ),
-                                    color = Color(0xFF00E676),
+                                    color = accent,
                                     maxLines = 1,
                                 )
                             }
                         }
                     }
 
-                    // Heart/Favorite inside circular button with glowing neon green border
+                    // Heart/Favorite inside circular button with glowing theme accent border
                     Box(
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
                             .background(Color(0xFF14171A))
-                            .border(1.5.dp, Color(0xFF00E676), CircleShape)
+                            .border(1.5.dp, accent, CircleShape)
                             .clickable { VelvetApp.library.toggleLike(song) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = if (liked) "Unlike" else "Like",
-                            tint = Color(0xFF00E676),
+                            tint = accent,
                             modifier = Modifier.size(24.dp),
                         )
                     }
@@ -617,22 +724,29 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
                 Spacer(Modifier.height(gap))
 
-                // Waveform Audio Visualizer
+                // Poweramp-style Waveform Audio Visualizer (Fully Theme Accent Colored)
                 AudioWaveformVisualizer(
                     progress = progress,
-                    isPlaying = PlayerConnection.isPlaying,
+                    isPlaying = isPlaying,
+                    accent = accent,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                 )
 
-                // Modern Sleek Seekbar & Timers
+                // Dynamic Seekbar (Synchronized with Settings: MINIMAL, WIDE, DOT_MATRIX) & Timers
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp),
                 ) {
-                    ModernPlayerSeekBar(
+                    WavySeekBar(
+                        songId = song.id,
                         progress = progress,
-                        durationMs = duration,
+                        isPlaying = isPlaying,
+                        modifier = Modifier.fillMaxWidth().height(28.dp),
+                        playedColor = accent,
+                        playheadColor = accent,
+                        unplayedColor = accent.copy(alpha = 0.22f),
+                        style = settings.seekbarStyle,
                         onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
                         onSeekPreview = { seekPreview = it },
                     )
@@ -661,8 +775,8 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
                 Spacer(Modifier.height(gap))
 
-                // Playback Controls Dock
-                ModernControlDock()
+                // Playback Controls Dock (Clicky, Spring-Responsive & Accent Themed)
+                ModernControlDock(accent = accent)
 
                 Spacer(Modifier.height(gap))
 
@@ -670,6 +784,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                 PlayerBottomCards(
                     ultra = ultra,
                     sleep = sleep,
+                    accent = accent,
                     onUltraToggle = { VelvetApp.library.updateEq { it.copy(ultra = !it.ultra) } },
                     onQueue = { showQueue = true },
                     onSleep = { showSleep = true },
@@ -692,6 +807,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 private fun AudioWaveformVisualizer(
     progress: Float,
     isPlaying: Boolean,
+    accent: Color,
     modifier: Modifier = Modifier,
 ) {
     val barCount = 44
@@ -705,15 +821,17 @@ private fun AudioWaveformVisualizer(
         )
     }
 
-    val transition = rememberInfiniteTransition(label = "waveformAnim")
-    val phase by if (isPlaying) {
-        transition.animateFloat(
+    // Poweramp Equalizer Beat Synchronization (~125 BPM cadence: 480ms/beat, 1920ms for 4 beats)
+    val beatTransition = rememberInfiniteTransition(label = "powerampBeat")
+    val beatCycle by if (isPlaying) {
+        beatTransition.animateFloat(
             initialValue = 0f,
-            targetValue = (2 * Math.PI).toFloat(),
+            targetValue = (8 * Math.PI).toFloat(),
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1500, easing = LinearEasing),
+                animation = tween(durationMillis = 1920, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
             ),
-            label = "wavePhase",
+            label = "beatCycle",
         )
     } else {
         remember { mutableFloatStateOf(0f) }
@@ -724,24 +842,47 @@ private fun AudioWaveformVisualizer(
         val maxHeight = size.height
         val totalBars = barCount
         val barSpacing = width / totalBars
-        val barWidth = (barSpacing * 0.55f).coerceAtLeast(2.dp.toPx())
+        val barWidth = (barSpacing * 0.58f).coerceAtLeast(2.dp.toPx())
 
         for (i in 0 until totalBars) {
             val cx = i * barSpacing + barSpacing / 2f
             val base = baseWave[i % baseWave.size]
-            val dynamic = if (isPlaying) {
-                0.60f + 0.40f * kotlin.math.sin(phase + i * 0.42f).toFloat()
+
+            // Multi-frequency Poweramp dynamics:
+            // 1. Bass punch on lower frequency bands (0..13)
+            val bassFactor = (1.0f - (i / 14f)).coerceIn(0f, 1f)
+            val bassBounce = if (isPlaying) {
+                val b = kotlin.math.abs(kotlin.math.sin((beatCycle * 0.5).toDouble())).toFloat()
+                b * b * 1.35f
+            } else 0f
+
+            // 2. Mid harmonic ripple on vocal/melody bands (14..28)
+            val midFactor = (1.0f - kotlin.math.abs((i - 21) / 8f)).coerceIn(0f, 1f)
+            val midBounce = if (isPlaying) {
+                0.5f + 0.5f * kotlin.math.sin((beatCycle * 1.5 + i * 0.35).toDouble()).toFloat()
+            } else 0f
+
+            // 3. Crisp treble shimmer on high bands (29..43)
+            val highFactor = ((i - 28) / 15f).coerceIn(0f, 1f)
+            val trebleFlutter = if (isPlaying) {
+                0.35f + 0.65f * kotlin.math.abs(kotlin.math.sin((beatCycle * 3.0 + i * 0.7).toDouble())).toFloat()
+            } else 0f
+
+            val dynamicMod = if (isPlaying) {
+                0.38f + 0.62f * (bassFactor * bassBounce + midFactor * midBounce + highFactor * trebleFlutter).coerceIn(0.12f, 1.45f)
             } else {
-                0.75f
+                0.45f
             }
-            val barH = (maxHeight * base * dynamic).coerceIn(3.dp.toPx(), maxHeight)
+
+            val barH = (maxHeight * base * dynamicMod).coerceIn(3.dp.toPx(), maxHeight)
             val top = (maxHeight - barH) / 2f
 
+            // Fully colored in theme accent (Played = 1.0f accent, Unplayed = 0.55f accent - zero grey!)
             val isPlayed = (cx / width) <= progress
-            val color = if (isPlayed) Color(0xFF00E676) else Color(0x38FFFFFF)
+            val barColor = if (isPlayed) accent else accent.copy(alpha = 0.55f)
 
             drawRoundRect(
-                color = color,
+                color = barColor,
                 topLeft = Offset(cx - barWidth / 2f, top),
                 size = Size(barWidth, barH),
                 cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
@@ -751,99 +892,9 @@ private fun AudioWaveformVisualizer(
 }
 
 @Composable
-private fun ModernPlayerSeekBar(
-    progress: Float,
-    durationMs: Long,
-    onSeek: (Float) -> Unit,
-    onSeekPreview: (Float?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var dragProgress by remember { mutableStateOf<Float?>(null) }
-    val displayProgress = (dragProgress ?: progress).coerceIn(0f, 1f)
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(26.dp)
-            .pointerInput(durationMs) {
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        val f = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                        dragProgress = f
-                        onSeekPreview(f)
-                    },
-                    onDragEnd = {
-                        dragProgress?.let { onSeek(it) }
-                        dragProgress = null
-                        onSeekPreview(null)
-                    },
-                    onDragCancel = {
-                        dragProgress = null
-                        onSeekPreview(null)
-                    },
-                ) { change, _ ->
-                    change.consume()
-                    val f = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
-                    dragProgress = f
-                    onSeekPreview(f)
-                }
-            }
-            .pointerInput(durationMs) {
-                detectTapGestures { offset ->
-                    val f = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                    onSeek(f)
-                }
-            },
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Canvas(modifier = Modifier.fillMaxWidth().height(16.dp)) {
-            val trackY = size.height / 2f
-            val trackHeight = 3.5.dp.toPx()
-            val thumbRadius = 6.dp.toPx()
-            val glowRadius = 10.dp.toPx()
-
-            // Inactive track
-            drawLine(
-                color = Color(0x33FFFFFF),
-                start = Offset(0f, trackY),
-                end = Offset(size.width, trackY),
-                strokeWidth = trackHeight,
-                cap = StrokeCap.Round,
-            )
-
-            val activeEnd = size.width * displayProgress
-
-            // Active track
-            if (activeEnd > 0f) {
-                drawLine(
-                    color = Color(0xFF00E676),
-                    start = Offset(0f, trackY),
-                    end = Offset(activeEnd, trackY),
-                    strokeWidth = trackHeight,
-                    cap = StrokeCap.Round,
-                )
-            }
-
-            // Glow around thumb
-            drawCircle(
-                color = Color(0x4400E676),
-                radius = glowRadius,
-                center = Offset(activeEnd, trackY),
-            )
-
-            // Thumb
-            drawCircle(
-                color = Color(0xFF00E676),
-                radius = thumbRadius,
-                center = Offset(activeEnd, trackY),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModernControlDock() {
+private fun ModernControlDock(accent: Color) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -858,7 +909,10 @@ private fun ModernControlDock() {
                 .clip(CircleShape)
                 .background(Color(0xFF14171A))
                 .border(1.dp, Color(0x24FFFFFF), CircleShape)
-                .clickable { PlayerConnection.cycleShuffle(context) },
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    PlayerConnection.cycleShuffle(context)
+                },
             contentAlignment = Alignment.Center,
         ) {
             when (shuffleMode) {
@@ -874,7 +928,7 @@ private fun ModernControlDock() {
                     Icon(
                         AppIcons.Shuffle,
                         contentDescription = "Shuffle on",
-                        tint = Color(0xFF00E676),
+                        tint = accent,
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -883,7 +937,7 @@ private fun ModernControlDock() {
                         Icon(
                             AppIcons.Shuffle,
                             contentDescription = "Smart Shuffle on",
-                            tint = Color(0xFF00E676),
+                            tint = accent,
                             modifier = Modifier.size(22.dp),
                         )
                         Box(
@@ -891,7 +945,7 @@ private fun ModernControlDock() {
                                 .align(Alignment.TopEnd)
                                 .offset(x = 4.dp, y = (-4).dp)
                                 .size(9.dp)
-                                .background(Color(0xFF00E676), CircleShape),
+                                .background(accent, CircleShape),
                         )
                     }
                 }
@@ -902,7 +956,10 @@ private fun ModernControlDock() {
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .clickable(onClick = PlayerConnection::previous),
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    PlayerConnection.previous()
+                },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -913,31 +970,51 @@ private fun ModernControlDock() {
             )
         }
 
+        // Tactile Springy & Clicky Play/Pause Button
+        val playPauseInteractionSource = remember { MutableInteractionSource() }
+        val isPressed by playPauseInteractionSource.collectIsPressedAsState()
+        val playPauseScale by animateFloatAsState(
+            targetValue = if (isPressed) 0.86f else 1.0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow,
+            ),
+            label = "playPauseScale",
+        )
+        val playPauseIconColor = if (accent.luminance() > 0.55f) Color(0xFF09140D) else Color.White
+
         Box(
             modifier = Modifier
+                .scale(playPauseScale)
                 .size(68.dp)
                 .shadow(
-                    elevation = 16.dp,
+                    elevation = if (isPressed) 8.dp else 18.dp,
                     shape = CircleShape,
-                    spotColor = Color(0xFF00E676),
-                    ambientColor = Color(0xFF00E676),
+                    spotColor = accent.copy(alpha = 0.65f),
+                    ambientColor = accent.copy(alpha = 0.45f),
                 )
                 .clip(CircleShape)
-                .background(Color(0xFF00E676))
-                .clickable(onClick = PlayerConnection::togglePlay),
+                .background(accent)
+                .clickable(
+                    interactionSource = playPauseInteractionSource,
+                    indication = null,
+                ) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    PlayerConnection.togglePlay()
+                },
             contentAlignment = Alignment.Center,
         ) {
             if (PlayerConnection.isBuffering) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(28.dp),
-                    color = Color(0xFF09140D),
+                    color = playPauseIconColor,
                     strokeWidth = 3.dp,
                 )
             } else {
                 Icon(
                     if (PlayerConnection.isPlaying) AppIcons.Pause else AppIcons.Play,
                     contentDescription = if (PlayerConnection.isPlaying) "Pause" else "Play",
-                    tint = Color(0xFF09140D),
+                    tint = playPauseIconColor,
                     modifier = Modifier.size(32.dp),
                 )
             }
@@ -947,7 +1024,10 @@ private fun ModernControlDock() {
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .clickable(onClick = PlayerConnection::next),
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    PlayerConnection.next()
+                },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -965,13 +1045,16 @@ private fun ModernControlDock() {
                 .clip(CircleShape)
                 .background(Color(0xFF14171A))
                 .border(1.dp, Color(0x24FFFFFF), CircleShape)
-                .clickable(onClick = PlayerConnection::cycleRepeat),
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    PlayerConnection.cycleRepeat()
+                },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 if (repeatMode == Player.REPEAT_MODE_ONE) AppIcons.RepeatOne else AppIcons.Repeat,
                 contentDescription = "Repeat",
-                tint = if (repeatMode == Player.REPEAT_MODE_OFF) Color(0xFF757575) else Color(0xFF00E676),
+                tint = if (repeatMode == Player.REPEAT_MODE_OFF) Color(0xFF757575) else accent,
                 modifier = Modifier.size(22.dp),
             )
         }
@@ -982,6 +1065,7 @@ private fun ModernControlDock() {
 private fun PlayerBottomCards(
     ultra: Boolean,
     sleep: SleepTimer.State,
+    accent: Color,
     onUltraToggle: () -> Unit,
     onQueue: () -> Unit,
     onSleep: () -> Unit,
@@ -1003,8 +1087,8 @@ private fun PlayerBottomCards(
                 .then(
                     if (ultra) {
                         Modifier
-                            .background(Brush.verticalGradient(listOf(Color(0x3300E676), Color(0x1000E676))))
-                            .border(1.5.dp, Color(0xFF00E676), RoundedCornerShape(16.dp))
+                            .background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.22f), accent.copy(alpha = 0.08f))))
+                            .border(1.5.dp, accent, RoundedCornerShape(16.dp))
                     } else {
                         Modifier
                             .background(Color(0xFF14171A))
@@ -1022,7 +1106,7 @@ private fun PlayerBottomCards(
                 Icon(
                     AppIcons.VolumeUp,
                     contentDescription = "ULT Bass",
-                    tint = if (ultra) Color(0xFF00E676) else Color(0xFF9E9E9E),
+                    tint = if (ultra) accent else Color(0xFF9E9E9E),
                     modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.height(4.dp))
@@ -1080,8 +1164,8 @@ private fun PlayerBottomCards(
                 .then(
                     if (sleepActive) {
                         Modifier
-                            .background(Brush.verticalGradient(listOf(Color(0x3300E676), Color(0x1000E676))))
-                            .border(1.5.dp, Color(0xFF00E676), RoundedCornerShape(16.dp))
+                            .background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.22f), accent.copy(alpha = 0.08f))))
+                            .border(1.5.dp, accent, RoundedCornerShape(16.dp))
                     } else {
                         Modifier
                             .background(Color(0xFF14171A))
@@ -1099,7 +1183,7 @@ private fun PlayerBottomCards(
                 Icon(
                     AppIcons.Timer,
                     contentDescription = "Sleep Timer",
-                    tint = if (sleepActive) Color(0xFF00E676) else Color(0xFF9E9E9E),
+                    tint = if (sleepActive) accent else Color(0xFF9E9E9E),
                     modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.height(4.dp))
