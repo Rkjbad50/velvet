@@ -10,6 +10,8 @@ import com.velvet.app.data.Downloads
 import com.velvet.app.data.Library
 import com.velvet.app.data.StreamResolver
 import com.velvet.app.data.YtDownloader
+import com.velvet.app.data.isOriginalMusicAudio
+import com.velvet.app.data.isPureMusic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
