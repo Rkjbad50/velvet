@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -731,7 +732,7 @@ private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
             .fillMaxWidth()
             .combinedClickable(
                 onClick = {
-                    if (isCurrent) nav.open(Route.NowPlaying)
+                    if (isCurrent) nav.nowPlayingOpen = true
                     else PlayerConnection.play(queue.take(50), queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0))
                 },
                 onLongClick = { openMenu(SongMenuRequest(song)) },
