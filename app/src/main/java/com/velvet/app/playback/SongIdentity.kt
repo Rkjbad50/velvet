@@ -19,7 +19,7 @@ object SongIdentity {
     private val VERSION_TAG_REGEX = Regex(
         """\b(remix|remixed|dj remix|club mix|slowed|reverb|lo-?fi|sped up|speed up|speedup|nightcore|""" +
             """acoustic|unplugged|live|cover|instrumental|karaoke|mashup|remastered|remaster|reprise|""" +
-            """male version|female version|sad version|female|male|sad)\b""",
+            """jhankar(?: beat)?|encore|female version|male version|sad version|sad)\b""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -43,6 +43,11 @@ object SongIdentity {
     private val FEAT_REGEX = Regex(
         """(?:\(|\[|\b)(?:feat\.?|ft\.?|with)\s+([^)"'\]]+)(?:\)|\]|\b)""",
         RegexOption.IGNORE_CASE,
+    )
+
+    val RECORD_LABELS = setOf(
+        "t-series", "tseries", "zee music company", "zee music", "sony music india", "sony music",
+        "yrf", "tips official", "tips", "speed records", "saregama", "shemaroo", "venus", "eros now"
     )
 
     data class ParsedTitle(
@@ -83,6 +88,8 @@ object SongIdentity {
                 tag.contains("mashup") -> "mashup"
                 tag.contains("remaster") -> "remastered"
                 tag.contains("reprise") -> "reprise"
+                tag.contains("jhankar") -> "jhankar"
+                tag.contains("encore") -> "encore"
                 tag.contains("female") -> "female version"
                 tag.contains("male") -> "male version"
                 tag.contains("sad") -> "sad version"
@@ -108,40 +115,79 @@ object SongIdentity {
             text = text.replace(featMatch.value, " ")
         }
 
-        // 4. Strip upload noise brackets & square brackets
+        // 4. Pipe segments: "Title | Movie | Artist"
+        val pipeParts = text.split("|")
+        if (pipeParts.size > 1) {
+            text = pipeParts[0].trim()
+            for (i in 1 until pipeParts.size) {
+                val seg = pipeParts[i].trim()
+                if (seg.isBlank()) continue
+                val segLow = seg.lowercase(Locale.ROOT)
+                if (RECORD_LABELS.any { segLow.contains(it) } || segLow.contains("jukebox")) continue
+                if (movie == null && !segLow.contains("song") && !segLow.contains("video") && !segLow.contains("audio")) {
+                    movie = seg
+                } else {
+                    extraArtists.add(segLow)
+                }
+            }
+        }
+
+        // 5. Dash segments: "Title - Movie" or "Title - Audio/Video/Lyrical"
+        val dashParts = text.split(Regex("""\s+-\s+"""))
+        if (dashParts.size > 1) {
+            text = dashParts[0].trim()
+            for (i in 1 until dashParts.size) {
+                val seg = dashParts[i].trim()
+                val segLow = seg.lowercase(Locale.ROOT)
+                if (segLow.contains("audio") || segLow.contains("video") || segLow.contains("lyrical") || segLow.contains("track") || segLow.contains("song")) {
+                    continue // pure upload label noise
+                }
+                if (!VERSION_TAG_REGEX.containsMatchIn(seg)) {
+                    if (movie == null) movie = seg
+                    else extraArtists.add(segLow)
+                }
+            }
+        }
+
+        // 6. Parenthesized movie/film at end: "Title (Movie)"
+        val movieParen = Regex("""\(([^)]+)\)$""").find(text)
+        if (movie == null && movieParen != null) {
+            val pot = movieParen.groupValues[1].trim()
+            val potLow = pot.lowercase(Locale.ROOT)
+            if (!potLow.contains("video") && !potLow.contains("audio") && !potLow.contains("version") && !VERSION_TAG_REGEX.containsMatchIn(pot)) {
+                movie = pot
+                text = text.replace(movieParen.value, " ")
+            }
+        }
+
+        // 7. Strip noise brackets
         text = NOISE_BRACKETS_REGEX.replace(text, " ")
         text = NOISE_SQUARE_REGEX.replace(text, " ")
 
-        // 5. Split noise after pipes or common upload tails
-        text = text.split("|").firstOrNull() ?: text
-        text = text.split(" - Topic").firstOrNull() ?: text
-        text = text.split("- Topic").firstOrNull() ?: text
+        // 8. Transliterate Devanagari FIRST before stripping marks
+        val transliterated = transliterateDevanagariToLatin(text)
 
-        // 6. Strip unbracketed upload noise phrases
+        // 9. Strip upload phrases
+        var lower = transliterated.lowercase(Locale.ROOT)
         val uploadPhrases = listOf(
-            "official video", "official audio", "full video song", "full video",
-            "full song", "video song", "audio song", "lyrical song", "lyric video",
-            "vevo", "t-series", "zee music company", "sony music india", "yrf",
-            "tips official", "speed records", "jukebox", "full album",
+            "official video", "official audio", "lyric video", "lyrical video", "audio song",
+            "video song", "full video", "full audio", "full song", "lyrical song", "original track",
+            "jukebox", "full track", "audio track", "video", "audio", "lyrical", "song", "t-series", "vevo"
         )
-        var lower = text.lowercase(Locale.ROOT)
         for (phrase in uploadPhrases) {
-            lower = lower.replace(phrase, " ")
+            lower = lower.replace(Regex("""\b$phrase\b""", RegexOption.IGNORE_CASE), " ")
         }
 
-        // 7. Unicode NFKD & diacritics stripping
         val nfkd = Normalizer.normalize(lower, Normalizer.Form.NFKD)
         val stripped = nfkd.replace(Regex("\\p{M}"), "")
         val cleanLetters = stripped.replace(Regex("""[^\p{L}0-9\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
 
-        // 8. Generate comparison key (Devanagari transliteration + Latin Hindi collapsing)
-        val latinized = transliterateDevanagariToLatin(cleanLetters)
-        val comparisonKey = collapseHindiLatinVariants(latinized)
+        val comparisonKey = collapseHindiLatinVariants(cleanLetters)
 
         return ParsedTitle(
             cleanTitle = cleanLetters,
             comparisonKey = comparisonKey,
-            movie = movie?.let { normalizePrimaryText(it) },
+            movie = movie?.trim()?.takeIf { it.isNotBlank() },
             extraArtists = extraArtists,
             versionTags = versionTags,
         )
@@ -155,10 +201,11 @@ object SongIdentity {
         if (raw.isBlank()) return emptySet()
         val tokens = raw.split(Regex(""",|&|/|\bfeat\.?\b|\bft\.?\b|\bwith\b|\band\b|\bx\b""", RegexOption.IGNORE_CASE))
         val result = mutableSetOf<String>()
-        val ignored = setOf("various artists", "various", "unknown", "null", "va", "unknown artist", "artist")
+        val ignored = setOf("various artists", "various", "unknown", "null", "va", "unknown artist", "artist") + RECORD_LABELS
 
         for (token in tokens) {
-            val nfkd = Normalizer.normalize(token.lowercase(Locale.ROOT), Normalizer.Form.NFKD)
+            val transliterated = transliterateDevanagariToLatin(token)
+            val nfkd = Normalizer.normalize(transliterated.lowercase(Locale.ROOT), Normalizer.Form.NFKD)
             val stripped = nfkd.replace(Regex("\\p{M}"), "")
             var clean = stripped
                 .replace(" - topic", "")
@@ -172,7 +219,7 @@ object SongIdentity {
                 .trim()
 
             // Transliterate Devanagari artist names to Latin for consistent matching
-            clean = collapseHindiLatinVariants(transliterateDevanagariToLatin(clean))
+            clean = collapseHindiLatinVariants(clean)
 
             if (clean.isNotBlank() && clean !in ignored) {
                 result.add(clean)
@@ -191,10 +238,23 @@ object SongIdentity {
         val parsedA = normalizeTitle(a.title)
         val parsedB = normalizeTitle(b.title)
 
-        // 2. Semantic Version Tags must be identical (remix is NOT same as original)
-        if (parsedA.versionTags != parsedB.versionTags) {
+        // 2. Semantic Version Tags
+        val isMaleA = parsedA.versionTags.contains("male version")
+        val isFemaleA = parsedA.versionTags.contains("female version")
+        val isMaleB = parsedB.versionTags.contains("male version")
+        val isFemaleB = parsedB.versionTags.contains("female version")
+        if ((isMaleA && isFemaleB) || (isFemaleA && isMaleB)) return 0.0
+
+        val nonGenderA = parsedA.versionTags.filter { it != "male version" && it != "female version" }.toSet()
+        val nonGenderB = parsedB.versionTags.filter { it != "male version" && it != "female version" }.toSet()
+        if (nonGenderA != nonGenderB) {
             return 0.0
         }
+
+        // Distinct numbers in title (e.g. Track 1 vs Track 2, Part 1 vs Part 2)
+        val numsA = Regex("""\b\d+\b""").findAll(parsedA.cleanTitle).map { it.value }.joinToString(" ")
+        val numsB = Regex("""\b\d+\b""").findAll(parsedB.cleanTitle).map { it.value }.joinToString(" ")
+        if (numsA.isNotEmpty() && numsB.isNotEmpty() && numsA != numsB) return 0.0
 
         // 3. Duration Closeness Check
         val dA = a.durationSec
@@ -230,11 +290,24 @@ object SongIdentity {
 
         val artistScore: Double
         if (artistsA.isNotEmpty() && artistsB.isNotEmpty()) {
-            val intersection = artistsA.intersect(artistsB)
-            val union = artistsA.union(artistsB)
-            val jaccard = intersection.size.toDouble() / union.size.toDouble()
-            // If at least one primary/featured singer matches, give strong weight
-            artistScore = if (intersection.isNotEmpty()) max(jaccard, 0.75) else jaccard
+            var inter = 0
+            for (art in artistsA) {
+                for (brt in artistsB) {
+                    if (art == brt || art.contains(brt) || brt.contains(art)) {
+                        inter++
+                        break
+                    }
+                }
+            }
+            val union = artistsA.size + artistsB.size - inter
+            val jaccard = if (union > 0) inter.toDouble() / union.toDouble() else 0.0
+            artistScore = if (inter > 0) {
+                max(jaccard, 0.75)
+            } else if (titleScore >= 0.95 && durationScore >= 0.95) {
+                0.20
+            } else {
+                0.0
+            }
         } else {
             // One or both sides missing reliable artist (channel name / Various Artists)
             artistScore = if (titleScore >= 0.85 && durationScore >= 0.8) 0.80 else 0.50
@@ -242,10 +315,12 @@ object SongIdentity {
 
         // 6. Movie / Album Bonus or Penalty
         var movieBonus = 0.0
-        val movieA = parsedA.movie ?: a.album?.let { normalizePrimaryText(it) }
-        val movieB = parsedB.movie ?: b.album?.let { normalizePrimaryText(it) }
+        val movieA = parsedA.movie ?: a.album
+        val movieB = parsedB.movie ?: b.album
         if (movieA != null && movieB != null) {
-            if (movieA == movieB || movieA.contains(movieB) || movieB.contains(movieA)) {
+            val ma = normalizePrimaryText(movieA)
+            val mb = normalizePrimaryText(movieB)
+            if (ma == mb || ma.contains(mb) || mb.contains(ma)) {
                 movieBonus = 0.10
             } else if (titleScore < 0.90) {
                 // Different movies with non-identical titles
@@ -376,13 +451,15 @@ object SongIdentity {
         if (tokensA.isEmpty() || tokensB.isEmpty()) return 0.0
 
         val common = tokensA.intersect(tokensB)
+        val isSubset = common.size == minOf(tokensA.size, tokensB.size)
         val tokenRatio = (2.0 * common.size) / (tokensA.size + tokensB.size)
+        val effectiveTokenRatio = if (isSubset && common.isNotEmpty()) maxOf(tokenRatio, 0.90) else tokenRatio
         if (tokensA == tokensB) return 1.0
 
         val maxLen = max(s1.length, s2.length)
         val levSim = if (maxLen == 0) 1.0 else 1.0 - (levenshtein(s1, s2).toDouble() / maxLen)
 
-        return (0.60 * tokenRatio) + (0.40 * levSim)
+        return (0.60 * effectiveTokenRatio) + (0.40 * levSim)
     }
 
     private fun levenshtein(s1: String, s2: String): Int {
