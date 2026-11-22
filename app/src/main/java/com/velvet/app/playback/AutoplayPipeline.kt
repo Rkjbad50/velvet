@@ -6,6 +6,61 @@ import com.velvet.app.diagnostics.DiagnosticsLogger
 import java.text.Normalizer
 import java.util.ArrayDeque
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Candidate generator source classifications (R2).
+ */
+enum class CandidateGeneratorType {
+    G1_RADIO,
+    G2_SAME_ALBUM_OR_MOVIE,
+    G3_PRIMARY_ARTIST,
+    G4_COLLABORATORS,
+    G5_ERA_LANGUAGE,
+    G6_OWNER_LIBRARY,
+    G7_SESSION_MOMENTUM
+}
+
+/**
+ * Candidate tagged with its origin generator sources and rank positions (R2).
+ */
+data class CandidatePoolItem(
+    val song: Song,
+    val sources: MutableSet<CandidateGeneratorType> = mutableSetOf(),
+    val sourceRanks: MutableMap<CandidateGeneratorType, Int> = mutableMapOf(),
+)
+
+/**
+ * Multi-song seed profile representing current song, recent listening history,
+ * and context (playlist or album) to prevent mood derailment (R2).
+ */
+data class SeedProfile(
+    val current: Song,
+    val recentSongs: List<Song> = emptyList(),
+    val contextName: String? = null,
+) {
+    fun artistWeights(): Map<String, Double> {
+        val map = mutableMapOf<String, Double>()
+        fun addArtists(song: Song, weight: Double) {
+            val artists = SongIdentity.normalizeArtists(song.artist) + SongIdentity.normalizeTitle(song.title).extraArtists
+            for (art in artists) {
+                map[art] = (map[art] ?: 0.0) + weight
+            }
+        }
+        addArtists(current, 1.0)
+        val decays = listOf(0.7, 0.5, 0.35, 0.25)
+        recentSongs.take(4).forEachIndexed { i, s ->
+            addArtists(s, decays[i])
+        }
+        return map
+    }
+
+    val primaryMovie: String?
+        get() = SongIdentity.normalizeTitle(current.title).movie ?: current.album ?: contextName
+}
 
 /**
  * Interface for fetching raw candidate songs for autoplay.
@@ -424,8 +479,154 @@ class AutoplayPipeline(
     private val releaseYearProvider: (suspend (String) -> Int?)? = null,
     private val viewCountProvider: ((String) -> Long?)? = null,
     private val userTasteProvider: (() -> UserTasteProfile)? = null,
+    private val albumTracksProvider: (suspend (String) -> List<Song>)? = null,
+    private val artistTracksProvider: (suspend (String) -> List<Song>)? = null,
+    private val libraryTracksProvider: (suspend () -> List<Song>)? = null,
+    private val recentCompletedProvider: (suspend () -> List<Song>)? = null,
+    private val timeboxMs: Long = 1500L,
 ) {
     private val releaseYearCache = BoundedCache<String, Int>(200)
+    private val candidatePoolCache = BoundedCache<String, List<CandidatePoolItem>>(50)
+
+    fun getCachedPool(seedId: String): List<CandidatePoolItem>? = candidatePoolCache[seedId]
+
+    /**
+     * Multi-source candidate pool generator (G1..G7) executed in parallel with a 1500ms timebox.
+     * Caches pool per seed for the session and merges source tags and rank positions.
+     */
+    suspend fun fetchCandidatePool(seedProfile: SeedProfile): List<CandidatePoolItem> = coroutineScope {
+        val seed = seedProfile.current
+        val cached = candidatePoolCache[seed.id]
+        if (cached != null) return@coroutineScope cached
+
+        val parsedSeed = SongIdentity.normalizeTitle(seed.title)
+        val primaryArtist = normalizePrimaryArtist(seed.artist)
+        val movieOrAlbum = parsedSeed.movie ?: seed.album ?: seedProfile.contextName
+
+        // G1: Primary Radio / Watch-Next
+        val g1Deferred = async(Dispatchers.IO) {
+            withTimeoutOrNull(timeboxMs) {
+                runCatching {
+                    val list = mutableListOf<Song>()
+                    for (source in sources) {
+                        list.addAll(source.candidates(seed))
+                    }
+                    list
+                }.getOrDefault(emptyList())
+            } ?: emptyList()
+        }
+
+        // G2: Same Album / Movie
+        val g2Deferred = async(Dispatchers.IO) {
+            if (!movieOrAlbum.isNullOrBlank()) {
+                withTimeoutOrNull(timeboxMs) {
+                    runCatching {
+                        albumTracksProvider?.invoke(movieOrAlbum) ?: emptyList()
+                    }.getOrDefault(emptyList())
+                } ?: emptyList()
+            } else emptyList()
+        }
+
+        // G3: Same Primary Artist
+        val g3Deferred = async(Dispatchers.IO) {
+            if (primaryArtist.isNotBlank()) {
+                withTimeoutOrNull(timeboxMs) {
+                    runCatching {
+                        artistTracksProvider?.invoke(primaryArtist) ?: emptyList()
+                    }.getOrDefault(emptyList())
+                } ?: emptyList()
+            } else emptyList()
+        }
+
+        // G4: Co-artists / Collaborators
+        val g4Deferred = async(Dispatchers.IO) {
+            val coArtists = parsedSeed.extraArtists + (SongIdentity.normalizeArtists(seed.artist) - primaryArtist)
+            if (coArtists.isNotEmpty()) {
+                withTimeoutOrNull(timeboxMs) {
+                    runCatching {
+                        val list = mutableListOf<Song>()
+                        for (co in coArtists.take(3)) {
+                            artistTracksProvider?.invoke(co)?.let { list.addAll(it.take(5)) }
+                        }
+                        list
+                    }.getOrDefault(emptyList())
+                } ?: emptyList()
+            } else emptyList()
+        }
+
+        // G5: Era + Language Neighbours
+        val g5Deferred = async(Dispatchers.IO) {
+            withTimeoutOrNull(timeboxMs) {
+                emptyList<Song>()
+            } ?: emptyList()
+        }
+
+        // G6: Owner's Library
+        val g6Deferred = async(Dispatchers.IO) {
+            withTimeoutOrNull(timeboxMs) {
+                runCatching {
+                    libraryTracksProvider?.invoke()?.filter { s ->
+                        s.id != seed.id && (
+                            normalizePrimaryArtist(s.artist) == primaryArtist ||
+                            (movieOrAlbum != null && (s.album?.equals(movieOrAlbum, ignoreCase = true) == true ||
+                                SongIdentity.normalizeTitle(s.title).movie?.equals(movieOrAlbum, ignoreCase = true) == true))
+                        )
+                    } ?: emptyList()
+                }.getOrDefault(emptyList())
+            } ?: emptyList()
+        }
+
+        // G7: Session Momentum
+        val g7Deferred = async(Dispatchers.IO) {
+            withTimeoutOrNull(timeboxMs) {
+                runCatching {
+                    recentCompletedProvider?.invoke()?.filter { s ->
+                        s.id != seed.id && normalizePrimaryArtist(s.artist) == primaryArtist
+                    } ?: emptyList()
+                }.getOrDefault(emptyList())
+            } ?: emptyList()
+        }
+
+        val g1 = g1Deferred.await()
+        val g2 = g2Deferred.await()
+        val g3 = g3Deferred.await()
+        val g4 = g4Deferred.await()
+        val g5 = g5Deferred.await()
+        val g6 = g6Deferred.await()
+        val g7 = g7Deferred.await()
+
+        val genOutputs = listOf(
+            CandidateGeneratorType.G1_RADIO to g1,
+            CandidateGeneratorType.G2_SAME_ALBUM_OR_MOVIE to g2,
+            CandidateGeneratorType.G3_PRIMARY_ARTIST to g3,
+            CandidateGeneratorType.G4_COLLABORATORS to g4,
+            CandidateGeneratorType.G5_ERA_LANGUAGE to g5,
+            CandidateGeneratorType.G6_OWNER_LIBRARY to g6,
+            CandidateGeneratorType.G7_SESSION_MOMENTUM to g7,
+        )
+
+        val pool = mutableListOf<CandidatePoolItem>()
+        for ((genType, songs) in genOutputs) {
+            for ((rank, song) in songs.withIndex()) {
+                val existing = pool.find { it.song.id == song.id || SongIdentity.isStrictMatch(it.song, song) }
+                if (existing != null) {
+                    existing.sources.add(genType)
+                    existing.sourceRanks.putIfAbsent(genType, rank)
+                } else {
+                    pool.add(
+                        CandidatePoolItem(
+                            song = song,
+                            sources = mutableSetOf(genType),
+                            sourceRanks = mutableMapOf(genType to rank),
+                        )
+                    )
+                }
+            }
+        }
+
+        candidatePoolCache[seed.id] = pool
+        pool
+    }
 
     /**
      * Resolves the next N autoplay candidate songs starting from [seed].
@@ -435,57 +636,57 @@ class AutoplayPipeline(
         seed: Song,
         queueSnapshot: List<Song> = emptyList(),
         n: Int = 10,
+    ): List<Song> = next(SeedProfile(current = seed), queueSnapshot, n)
+
+    suspend fun next(
+        seedProfile: SeedProfile,
+        queueSnapshot: List<Song> = emptyList(),
+        n: Int = 10,
     ): List<Song> {
-        val result = executePipeline(seed, queueSnapshot, n, isFallback = false)
+        val result = executePipeline(seedProfile, queueSnapshot, n, isFallback = false)
         if (result.isEmpty()) {
             // Never-empty fallback: expand ONCE (related of the last queued song or seed) and re-run once
-            val fallbackSeed = queueSnapshot.lastOrNull() ?: seed
-            return executePipeline(fallbackSeed, queueSnapshot, n, isFallback = true)
+            val fallbackSeed = queueSnapshot.lastOrNull() ?: seedProfile.current
+            return executePipeline(SeedProfile(current = fallbackSeed), queueSnapshot, n, isFallback = true)
         }
         return result
     }
 
     private suspend fun executePipeline(
-        seed: Song,
+        seedProfile: SeedProfile,
         queueSnapshot: List<Song>,
         n: Int,
         isFallback: Boolean,
     ): List<Song> {
+        val seed = seedProfile.current
         val seedKey = canonicalKey(seed.title, seed.artist)
         val seedPrimaryArtist = normalizePrimaryArtist(seed.artist)
 
-        // 1. Fetch
-        val rawCandidates = mutableListOf<Song>()
-        for (source in sources) {
-            try {
-                rawCandidates.addAll(source.candidates(seed))
-            } catch (e: Exception) {
-                DiagnosticsLogger.w("Autoplay", "Source candidate fetch failed: ${e.message}")
-            }
-        }
-        val fetchedCount = rawCandidates.size
+        // 1. Fetch Candidate Pool
+        val pool = fetchCandidatePool(seedProfile)
+        val fetchedCount = pool.size
 
         var removedEligibility = 0
         var removedHardFilter = 0
         var removedDedupe = 0
 
         // 2 & 3. Normalize & Eligibility
-        val eligible = mutableListOf<Song>()
-        for (candidate in rawCandidates) {
-            if (!isEligible(candidate, seedPrimaryArtist)) {
+        val eligiblePool = mutableListOf<CandidatePoolItem>()
+        for (item in pool) {
+            if (!isEligible(item.song, seedPrimaryArtist)) {
                 removedEligibility++
             } else {
-                eligible.add(candidate)
+                eligiblePool.add(item)
             }
         }
 
         // 4. Hard filter (duration & blocked keywords)
-        val filtered = mutableListOf<Song>()
-        for (candidate in eligible) {
-            if (isHardFiltered(candidate, seed.title)) {
+        val filteredPool = mutableListOf<CandidatePoolItem>()
+        for (item in eligiblePool) {
+            if (isHardFiltered(item.song, seed.title)) {
                 removedHardFilter++
             } else {
-                filtered.add(candidate)
+                filteredPool.add(item)
             }
         }
 
@@ -493,8 +694,9 @@ class AutoplayPipeline(
         val queueKeys = queueSnapshot.map { canonicalKey(it.title, it.artist) }.toSet()
         val queueIds = queueSnapshot.map { it.id }.toSet()
 
-        val nonDuplicateCandidates = mutableListOf<Song>()
-        for (candidate in filtered) {
+        val nonDuplicatePool = mutableListOf<CandidatePoolItem>()
+        for (item in filteredPool) {
+            val candidate = item.song
             val key = canonicalKey(candidate.title, candidate.artist)
             if (candidate.id == seed.id || key == seedKey || areSameRecording(seed, candidate) || SongIdentity.isStrictMatch(seed, candidate)) {
                 removedDedupe++
@@ -508,36 +710,44 @@ class AutoplayPipeline(
                 removedDedupe++
                 continue
             }
-            nonDuplicateCandidates.add(candidate)
+            nonDuplicatePool.add(item)
         }
 
         // Group candidates by recording identity (SongIdentity strict clustering)
-        val groups = mutableListOf<MutableList<Song>>()
-        for (candidate in nonDuplicateCandidates) {
+        val groups = mutableListOf<MutableList<CandidatePoolItem>>()
+        for (item in nonDuplicatePool) {
             val matchedGroup = groups.find { group ->
-                group.any { areSameRecording(it, candidate) || SongIdentity.isStrictMatch(it, candidate) }
+                group.any { areSameRecording(it.song, item.song) || SongIdentity.isStrictMatch(it.song, item.song) }
             }
             if (matchedGroup != null) {
-                matchedGroup.add(candidate)
+                matchedGroup.add(item)
             } else {
-                groups.add(mutableListOf(candidate))
+                groups.add(mutableListOf(item))
             }
         }
 
         val dedupedWinners = mutableListOf<Song>()
+        val poolItemMap = mutableMapOf<String, CandidatePoolItem>()
         for (group in groups) {
             if (group.size == 1) {
-                dedupedWinners.add(group.first())
+                val item = group.first()
+                dedupedWinners.add(item.song)
+                poolItemMap[item.song.id] = item
             } else {
                 removedDedupe += (group.size - 1)
-                val winner = SongIdentity.selectRepresentative(group)
+                val songsInGroup = group.map { it.song }
+                val winner = SongIdentity.selectRepresentative(songsInGroup)
                 dedupedWinners.add(winner)
+                val allSources = group.flatMap { it.sources }.toMutableSet()
+                val allRanks = mutableMapOf<CandidateGeneratorType, Int>()
+                group.forEach { allRanks.putAll(it.sourceRanks) }
+                poolItemMap[winner.id] = CandidatePoolItem(winner, allSources, allRanks)
             }
         }
 
         val taste = userTasteProvider?.invoke() ?: UserTasteProfile()
         // 6. Score (deterministic, cluster-aware, and taste-bound)
-        val scored = scoreCandidates(dedupedWinners, seed, taste)
+        val scored = scoreCandidates(dedupedWinners, seed, taste, poolItemMap)
 
         // 7. Space (separate consecutive songs by primary artist)
         val lastQueuedArtist = queueSnapshot.lastOrNull()?.let { normalizePrimaryArtist(it.artist) }
@@ -704,6 +914,7 @@ class AutoplayPipeline(
         candidates: List<Song>,
         seed: Song,
         taste: UserTasteProfile = UserTasteProfile(),
+        poolItemMap: Map<String, CandidatePoolItem> = emptyMap(),
     ): List<Song> {
         val seedPrimary = normalizePrimaryArtist(seed.artist)
         val seedCluster = detectCluster(seed)
@@ -732,8 +943,19 @@ class AutoplayPipeline(
             val candIsDevanagari = hasDevanagari(candidate.title) || hasDevanagari(candidate.artist)
             val candIsSouth = hasSouthIndicScript(candidate.title) || isSouthIndic(candidate)
 
-            // 0. Audio quality / Official source
+            // 0. Audio quality / Official source & Candidate Generator Agreement (R2)
             if (isAtv(candidate)) score += 35
+
+            val poolItem = poolItemMap[candidate.id]
+            if (poolItem != null) {
+                if (poolItem.sources.size > 1) {
+                    score += (poolItem.sources.size - 1) * 20 // Source agreement bonus
+                }
+                val g1Rank = poolItem.sourceRanks[CandidateGeneratorType.G1_RADIO]
+                if (g1Rank != null) {
+                    score += maxOf(0, 20 - g1Rank) // Earlier position in G1 ranks higher
+                }
+            }
 
             // ==========================================
             // PRIORITY 1: GENRE / CLUSTER (+80 / -150)

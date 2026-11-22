@@ -556,7 +556,13 @@ object PlayerConnection {
                     queueManager.userQueue.map { it.song } +
                     queueManager.upNext.map { it.song }
                 )
-                val related = VelvetApp.autoplayPipeline.next(targetSeed, snapshot, n = 10)
+                val recentSongs = queueManager.history.takeLast(4).map { it.song }.reversed()
+                val seedProfile = com.velvet.app.playback.SeedProfile(
+                    current = targetSeed,
+                    recentSongs = recentSongs,
+                    contextName = queueManager.currentContextTitle,
+                )
+                val related = VelvetApp.autoplayPipeline.next(seedProfile, snapshot, n = 10)
 
                 withContext(Dispatchers.Main) {
                     if (related.isNotEmpty()) {

@@ -3,10 +3,12 @@ package com.velvet.app.unit
 import com.velvet.app.data.Song
 import com.velvet.app.playback.AutoplayConfig
 import com.velvet.app.playback.AutoplayPipeline
+import com.velvet.app.playback.CandidateGeneratorType
 import com.velvet.app.playback.CandidateSource
 import com.velvet.app.playback.MusicCluster
 import com.velvet.app.playback.QueueManager
 import com.velvet.app.playback.QueueState
+import com.velvet.app.playback.SeedProfile
 import com.velvet.app.playback.SessionHistory
 import com.velvet.app.playback.SongEra
 import com.velvet.app.playback.SongMood
@@ -17,6 +19,7 @@ import com.velvet.app.playback.detectCluster
 import com.velvet.app.playback.detectEra
 import com.velvet.app.playback.detectMood
 import com.velvet.app.playback.detectTempo
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -525,5 +528,91 @@ class AutoplayPipelineTest {
         // Sufi track with matching genre & tempo receives artist boost and ranks first;
         // Fast party track clashes in tempo and mood with the sufi seed
         assertEquals("c_sufi", next[0].id)
+    }
+
+    @Test
+    fun testCandidatePool_multiSourceAggregatesAndTagsGenerators() = runBlocking {
+        val seed = makeSong("seed1", "Tum Hi Ho", "Arijit Singh")
+        val candRadio = makeSong("c_rad", "Channa Mereya", "Arijit Singh", preferred = true)
+        val candAlbum = makeSong("c_alb", "Meri Aashiqui", "Arijit Singh", preferred = true)
+        val candArtist = makeSong("c_art", "Kesariya", "Arijit Singh", preferred = true)
+        val candLib = makeSong("c_lib", "Ae Dil Hai Mushkil", "Arijit Singh", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candRadio) }),
+            history = history,
+            albumTracksProvider = { listOf(candAlbum) },
+            artistTracksProvider = { listOf(candArtist) },
+            libraryTracksProvider = { listOf(candLib) },
+        )
+
+        val pool = pipeline.fetchCandidatePool(SeedProfile(current = seed))
+        assertTrue(pool.any { it.song.id == "c_rad" && it.sources.contains(CandidateGeneratorType.G1_RADIO) })
+        assertTrue(pool.any { it.song.id == "c_alb" && it.sources.contains(CandidateGeneratorType.G2_SAME_ALBUM_OR_MOVIE) })
+        assertTrue(pool.any { it.song.id == "c_art" && it.sources.contains(CandidateGeneratorType.G3_PRIMARY_ARTIST) })
+        assertTrue(pool.any { it.song.id == "c_lib" && it.sources.contains(CandidateGeneratorType.G6_OWNER_LIBRARY) })
+    }
+
+    @Test
+    fun testCandidatePool_timeboxTimeoutDoesNotFailPipeline() = runBlocking {
+        val seed = makeSong("seed_slow", "Title A", "Artist A")
+        val fastSong = makeSong("fast_1", "Fast Song", "Artist A", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource {
+                delay(3000) // Exceeds 200ms timeout
+                listOf(makeSong("slow_1", "Slow Song", "Artist A"))
+            }),
+            history = history,
+            artistTracksProvider = {
+                listOf(fastSong)
+            },
+            timeboxMs = 200L,
+        )
+
+        val pool = pipeline.fetchCandidatePool(SeedProfile(current = seed))
+        assertTrue(pool.any { it.song.id == "fast_1" })
+        assertFalse(pool.any { it.song.id == "slow_1" })
+    }
+
+    @Test
+    fun testSeedProfile_weightingDecaysOlderPlayedSongs() {
+        val current = makeSong("s0", "Current Song", "Artist Main")
+        val recent1 = makeSong("s1", "Recent 1", "Artist One")
+        val recent2 = makeSong("s2", "Recent 2", "Artist Two")
+        val recent3 = makeSong("s3", "Recent 3", "Artist Three")
+
+        val profile = SeedProfile(
+            current = current,
+            recentSongs = listOf(recent1, recent2, recent3),
+        )
+
+        val weights = profile.artistWeights()
+        val wMain = weights["artist main"] ?: 0.0
+        val wOne = weights["artist one"] ?: 0.0
+        val wTwo = weights["artist two"] ?: 0.0
+        val wThree = weights["artist three"] ?: 0.0
+
+        assertTrue("Current artist must have weight >= 1.0", wMain >= 1.0)
+        assertTrue("Recent1 must have higher weight than Recent2", wOne > wTwo)
+        assertTrue("Recent2 must have higher weight than Recent3", wTwo > wThree)
+    }
+
+    @Test
+    fun testCandidatePool_cachesPerSeedForSession() = runBlocking {
+        val seed = makeSong("seed_cache", "Tum Hi Ho", "Arijit Singh")
+        var callCount = 0
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource {
+                callCount++
+                listOf(makeSong("c_cached", "Channa Mereya", "Arijit Singh", preferred = true))
+            }),
+            history = history,
+        )
+
+        val pool1 = pipeline.fetchCandidatePool(SeedProfile(current = seed))
+        val pool2 = pipeline.fetchCandidatePool(SeedProfile(current = seed))
+        assertEquals(1, callCount)
+        assertEquals(pool1.size, pool2.size)
     }
 }
