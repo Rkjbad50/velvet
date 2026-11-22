@@ -556,11 +556,13 @@ object PlayerConnection {
                     queueManager.userQueue.map { it.song } +
                     queueManager.upNext.map { it.song }
                 )
-                val recentSongs = queueManager.history.takeLast(4).map { it.song }.reversed()
+                val playlist = currentPlaylistId?.let { id -> VelvetApp.library.data.value.playlists.find { it.id == id } }
+                val contextTitle = playlist?.name ?: queueManager.sourceList.firstOrNull()?.album
+                val recentSongs = queueManager.history.takeLast(4).reversed()
                 val seedProfile = com.velvet.app.playback.SeedProfile(
                     current = targetSeed,
                     recentSongs = recentSongs,
-                    contextName = queueManager.currentContextTitle,
+                    contextName = contextTitle,
                 )
                 val related = VelvetApp.autoplayPipeline.next(seedProfile, snapshot, n = 10)
 
