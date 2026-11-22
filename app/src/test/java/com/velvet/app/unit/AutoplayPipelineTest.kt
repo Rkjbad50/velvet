@@ -683,7 +683,7 @@ class AutoplayPipelineTest {
     fun testDiversity_movieSpacingSeparatesSameMovieSoundtrackTracks() {
         val cand1 = makeSong("c1", "Tum Hi Ho (From \"Aashiqui 2\")", "Arijit Singh")
         val cand2 = makeSong("c2", "Sunn Raha Hai (From \"Aashiqui 2\")", "Ankit Tiwari")
-        val cand3 = makeSong("c3", "Kalank Title Track", "Arijit Singh")
+        val cand3 = makeSong("c3", "Kalank Title Track", "Kumar Sanu")
 
         val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
         val spaced = pipeline.spaceCandidates(

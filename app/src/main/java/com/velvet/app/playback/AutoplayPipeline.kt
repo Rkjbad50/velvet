@@ -529,6 +529,7 @@ class AutoplayPipeline(
     private val timeboxMs: Long = 1500L,
     private val persistedPlayedGroupIdsProvider: (() -> List<String>)? = null,
     private val tasteProfileProvider: (() -> TasteProfile)? = null,
+    val sessionSeed: Long = 42L,
 ) {
     companion object {
         @Volatile
@@ -848,11 +849,13 @@ class AutoplayPipeline(
             queueSnapshot.map { canonicalKey(it.title, it.artist) } +
             (persistedPlayedGroupIdsProvider?.invoke() ?: emptyList())).toSet()
 
+        val rngSeed = sessionSeed xor seed.id.hashCode().toLong()
         val spaced = spaceCandidates(
             candidates = scored,
             lastQueuedArtist = lastQueuedArtist,
             lastQueuedMovie = lastQueuedMovie,
             playedOrKnownKeys = playedOrKnownKeys,
+            randomSeed = rngSeed,
         )
 
         // 8. Take
