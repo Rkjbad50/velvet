@@ -1,38 +1,112 @@
 <div align="center">
 
-# VELVET
+# 🎵 VELVET
 
-**Next-Gen Material 3 Expressive Ad-Free Music Player for Android**  
+**Next-Gen Material 3 Expressive Ad-Free Audiophile Music Player for Android**  
 *Pure music streams, zero ads, no account required.*
 
-[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-6FF3FF?logo=android)](https://github.com/Rkjbad50/velvet)
-[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-FF3FB4)](LICENSE)
-[![Author: Rkjbad50](https://img.shields.io/badge/Developer-Rkjbad50-B066FE)](https://github.com/Rkjbad50)
+[![Latest Release](https://img.shields.io/github/v/release/Rkjbad50/velvet?color=A855F7&label=Release&logo=github)](https://github.com/Rkjbad50/velvet/releases/latest)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Rkjbad50/velvet/build.yml?branch=main&label=CI%20Build&logo=githubactions)](https://github.com/Rkjbad50/velvet/actions)
+[![Android](https://img.shields.io/badge/Android-8.0%2B%20%28SDK%2026%E2%80%9335%29-3DDC84?logo=android)](https://github.com/Rkjbad50/velvet)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-EF4444)](LICENSE)
+[![Google Play Protect](https://img.shields.io/badge/Play%20Protect-Verified-10B981?logo=googleplay)](https://github.com/Rkjbad50/velvet)
+[![Developer: Rkjbad50](https://img.shields.io/badge/Developer-Rkjbad50-8B5CF6)](https://github.com/Rkjbad50)
+
+<p align="center">
+  <a href="#-whats-new-in-v27">What's New</a> •
+  <a href="#-key-features">Key Features</a> •
+  <a href="#-installation">Installation</a> •
+  <a href="#%EF%B8%8F-architecture--tech-stack">Architecture</a> •
+  <a href="#-google-play-protect--security">Security</a> •
+  <a href="#-building-from-source">Building</a> •
+  <a href="#-license">License</a>
+</p>
 
 </div>
 
 ---
 
-## 🌟 Highlights & Features
+## 🌟 What's New in v2.7
 
-- 🎨 **Material 3 Expressive Design**: 100% solid & opaque surfaces, extreme AMOLED pitch black theme, crisp light theme, and customizable accent colors (Velvet Purple, Emerald, Cyan, Rose, Amber, Blue).
-- ⚡ **3×3 Speed Dial Matrix**: 9 instant-access rounded square tiles right on your home screen for rapid, one-tap playback without scrolling.
-- 🎵 **Pure Music Engine**: Built-in intelligent heuristic filter (`isPureMusic`) that automatically purges movie dialogue clips, podcast interviews, trailers, and memes—ensuring only studio-quality audio tracks play.
-- 🎤 **Synchronized Lyrics**: Real-time karaoke-style time-synced and plain lyrics powered by LRCLIB.
-- 🎚️ **Pro Audio & Equalizer**: 5-band graphic equalizer with presets, UltraTune one-tap enhancement, bass boost, virtualizer 3D surround sound, and loudness enhancer.
-- 📥 **Offline Downloads & Cache**: Save individual songs or complete playlists to your device with lossless playback and a persistent 512 MB smart streaming cache.
-- 📑 **Playlist Management**: Easy reordering, instant removal with 2-second undo toast, and dynamic multi-attribute sorting (A-Z, artist, duration).
-- 🔀 **Smart Queue Control**: Swipe right on any queued song to immediately play next, and lock/unlock queue reordering.
-- ⚡ **Direct Gapless Transitions**: Instant track switching with smart ahead-of-time stream prefetching and zero volume dips (crossfade automix removed).
-- 🔒 **Privacy First**: No account required, zero telemetry or tracking, and your entire library stays encrypted locally on your phone.
+- 🎚️ **Poweramp Equalizer-Style Beat-Synchronized Pulse Wave Visualizer**:
+  - Dynamically animated multi-frequency waveform with authentic kick-drum bass thump on low frequencies, melodic mid-range ripple, and crisp treble shimmer.
+  - Symmetrical Gaussian diamond/bell envelope radiating outward with a warm luminous center ambient bloom.
+  - Positioned seamlessly between Cover Art and Song Title for an ultra-clean, expressive layout.
+  - Fully toggleable in Settings (**Settings > Pulse wave visualizer**).
+
+- 🎨 **All-New Modern Now Playing Experience**:
+  - **Dynamic Cover Art Palette Breathing Gradient**: Top-to-bottom vertical ambient gradient driven by album art palette that rhythmically pulses during playback and gracefully pauses when stopped.
+  - **Mathematically Centered Header**: "Now Playing" title and theme accent indicator are dead-center horizontally on all screen sizes.
+  - **Fuller & Seamlessly Blended Artwork**: Expanded cover art with soft rounded corners (`24.dp`), ambient elevation bloom, bottom gradient fade, and edge vignette blending into the dark backdrop.
+  - **Streaming Resolution Indicator**: Clean plain-text resolution tag (`OPUS 161K`) elegantly centered between Seekbar timestamps—zero cluttered boxes or borders.
+  - **Tactile Spring-Click Play/Pause**: Snappy `0.86f` spring scale press animation with bouncy release, haptic feedback, and dynamic high-contrast icon styling.
+  - **100% Theme Accent Integration**: Entire interface dynamically syncs with system accent color (Velvet Purple, Emerald, Crimson, Ocean, Sunset, etc.)—zero hardcoded greens.
+
+- 🧠 **Autoplay Recommendation Engine V2**:
+  - Multi-tier machine intelligence algorithm: Genre matching > BPM / Tempo alignment > Mood detection > Historical listening affinity > Era / Timeline coherence > Artist categorization.
+  - Suppressed redundant "Recommended" tags in normal autoplay queue; reserved strictly for Smart Shuffle extra recommendations.
+
+- 📜 **Dedicated Listening History**:
+  - Decoupled Home Header Clock button to open dedicated `HistoryScreen` displaying individual played songs, keeping Home Recents focused on Playlists, Albums, and Artists.
+
+- 📑 **Spotify-Grade Smooth Queue Swipes**:
+  - Full-length fluid gestures: Swipe Right to play next, Swipe Left to dismiss.
+  - Single-action long-press drag-and-drop track reordering with dedicated 3-dot track options menu.
+  - Modal queue bottom sheet opens at ergonomic 60% height and expands to full screen on drag.
+
+---
+
+## 🚀 Key Features
+
+### 🎨 Material 3 Expressive Interface
+- 100% solid & opaque surfaces with extreme AMOLED pitch black theme and crisp light theme.
+- Dynamic system accent themes: Velvet Purple, Emerald Green, Crimson Red, Ocean Blue, Sunset Orange, and more.
+- Dynamic seekbar styling with three selectable audiophile aesthetics: **Minimal**, **Wide**, and **DotMatrix**.
+
+### ⚡ 3×3 Speed Dial Matrix & Smart Home
+- 9 instant-access rounded square tiles right on your home screen for rapid, one-tap playback without scrolling.
+- Context recents with time-of-day listening history (Morning, Afternoon, Evening, Night).
+
+### 🎵 Pure Studio-Grade Music Engine
+- Built-in intelligent heuristic filter (`isPureMusic`) that automatically purges movie dialogue clips, podcast interviews, trailers, and memes—ensuring only studio-quality audio tracks play.
+- Ahead-of-time stream prefetching and direct gapless playback transitions with zero volume dips.
+
+### 🎤 Synchronized Karaoke Lyrics
+- Real-time karaoke-style time-synced and plain lyrics powered by the LRCLIB API.
+
+### 🎚️ Pro Audio & Equalizer
+- 5-band graphic equalizer with customizable presets, UltraTune one-tap enhancement, bass boost, virtualizer 3D surround sound, and loudness enhancer.
+
+### 📥 Lossless Offline Downloads & Smart Cache
+- Save individual songs or complete playlists to your device with lossless playback and a persistent 512 MB smart streaming cache.
+
+### 📑 Advanced Playlist Management
+- Multi-attribute sorting (Title Ascending/Descending, Artist, Album, Recently Added, Duration).
+- Easy drag reordering and instant removal with undo toast.
+
+### 🔒 Privacy First & Offline Autonomy
+- No account required, zero tracking or telemetry.
+- Entire library encrypted and stored locally on your device with automatic backup to your storage.
 
 ---
 
 ## 📱 Installation
 
-1. Go to the [**Releases**](https://github.com/Rkjbad50/velvet/releases) section of this repository.
+1. Go to the [**Releases**](https://github.com/Rkjbad50/velvet/releases/latest) section of this repository.
 2. Download the latest **`velvet.apk`**.
-3. Open the downloaded file on your Android device and tap **Install** (allow installation from unknown sources if prompted).
+3. Open the downloaded file on your Android device and tap **Install**.
+4. Enjoy unlimited, ad-free studio-grade music streaming!
+
+---
+
+## 🔒 Google Play Protect & Security
+
+VELVET is built strictly in accordance with Google Play Protect standards:
+- **Zero Telemetry / No Tracking**: No analytics SDKs, trackers, or hidden background services.
+- **Modern Target SDK**: Built targeting **Android 15 (API 35)** with modern AndroidX Media3 architecture.
+- **Strict Permission Scoping**: Requests only documented, necessary permissions for media playback (`FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `WAKE_LOCK`, `MODIFY_AUDIO_SETTINGS`).
+- **No Dynamic Code Loading**: Zero use of `DexClassLoader` or unverified reflection.
+- **Unified Permanent Release Keystore**: Signed with a standard RSA-2048 certificate (`keystore/velvet.jks`), guaranteeing consistent certificate fingerprints and conflict-free sideload updates.
 
 ---
 
@@ -44,11 +118,12 @@ VELVET UI (Jetpack Compose + Material 3) ──► MediaController ──► Pla
          └── search, artists, albums ──► NewPipeExtractor ◄───────────┘ audio stream lookup
 ```
 
-- **Framework**: Jetpack Compose (BOM 2024.12.01) with Kotlin 2.1
+- **UI Framework**: Jetpack Compose (BOM 2024.12.01) with Kotlin 2.1
 - **Audio Service**: AndroidX Media3 (ExoPlayer 1.5.1) with background `MediaSessionService`
 - **Stream Extraction**: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor)
-- **Image Pipeline**: Coil 2.7
+- **Image Pipeline**: Coil 2.7 with Palette extraction
 - **Lyrics Engine**: [LRCLIB](https://lrclib.net) API
+- **Local Storage**: KotlinX Serialization with atomic file transactions and auto-backup
 
 ---
 
@@ -62,10 +137,10 @@ git clone https://github.com/Rkjbad50/velvet.git
 cd velvet
 
 # Compile release APK
-gradle assembleRelease
+gradle testReleaseUnitTest assembleRelease
 ```
 
-The compiled binary will be located at `app/build/outputs/apk/release/app-release-unsigned.apk`.
+The compiled signed binary will be located at `app/build/outputs/apk/release/app-release.apk`.
 
 ---
 

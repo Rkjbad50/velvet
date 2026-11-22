@@ -137,6 +137,18 @@ class LibraryStoreTest {
     }
 
     @Test
+    fun showPulseWavePersistsCorrectly() {
+        val library = Library(tmp.root)
+        assertTrue(library.data.value.showPulseWave)
+
+        library.setShowPulseWave(false)
+        library.flushBlocking()
+
+        val loaded = (LibraryStore(tmp.root).load() as LoadResult.Loaded).data
+        assertFalse(loaded.showPulseWave)
+    }
+
+    @Test
     fun legacyLibraryFileWithCrossfadeSecondsLoadsCleanlyWithoutErrors() {
         // Old library.json containing crossfadeSeconds must deserialize cleanly ignoring the unknown field
         File(tmp.root, "library.json").writeText(

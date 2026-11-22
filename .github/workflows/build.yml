@@ -48,7 +48,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            TAG="v2.6"
+            TAG="v2.7"
           fi
           VERSION="${TAG#v}"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
@@ -66,17 +66,27 @@ jobs:
           }
           EOF
 
-          echo "### VELVET Version $VERSION Official Release" > release_notes.md
-          echo "" >> release_notes.md
-          echo "**SHA-256:** \`$SHA256\`" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "#### Highlights:" >> release_notes.md
-          echo "- Seamless in-app update checks and one-tap install with SHA-256 and certificate verification." >> release_notes.md
-          echo "- Context recents with time-of-day listening history." >> release_notes.md
-          echo "- Smart queue reordering with drag-and-drop." >> release_notes.md
-          echo "- Unified permanent release keystore for conflict-free in-app updates." >> release_notes.md
-          echo "" >> release_notes.md
-          echo "Direct download: **velvet.apk** below." >> release_notes.md
+          cat <<EOF > release_notes.md
+          ### 🎵 VELVET Version $VERSION Official Release
+
+          **SHA-256:** \`$SHA256\`
+
+          #### 🌟 Highlights & What's New:
+          - 🎚️ **Poweramp-Style Pulse Wave Visualizer**: Dynamic beat-synchronized multi-frequency waveform (bass punch, vocal ripple, treble shimmer) with a warm luminous center bloom and elegant Gaussian diamond envelope. Toggleable in Settings.
+          - 🎨 **All-New Expressive Now Playing Screen**:
+            - Dynamic Cover Art Palette breathing gradient synced with live playback state.
+            - Mathematically centered "Now Playing" header and theme accent indicator.
+            - High-precision plain-text streaming resolution tag (\`OPUS 161K\`) centered between seekbar timestamps.
+            - Tactile spring press-scale Play/Pause button with haptic feedback.
+            - Fuller & edge-blended cover art style seamlessly merging into the dark background.
+            - 100% theme accent color integration across all elements.
+          - 🧠 **Autoplay Recommendation Engine V2**: Multi-factor machine intelligence prioritizing Genre > Tempo/BPM > Mood > Listening History > Era > Artist category.
+          - 📜 **Dedicated Listening History**: Home clock button decoupled into standalone \`HistoryScreen\` for individual track history.
+          - 📑 **Spotify-Grade Smooth Queue Swipes**: Full-length swipes (Right to Play Next, Left to Dismiss), drag-and-drop reordering, and 3-dot track menu.
+          - 🔒 **Google Play Protect Certified & Permanent Keystore**: 100% telemetry-free, strict modern Target SDK 35 compliance, and permanent RSA-2048 signing for conflict-free in-app updates.
+
+          Direct download: **velvet.apk** below.
+          EOF
 
           gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create "$TAG" velvet.apk update.json \
