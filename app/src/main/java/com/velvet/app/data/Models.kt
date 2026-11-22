@@ -43,6 +43,7 @@ data class Song(
     val thumb: String? = null,
     val artistUrl: String? = null,
     val preferredMusicSource: Boolean = false,
+    val album: String? = null,
 )
 
 @Serializable

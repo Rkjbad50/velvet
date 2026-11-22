@@ -1066,14 +1066,15 @@ fun PlaylistSortSheet(
     onSelectSort: (SortKey, SortDirection) -> Unit,
     onSaveAsCustom: (List<PlaylistEntry>) -> Unit,
 ) {
+    val context = LocalContext.current
     var confirmCustom by remember { mutableStateOf(false) }
 
     if (confirmCustom) {
         ConfirmDialog(
             ConfirmRequest(
-                title = "Save as Custom Order?",
-                message = "This will save the current sorted list as the permanent custom order for \"${playlist.name}\".",
-                confirmLabel = "Save order",
+                title = "Freeze as Custom Order?",
+                message = "This will permanently bake the current view into the playlist's track list and switch the sort mode to Custom so you can manually drag and rearrange tracks.",
+                confirmLabel = "Freeze as Custom",
                 action = {
                     confirmCustom = false
                     onSaveAsCustom(activeEntries)
@@ -1096,13 +1097,26 @@ fun PlaylistSortSheet(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp),
         ) {
-            Text("Sort Playlist", style = MaterialTheme.typography.titleLarge, color = velvetColors.text)
-            Text(
-                "Active: ${PlaylistSorter.getSortLabel(playlist.sortKey, playlist.sortDirection)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = velvetColors.muted,
-                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Sort Playlist", style = MaterialTheme.typography.titleLarge, color = velvetColors.text)
+                    Text(
+                        "Active: ${PlaylistSorter.getSortLabel(playlist.sortKey, playlist.sortDirection)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = velvetColors.accentText,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Done", color = velvetColors.accentText, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
 
             val options = listOf(
                 SortKey.CUSTOM to "Custom order",
@@ -1115,19 +1129,38 @@ fun PlaylistSortSheet(
 
             options.forEach { (key, label) ->
                 val isSelected = playlist.sortKey == key
+                val directionBadge = when (key) {
+                    SortKey.CUSTOM -> null
+                    SortKey.TITLE, SortKey.ARTIST, SortKey.ALBUM -> {
+                        val dir = if (isSelected) playlist.sortDirection else SortDirection.ASC
+                        if (dir == SortDirection.ASC) "A → Z" else "Z → A"
+                    }
+                    SortKey.DATE_ADDED -> {
+                        val dir = if (isSelected) playlist.sortDirection else SortDirection.DESC
+                        if (dir == SortDirection.DESC) "Newest" else "Oldest"
+                    }
+                    SortKey.DURATION -> {
+                        val dir = if (isSelected) playlist.sortDirection else SortDirection.ASC
+                        if (dir == SortDirection.ASC) "Shortest" else "Longest"
+                    }
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
                             if (key == SortKey.CUSTOM) {
                                 onSelectSort(SortKey.CUSTOM, SortDirection.ASC)
+                                Toast.makeText(context, "Sorted by Custom order", Toast.LENGTH_SHORT).show()
                             } else if (isSelected) {
                                 // Toggle direction if already selected
                                 val newDir = if (playlist.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
                                 onSelectSort(key, newDir)
+                                Toast.makeText(context, "Sorted by ${PlaylistSorter.getSortLabel(key, newDir)}", Toast.LENGTH_SHORT).show()
                             } else {
                                 val defaultDir = if (key == SortKey.DATE_ADDED) SortDirection.DESC else SortDirection.ASC
                                 onSelectSort(key, defaultDir)
+                                Toast.makeText(context, "Sorted by ${PlaylistSorter.getSortLabel(key, defaultDir)}", Toast.LENGTH_SHORT).show()
                             }
                         }
                         .padding(vertical = 12.dp),
@@ -1140,13 +1173,19 @@ fun PlaylistSortSheet(
                         color = if (isSelected) velvetColors.accentText else velvetColors.text,
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isSelected && key != SortKey.CUSTOM) {
-                            Text(
-                                if (playlist.sortDirection == SortDirection.ASC) "ASC" else "DESC",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = velvetColors.accentText,
+                        if (directionBadge != null) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) velvetColors.accent.copy(alpha = 0.2f) else velvetColors.raised,
                                 modifier = Modifier.padding(end = 8.dp),
-                            )
+                            ) {
+                                Text(
+                                    directionBadge,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isSelected) velvetColors.accentText else velvetColors.muted,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
                         }
                         if (isSelected) {
                             Icon(Icons.Default.Check, contentDescription = "Selected", tint = velvetColors.accentText)
@@ -1156,16 +1195,32 @@ fun PlaylistSortSheet(
                 HorizontalDivider(color = velvetColors.rule.copy(alpha = 0.5f))
             }
 
-            Spacer(Modifier.height(20.dp))
-
             if (playlist.sortKey != SortKey.CUSTOM) {
-                Button(
-                    onClick = { confirmCustom = true },
+                Spacer(Modifier.height(16.dp))
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = velvetColors.raised),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Save this order as custom order", color = velvetColors.accentText)
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            "Manual reordering",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = velvetColors.text,
+                        )
+                        Text(
+                            "Freeze this sorted order to rearrange songs manually by dragging",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = velvetColors.muted,
+                        )
+                    }
+                    Button(
+                        onClick = { confirmCustom = true },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = velvetColors.raised),
+                    ) {
+                        Text("Set as Custom", color = velvetColors.accentText, style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }

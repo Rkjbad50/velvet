@@ -190,7 +190,7 @@ object YouTube {
             thumb = hint?.thumb ?: biggest(info.thumbnails) ?: songs.firstOrNull()?.thumb,
             isAlbum = hint?.isAlbum ?: true,
         )
-        AlbumPage(album, songs.distinctBy { it.id })
+        AlbumPage(album, songs.distinctBy { it.id }.map { it.copy(album = album.title) })
     }
 
     /** YouTube's music trending chart, for the home screen. Filtered for pure music releases only. */

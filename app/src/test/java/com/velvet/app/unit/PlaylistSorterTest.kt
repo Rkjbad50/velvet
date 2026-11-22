@@ -20,6 +20,7 @@ class PlaylistSorterTest {
         addedAt: Long = 1000L,
         artistUrl: String? = null,
         entryId: String = id,
+        album: String? = null,
     ): PlaylistEntry = PlaylistEntry(
         entryId = entryId,
         song = Song(
@@ -28,6 +29,7 @@ class PlaylistSorterTest {
             artist = artist,
             durationSec = durationSec,
             artistUrl = artistUrl,
+            album = album,
         ),
         addedAt = addedAt,
     )
@@ -91,6 +93,27 @@ class PlaylistSorterTest {
     }
 
     @Test
+    fun albumSortAscAndDescWithArticleStrippingAndMissingGoLast() {
+        val sample = listOf(
+            makeEntry("1", "Song A", album = "The Wall"),
+            makeEntry("2", "Song B", album = "Abbey Road"),
+            makeEntry("3", "Song C", album = "A Rush of Blood to the Head"),
+            makeEntry("4", "Song D", album = null), // missing album
+        )
+        // Stripped:
+        // "Abbey Road" -> "Abbey Road"
+        // "A Rush of Blood to the Head" -> "Rush of Blood to the Head"
+        // "The Wall" -> "Wall"
+        // Missing album -> goes last in both ASC and DESC
+
+        val asc = PlaylistSorter.sort(sample, SortKey.ALBUM, SortDirection.ASC)
+        assertEquals(listOf("2", "3", "1", "4"), asc.map { it.entryId })
+
+        val desc = PlaylistSorter.sort(sample, SortKey.ALBUM, SortDirection.DESC)
+        assertEquals(listOf("1", "3", "2", "4"), desc.map { it.entryId })
+    }
+
+    @Test
     fun durationSortAscAndDescShortestFirstAndLongestFirst() {
         val sample = listOf(
             makeEntry("1", "Medium", durationSec = 180),
@@ -136,6 +159,37 @@ class PlaylistSorterTest {
         val desc = PlaylistSorter.sort(sample, SortKey.DATE_ADDED, SortDirection.DESC)
         // Fallback to reverse stored position in DESC (recently added first)
         assertEquals(listOf("3", "2", "1"), desc.map { it.entryId })
+    }
+
+    @Test
+    fun dateAddedWithIdenticalTimestampsPreservesOrderInAscAndReversesInDesc() {
+        val sample = listOf(
+            makeEntry("1", "Zebra", addedAt = 5000L),
+            makeEntry("2", "Apple", addedAt = 5000L),
+            makeEntry("3", "Mango", addedAt = 5000L),
+        )
+        // With identical timestamps:
+        // ASC preserves insertion order: 1, 2, 3
+        val asc = PlaylistSorter.sort(sample, SortKey.DATE_ADDED, SortDirection.ASC)
+        assertEquals(listOf("1", "2", "3"), asc.map { it.entryId })
+
+        // DESC reverses insertion order: 3, 2, 1
+        val desc = PlaylistSorter.sort(sample, SortKey.DATE_ADDED, SortDirection.DESC)
+        assertEquals(listOf("3", "2", "1"), desc.map { it.entryId })
+    }
+
+    @Test
+    fun dateAddedWithMixedTimestampsPutsMissingLastInBothDirections() {
+        val sample = listOf(
+            makeEntry("1", "Old Track", addedAt = 1000L),
+            makeEntry("2", "New Track", addedAt = 3000L),
+            makeEntry("3", "No Timestamp Track", addedAt = 0L),
+        )
+        val asc = PlaylistSorter.sort(sample, SortKey.DATE_ADDED, SortDirection.ASC)
+        assertEquals(listOf("1", "2", "3"), asc.map { it.entryId })
+
+        val desc = PlaylistSorter.sort(sample, SortKey.DATE_ADDED, SortDirection.DESC)
+        assertEquals(listOf("2", "1", "3"), desc.map { it.entryId })
     }
 
     @Test

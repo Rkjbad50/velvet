@@ -9,14 +9,20 @@ import java.util.Locale
  */
 object PlaylistSorter {
 
-    private val collator: Collator = Collator.getInstance(Locale.ROOT).apply {
-        strength = Collator.SECONDARY // Case- and accent-insensitive
+    private val threadLocalCollator = ThreadLocal.withInitial {
+        Collator.getInstance(Locale.ROOT).apply {
+            strength = Collator.SECONDARY // Case- and accent-insensitive
+        }
     }
+
+    private fun getCollator(): Collator = threadLocalCollator.get()
 
     private val LEADING_ARTICLES_REGEX = Regex("""^(?:the|a|an)\s+""", RegexOption.IGNORE_CASE)
 
-    fun stripLeadingArticles(text: String): String =
-        LEADING_ARTICLES_REGEX.replace(text.trim(), "").trim()
+    fun stripLeadingArticles(text: String): String {
+        val stripped = LEADING_ARTICLES_REGEX.replace(text.trim(), "").trim()
+        return if (stripped.isEmpty()) text.trim() else stripped
+    }
 
     /**
      * Pure sorting function:
@@ -41,7 +47,7 @@ object PlaylistSorter {
             SortKey.CUSTOM -> return entries
             SortKey.TITLE -> createStringComparator(direction) { it.entry.song.title }
             SortKey.ARTIST -> createStringComparator(direction) { it.entry.song.artist }
-            SortKey.ALBUM -> createStringComparator(direction) { it.entry.song.artistUrl ?: "" }
+            SortKey.ALBUM -> createStringComparator(direction) { it.entry.song.album }
             SortKey.DATE_ADDED -> createDateComparator(direction)
             SortKey.DURATION -> createDurationComparator(direction)
         }
@@ -68,7 +74,7 @@ object PlaylistSorter {
         val cleanA = stripLeadingArticles(rawA)
         val cleanB = stripLeadingArticles(rawB)
 
-        val cmp = collator.compare(cleanA, cleanB)
+        val cmp = getCollator().compare(cleanA, cleanB)
         if (cmp != 0) {
             if (direction == SortDirection.ASC) cmp else -cmp
         } else {
@@ -85,16 +91,28 @@ object PlaylistSorter {
             if (cmp != 0) {
                 if (direction == SortDirection.ASC) cmp else -cmp
             } else {
-                tieBreak(a, b)
+                // Same timestamp (e.g. batch added or created at once):
+                // In ASC (oldest added first): earlier in original list comes first.
+                // In DESC (recently added first): later in original list comes first.
+                if (direction == SortDirection.ASC) {
+                    a.originalIndex.compareTo(b.originalIndex)
+                } else {
+                    b.originalIndex.compareTo(a.originalIndex)
+                }
             }
         } else if (timeA > 0L && timeB <= 0L) {
-            if (direction == SortDirection.ASC) -1 else 1
+            // Missing timestamps always go last, in both ASC and DESC
+            -1
         } else if (timeA <= 0L && timeB > 0L) {
-            if (direction == SortDirection.ASC) 1 else -1
+            // Missing timestamps always go last, in both ASC and DESC
+            1
         } else {
             // Both missing timestamps: fallback to stored position
-            val cmp = a.originalIndex.compareTo(b.originalIndex)
-            if (direction == SortDirection.ASC) cmp else -cmp
+            if (direction == SortDirection.ASC) {
+                a.originalIndex.compareTo(b.originalIndex)
+            } else {
+                b.originalIndex.compareTo(a.originalIndex)
+            }
         }
     }
 
@@ -120,7 +138,7 @@ object PlaylistSorter {
     private fun tieBreak(a: IndexedEntry, b: IndexedEntry): Int {
         val titleA = stripLeadingArticles(a.entry.song.title.trim())
         val titleB = stripLeadingArticles(b.entry.song.title.trim())
-        val titleCmp = collator.compare(titleA, titleB)
+        val titleCmp = getCollator().compare(titleA, titleB)
         if (titleCmp != 0) return titleCmp
         return a.originalIndex.compareTo(b.originalIndex)
     }
@@ -178,7 +196,7 @@ object PlaylistSorter {
             LibrarySortKey.ALPHABETICAL -> Comparator { a, b ->
                 val titleA = stripLeadingArticles(titleSelector(a.first))
                 val titleB = stripLeadingArticles(titleSelector(b.first))
-                val cmp = collator.compare(titleA, titleB)
+                val cmp = getCollator().compare(titleA, titleB)
                 if (cmp != 0) {
                     if (direction == SortDirection.ASC) cmp else -cmp
                 } else {
