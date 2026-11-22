@@ -608,7 +608,7 @@ class AutoplayPipeline(
         val pool = mutableListOf<CandidatePoolItem>()
         for ((genType, songs) in genOutputs) {
             for ((rank, song) in songs.withIndex()) {
-                val existing = pool.find { it.song.id == song.id || SongIdentity.isStrictMatch(it.song, song) }
+                val existing = pool.find { it.song.id == song.id }
                 if (existing != null) {
                     existing.sources.add(genType)
                     existing.sourceRanks.putIfAbsent(genType, rank)
@@ -736,7 +736,7 @@ class AutoplayPipeline(
             } else {
                 removedDedupe += (group.size - 1)
                 val songsInGroup = group.map { it.song }
-                val winner = SongIdentity.selectRepresentative(songsInGroup)
+                val winner = selectWinner(songsInGroup)
                 dedupedWinners.add(winner)
                 val allSources = group.flatMap { it.sources }.toMutableSet()
                 val allRanks = mutableMapOf<CandidateGeneratorType, Int>()

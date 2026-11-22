@@ -532,7 +532,7 @@ class AutoplayPipelineTest {
 
     @Test
     fun testCandidatePool_multiSourceAggregatesAndTagsGenerators() = runBlocking {
-        val seed = makeSong("seed1", "Tum Hi Ho", "Arijit Singh")
+        val seed = makeSong("seed1", "Tum Hi Ho", "Arijit Singh").copy(album = "Aashiqui 2")
         val candRadio = makeSong("c_rad", "Channa Mereya", "Arijit Singh", preferred = true)
         val candAlbum = makeSong("c_alb", "Meri Aashiqui", "Arijit Singh", preferred = true)
         val candArtist = makeSong("c_art", "Kesariya", "Arijit Singh", preferred = true)
