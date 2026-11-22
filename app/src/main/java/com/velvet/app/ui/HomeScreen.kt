@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -777,15 +775,15 @@ private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
     ) {
         Box(
             modifier = Modifier
-                .matchParentSize()
-                .background(gradientBrush),
-        )
-        Row(
-            modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .background(gradientBrush),
         ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
             // Circular Spinning CD Album Art with breathing ambient halo
             Box(contentAlignment = Alignment.Center) {
                 Box(
@@ -875,6 +873,8 @@ private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
                 else PlayerConnection.play(queue.take(50), queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0))
             }
         }
+    }
+}
     }
 }
 
