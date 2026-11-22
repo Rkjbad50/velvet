@@ -18,7 +18,20 @@ data class TasteProfile(
     val fatiguedGroupIds: Set<String> = emptySet(), // skipped early >= 2 times in 14 days -> blocked for 30 days
     val dailyOverplayedGroupIds: Set<String> = emptySet(), // played >= 3 times in 24h -> down-weighted
     val noveltyPreferenceRatio: Double = 0.5, // ratio of completed tracks that were new to owner
-)
+) {
+    fun getArtistAffinity(artist: String): Double {
+        val norm = artist.lowercase().trim()
+        val collapsed = SongIdentity.collapseHindiLatinVariants(norm)
+        return artistAffinity[norm] ?: artistAffinity[collapsed] ?: 0.0
+    }
+
+    fun getMovieAffinity(movie: String?): Double {
+        if (movie.isNullOrBlank()) return 0.0
+        val norm = movie.lowercase().trim()
+        val collapsed = SongIdentity.collapseHindiLatinVariants(norm)
+        return movieAffinity[norm] ?: movieAffinity[collapsed] ?: 0.0
+    }
+}
 
 object TasteEngine {
     const val HALF_LIFE_MILLIS = 30.0 * 24.0 * 60.0 * 60.0 * 1000.0 // 30 days
@@ -82,20 +95,32 @@ object TasteEngine {
 
             val weightedScore = eventWeight * timeWeight
 
-            // Artists
-            val artists = if (event.artistSet.isNotEmpty()) {
-                event.artistSet.flatMap { SongIdentity.normalizeArtists(it) }
-                    .map { SongIdentity.collapseHindiLatinVariants(it) }
-            } else emptyList()
+            // Artists: index by both raw normalized and collapsed variants
+            val artistTokens = mutableSetOf<String>()
+            for (artistRaw in event.artistSet) {
+                val clean = artistRaw.lowercase().trim()
+                if (clean.isNotBlank()) {
+                    artistTokens.add(clean)
+                    artistTokens.add(SongIdentity.collapseHindiLatinVariants(clean))
+                }
+                for (norm in SongIdentity.normalizeArtists(artistRaw)) {
+                    artistTokens.add(norm)
+                    artistTokens.add(SongIdentity.collapseHindiLatinVariants(norm))
+                }
+            }
 
-            for (artist in artists) {
+            for (artist in artistTokens) {
                 artistRawScores[artist] = (artistRawScores[artist] ?: 0.0) + weightedScore
             }
 
-            // Movie
+            // Movie: index by both clean and collapsed variants
             event.movie?.takeIf { it.isNotBlank() }?.let { m ->
-                val normMovie = SongIdentity.collapseHindiLatinVariants(m.lowercase().trim())
+                val normMovie = m.lowercase().trim()
+                val collapsed = SongIdentity.collapseHindiLatinVariants(normMovie)
                 movieRawScores[normMovie] = (movieRawScores[normMovie] ?: 0.0) + weightedScore
+                if (collapsed != normMovie) {
+                    movieRawScores[collapsed] = (movieRawScores[collapsed] ?: 0.0) + weightedScore
+                }
             }
 
             // Era (decade bucket)
