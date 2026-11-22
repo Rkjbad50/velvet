@@ -64,7 +64,6 @@ import com.velvet.app.VelvetApp
 import com.velvet.app.data.ReleaseCheck
 import com.velvet.app.data.StreamResolver
 import com.velvet.app.data.UpdateInfo
-import com.velvet.app.data.UpdateTrigger
 import com.velvet.app.data.YouTube
 import com.velvet.app.diagnostics.CheckResult
 import com.velvet.app.diagnostics.DiagnosticRunner
@@ -105,14 +104,9 @@ fun DeveloperScreen(onBack: () -> Unit) {
         isCheckingUpdate = true
         scope.launch(Dispatchers.IO) {
             try {
-                val upstreamBuild = if (BuildConfig.APPLICATION_ID == "com.spitify.app") {
-                    BuildConfig.VERSION_CODE
-                } else {
-                    BuildConfig.UPSTREAM_BUILD_NUMBER
-                }
                 val info = ReleaseCheck.checkUpdate(
                     http = VelvetApp.http,
-                    upstreamBuild = upstreamBuild,
+                    installedVersionCode = BuildConfig.VERSION_CODE,
                     currentVersionName = BuildConfig.VERSION_NAME,
                     includePrereleases = VelvetApp.library.data.value.includePrereleases,
                     forceRefresh = force,

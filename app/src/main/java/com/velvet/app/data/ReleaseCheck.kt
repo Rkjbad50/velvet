@@ -139,7 +139,8 @@ internal object ReleaseCheck {
         if (updatePayload != null) {
             val isNewer = updatePayload.versionCode > installedVersionCode
             return if (isNewer) {
-                val apkAsset = targetRelease.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
+                val apkAsset = targetRelease.assets.firstOrNull { it.name.equals(updatePayload.apkName, ignoreCase = true) }
+                    ?: targetRelease.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
                 val downloadUrl = apkAsset?.browserDownloadUrl ?: targetRelease.html_url ?: UPSTREAM_RELEASES_URL
                 AppUpdateState.UpdateAvailable(
                     latestVersionName = updatePayload.versionName,
@@ -222,7 +223,7 @@ internal object ReleaseCheck {
      */
     fun checkUpdate(
         http: OkHttpClient,
-        upstreamBuild: Int = 0,
+        installedVersionCode: Int = BuildConfig.VERSION_CODE,
         currentVersionName: String = BuildConfig.VERSION_NAME,
         includePrereleases: Boolean = false,
         forceRefresh: Boolean = false,
@@ -332,7 +333,7 @@ internal object ReleaseCheck {
             }
         }
 
-        val installedCode = if (upstreamBuild > 0) upstreamBuild else BuildConfig.VERSION_CODE
+        val installedCode = if (installedVersionCode > 0) installedVersionCode else BuildConfig.VERSION_CODE
 
         val appUpdateState = if ((rateLimited || offline) && cached == null) {
             AppUpdateState.Error(
@@ -420,8 +421,8 @@ internal object ReleaseCheck {
         return standaloneSha256Regex.find(notes)?.groupValues?.get(1)
     }
 
-    fun hasNewerBuild(http: OkHttpClient, upstreamBuild: Int, currentVersionName: String = BuildConfig.VERSION_NAME): Boolean {
-        return checkUpdate(http, upstreamBuild, currentVersionName).hasAppUpdate
+    fun hasNewerBuild(http: OkHttpClient, installedVersionCode: Int = BuildConfig.VERSION_CODE, currentVersionName: String = BuildConfig.VERSION_NAME): Boolean {
+        return checkUpdate(http, installedVersionCode, currentVersionName).hasAppUpdate
     }
 
     /**

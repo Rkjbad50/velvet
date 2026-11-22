@@ -66,6 +66,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.mutableFloatStateOf
@@ -78,7 +80,6 @@ import com.velvet.app.data.SemVer
 import com.velvet.app.data.UPSTREAM_RELEASES_URL
 import com.velvet.app.data.UpdateInfo
 import com.velvet.app.data.UpdateInstallResult
-import com.velvet.app.data.UpdateTrigger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -111,16 +112,17 @@ fun SettingsScreen(onBack: () -> Unit) {
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     HistoryDialog(confirm) { confirm = null }
 
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        AppUpdater.checkInstallResult(context) { message ->
+            showToast(message, Toast.LENGTH_LONG)
+        }
+    }
+
     LaunchedEffect(data.includePrereleases) {
         withContext(Dispatchers.IO) {
-            val upstreamBuild = if (BuildConfig.APPLICATION_ID == "com.spitify.app") {
-                BuildConfig.VERSION_CODE
-            } else {
-                BuildConfig.UPSTREAM_BUILD_NUMBER
-            }
             val info = ReleaseCheck.checkUpdate(
                 http = VelvetApp.http,
-                upstreamBuild = upstreamBuild,
+                installedVersionCode = BuildConfig.VERSION_CODE,
                 currentVersionName = BuildConfig.VERSION_NAME,
                 includePrereleases = data.includePrereleases,
             )
@@ -479,15 +481,10 @@ fun SettingsScreen(onBack: () -> Unit) {
                     checkingVersion = true
                     scope.launch {
                         try {
-                            val upstreamBuild = if (BuildConfig.APPLICATION_ID == "com.spitify.app") {
-                                BuildConfig.VERSION_CODE
-                            } else {
-                                BuildConfig.UPSTREAM_BUILD_NUMBER
-                            }
                             val info = withContext(Dispatchers.IO) {
                                 ReleaseCheck.checkUpdate(
                                     http = VelvetApp.http,
-                                    upstreamBuild = upstreamBuild,
+                                    installedVersionCode = BuildConfig.VERSION_CODE,
                                     currentVersionName = BuildConfig.VERSION_NAME,
                                     includePrereleases = data.includePrereleases,
                                     forceRefresh = true,
@@ -558,7 +555,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
                 ) {
-                    // Version comparisons
+                    // Version comparison
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -566,37 +563,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                     ) {
                         Text("VELVET App:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = velvetColors.text)
                         Text(
-                            "v${info.bundledVersion} → v${info.latestVersion}",
+                            "v${info.bundledVersion} (build ${info.bundledVersionCode}) → v${info.latestVersion} (build ${info.latestVersionCode})",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (SemVer.isNewer(info.latestVersion, info.bundledVersion)) velvetColors.accentText else velvetColors.text,
+                            color = velvetColors.accentText,
                         )
                     }
-                    Spacer(Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("NewPipeExtractor:", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = velvetColors.text)
-                        Text(
-                            "${info.bundledExtractorVersion} → ${info.latestExtractorVersion}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (SemVer.isNewer(info.latestExtractorVersion, info.bundledExtractorVersion)) velvetColors.accentText else velvetColors.text,
-                        )
-                    }
-
-                    Spacer(Modifier.height(8.dp))
-                    val triggerDesc = when (info.trigger) {
-                        UpdateTrigger.APP -> "New VELVET application release available"
-                        UpdateTrigger.EXTRACTOR -> "New TeamNewPipe/NewPipeExtractor release available"
-                        UpdateTrigger.BOTH -> "Both VELVET and NewPipeExtractor updates available"
-                        UpdateTrigger.NONE -> "You are on the latest release."
-                    }
-                    Text(
-                        triggerDesc,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = velvetColors.muted,
-                    )
 
                     if (info.isRateLimited) {
                         Spacer(Modifier.height(8.dp))

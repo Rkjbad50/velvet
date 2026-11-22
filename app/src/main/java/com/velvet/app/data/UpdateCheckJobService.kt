@@ -32,14 +32,9 @@ class UpdateCheckJobService : JobService() {
 
         scope.launch {
             try {
-                val upstreamBuild = if (BuildConfig.APPLICATION_ID == "com.spitify.app") {
-                    BuildConfig.VERSION_CODE
-                } else {
-                    BuildConfig.UPSTREAM_BUILD_NUMBER
-                }
                 val info = ReleaseCheck.checkUpdate(
                     http = VelvetApp.http,
-                    upstreamBuild = upstreamBuild,
+                    installedVersionCode = BuildConfig.VERSION_CODE,
                     currentVersionName = BuildConfig.VERSION_NAME,
                     includePrereleases = VelvetApp.library.data.value.includePrereleases,
                 )

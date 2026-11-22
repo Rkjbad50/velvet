@@ -232,4 +232,29 @@ class ReleaseCheckTest {
         val logged = DiagnosticsLogger.entries.value.any { it.message.contains("Update did not apply: STATUS_FAILURE_CONFLICT (5) - Signatures do not match") }
         assertTrue("Failure must be logged in DiagnosticsLogger", logged)
     }
+
+    @Test
+    fun appUpdateExtractsMatchingApkAssetFromUpdatePayload() {
+        val release = GitHubRelease(
+            tag_name = "v2.7",
+            assets = listOf(
+                ReleaseAsset(name = "other.apk", browserDownloadUrl = "http://download/other.apk"),
+                ReleaseAsset(name = "velvet.apk", browserDownloadUrl = "http://download/velvet.apk"),
+            ),
+        )
+        val payload = UpdatePayload(
+            versionName = "2.7",
+            versionCode = 68,
+            sha256 = "hash",
+            apkName = "velvet.apk",
+        )
+        val state = ReleaseCheck.evaluateAppUpdate(
+            targetRelease = release,
+            updatePayload = payload,
+            installedVersionCode = 67,
+            installedVersionName = "2.6",
+        )
+        assertTrue(state is AppUpdateState.UpdateAvailable)
+        assertEquals("http://download/velvet.apk", (state as AppUpdateState.UpdateAvailable).downloadUrl)
+    }
 }
