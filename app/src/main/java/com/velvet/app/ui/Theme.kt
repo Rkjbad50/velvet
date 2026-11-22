@@ -270,6 +270,7 @@ object AppIcons {
     val RepeatOne = icon(
         "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z",
     )
+    val PlayNext = icon("M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z")
     val QueueMusic = icon(
         "M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 " +
             "1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z",

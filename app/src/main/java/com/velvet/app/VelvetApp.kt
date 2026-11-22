@@ -85,6 +85,7 @@ class VelvetApp : Application(), ImageLoaderFactory {
             history = sessionHistory,
             userTasteProvider = {
                 val data = library.data.value
+                val allUserSongs = (data.liked + data.recent.take(30) + data.playlists.flatMap { it.songs })
                 com.velvet.app.playback.UserTasteProfile(
                     favoriteArtists = (data.artists.map { it.name } + data.liked.map { it.artist })
                         .map { com.velvet.app.playback.normalizePrimaryArtist(it) }.filter { it.isNotBlank() }.toSet(),
@@ -95,6 +96,8 @@ class VelvetApp : Application(), ImageLoaderFactory {
                     likedTrackKeys = data.liked.map { com.velvet.app.playback.canonicalKey(it.title, it.artist) }.toSet(),
                     recentTrackKeys = data.recent.take(30).map { com.velvet.app.playback.canonicalKey(it.title, it.artist) }.toSet(),
                     preferredLanguages = data.musicLanguages,
+                    frequentClusters = allUserSongs.groupingBy { com.velvet.app.playback.detectCluster(it) }.eachCount(),
+                    frequentMoods = allUserSongs.groupingBy { com.velvet.app.playback.detectMood(it) }.eachCount(),
                 )
             }
         )

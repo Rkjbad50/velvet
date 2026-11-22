@@ -4,10 +4,19 @@ import com.velvet.app.data.Song
 import com.velvet.app.playback.AutoplayConfig
 import com.velvet.app.playback.AutoplayPipeline
 import com.velvet.app.playback.CandidateSource
+import com.velvet.app.playback.MusicCluster
 import com.velvet.app.playback.QueueManager
 import com.velvet.app.playback.QueueState
 import com.velvet.app.playback.SessionHistory
+import com.velvet.app.playback.SongEra
+import com.velvet.app.playback.SongMood
+import com.velvet.app.playback.SongTempo
+import com.velvet.app.playback.UserTasteProfile
 import com.velvet.app.playback.canonicalKey
+import com.velvet.app.playback.detectCluster
+import com.velvet.app.playback.detectEra
+import com.velvet.app.playback.detectMood
+import com.velvet.app.playback.detectTempo
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -351,5 +360,152 @@ class AutoplayPipelineTest {
             com.velvet.app.playback.MusicCluster.CARNATIC_SOUTH_FILM,
             com.velvet.app.playback.detectCluster(makeSong("6", "Pala Pala", "Harris Jayaraj")),
         )
+    }
+
+    @Test
+    fun testDetectTempo_identifiesAccurately() {
+        assertEquals(SongTempo.FAST, detectTempo(makeSong("t1", "Dance Party Dhamaka", "Singer - Topic")))
+        assertEquals(SongTempo.FAST, detectTempo(makeSong("t2", "Dil Diyan Gallan (Remix)", "Atif Aslam - Topic")))
+        assertEquals(SongTempo.FAST, detectTempo(makeSong("t3", "Winning Speech", "Karan Aujla")))
+        assertEquals(SongTempo.SLOW, detectTempo(makeSong("t4", "Chithi Aayi Hai", "Pankaj Udhas - Topic")))
+        assertEquals(SongTempo.SLOW, detectTempo(makeSong("t5", "Tum Hi Ho (Acoustic)", "Arijit Singh - Topic")))
+        assertEquals(SongTempo.MEDIUM, detectTempo(makeSong("t6", "Kesariya", "Arijit Singh - Topic")))
+    }
+
+    @Test
+    fun testDetectMood_identifiesAccurately() {
+        assertEquals(SongMood.DEVOTIONAL_SPIRITUAL, detectMood(makeSong("m1", "Shree Hanuman Chalisa", "Hariharan")))
+        assertEquals(SongMood.SAD_MELANCHOLIC, detectMood(makeSong("m2", "Dard Dilon Ke Kam Ho Jaate", "Himesh Reshammiya - Topic")))
+        assertEquals(SongMood.PARTY_CELEBRATORY, detectMood(makeSong("m3", "Saturday Saturday Dance Party", "Badshah - Topic")))
+        assertEquals(SongMood.ROMANTIC_LOVE, detectMood(makeSong("m4", "Tum Hi Ho Meri Aashiqui", "Arijit Singh - Topic")))
+        assertEquals(SongMood.SUFI_MYSTICAL, detectMood(makeSong("m5", "Dama Dam Mast Qalandar", "Nusrat Fateh Ali Khan - Topic")))
+        assertEquals(SongMood.NOSTALGIC_RETRO, detectMood(makeSong("m6", "Lag Ja Gale Classic", "Lata Mangeshkar - Topic")))
+    }
+
+    @Test
+    fun testDetectEra_identifiesAccurately() {
+        assertEquals(SongEra.VINTAGE_RETRO, detectEra(makeSong("e1", "Song 70s"), releaseYear = 1974))
+        assertEquals(SongEra.EIGHTIES_NINETIES, detectEra(makeSong("e2", "Song 90s"), releaseYear = 1994))
+        assertEquals(SongEra.TWO_THOUSANDS, detectEra(makeSong("e3", "Song 2000s"), releaseYear = 2004))
+        assertEquals(SongEra.MODERN_CONTEMPORARY, detectEra(makeSong("e4", "Song 2020s"), releaseYear = 2023))
+
+        assertEquals(SongEra.VINTAGE_RETRO, detectEra(makeSong("e5", "Vintage Song", "Lata Mangeshkar")))
+        assertEquals(SongEra.EIGHTIES_NINETIES, detectEra(makeSong("e6", "90s Hit", "Kumar Sanu")))
+        assertEquals(SongEra.TWO_THOUSANDS, detectEra(makeSong("e7", "2000s Melody", "KK")))
+        assertEquals(SongEra.MODERN_CONTEMPORARY, detectEra(makeSong("e8", "Modern Indie", "Arijit Singh")))
+    }
+
+    @Test
+    fun testScoring_priority1_genreDominatesOverMismatchedArtist() = runBlocking {
+        val seed = makeSong("seed_dev", "Shree Hanuman Chalisa", "Hariharan")
+        val candDevOtherArtist = makeSong("c_dev", "Sankatmochan Hanuman Ashtak", "Anup Jalota - Topic", preferred = true)
+        val candPartySameArtist = makeSong("c_party", "Lungi Dance Party Remix", "Hariharan - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candPartySameArtist, candDevOtherArtist) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 5)
+        // Devotional candidate must rank, while party candidate with same artist must be completely eliminated
+        assertEquals(1, next.size)
+        assertEquals("c_dev", next[0].id)
+    }
+
+    @Test
+    fun testScoring_priority2_tempoMatchBreaksTies() = runBlocking {
+        val seed = makeSong("seed_fast", "Saturday Dance Club Beat", "Dance DJ")
+        val candFast = makeSong("c_fast", "Friday Night Party Remix", "Pop DJ - Topic", preferred = true)
+        val candSlow = makeSong("c_slow", "Midnight Sad Ballad (Acoustic)", "Pop DJ - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candSlow, candFast) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 2)
+        assertEquals(2, next.size)
+        // Fast candidate with matching tempo must rank first ahead of slow candidate
+        assertEquals("c_fast", next[0].id)
+        assertEquals("c_slow", next[1].id)
+    }
+
+    @Test
+    fun testScoring_priority3_moodMatchingBoostsCompatible() = runBlocking {
+        val seed = makeSong("seed_sad", "Dard Dilon Ke Tanhai", "Singer")
+        val candSad = makeSong("c_sad", "Judai Aur Ansoo Sad Song", "Other Singer - Topic", preferred = true)
+        val candGeneral = makeSong("c_gen", "Normal Day Track", "Other Singer - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candGeneral, candSad) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 2)
+        assertEquals(2, next.size)
+        // Sad mood matching track must rank first
+        assertEquals("c_sad", next[0].id)
+        assertEquals("c_gen", next[1].id)
+    }
+
+    @Test
+    fun testScoring_priority4_pastListeningActivityBoostsClusterAndMood() = runBlocking {
+        val seed = makeSong("seed_pop", "General Pop Track", "Singer")
+        val candDev = makeSong("c_dev", "Shree Ram Bhajan", "Dev Singer - Topic", preferred = true)
+        val candRetro = makeSong("c_retro", "Purane Geet Classic", "Retro Singer - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candRetro, candDev) }),
+            history = history,
+            userTasteProvider = {
+                UserTasteProfile(
+                    frequentClusters = mapOf(MusicCluster.DEVOTIONAL to 10),
+                    frequentMoods = mapOf(SongMood.DEVOTIONAL_SPIRITUAL to 10),
+                )
+            },
+        )
+
+        val next = pipeline.next(seed, n = 2)
+        assertEquals(2, next.size)
+        // Candidate matching user's frequent past listening cluster & mood must rank first
+        assertEquals("c_dev", next[0].id)
+        assertEquals("c_retro", next[1].id)
+    }
+
+    @Test
+    fun testScoring_priority5_sameEraBoostsWhenGenreMatches() = runBlocking {
+        val seed = makeSong("seed_90s", "Aankhon Ki Gustakhiyan", "Kumar Sanu") // 90s Bollywood melody
+        val cand90s = makeSong("c_90s", "Mera Dil Bhi Kitna Pagal Hai", "Alka Yagnik - Topic", preferred = true)
+        val cand2020s = makeSong("c_2020", "Heeriye Modern Pop", "Jasleen Royal - Topic", preferred = true)
+
+        val years = mapOf("seed_90s" to 1999, "c_90s" to 1991, "c_2020" to 2023)
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(cand2020s, cand90s) }),
+            history = history,
+            releaseYearProvider = { years[it] },
+        )
+
+        val next = pipeline.next(seed, n = 2)
+        assertEquals(2, next.size)
+        // 90s candidate sharing same era and matching genre must rank first
+        assertEquals("c_90s", next[0].id)
+        assertEquals("c_2020", next[1].id)
+    }
+
+    @Test
+    fun testScoring_priority6_artistBoostOnlyWhenGenreAndTempoCompatible() = runBlocking {
+        val seed = makeSong("seed_sufi", "Khyal Ghazal", "Singer A")
+        val candSufiSameArtist = makeSong("c_sufi", "Nazm Ghazal", "Singer A - Topic", preferred = true)
+        val candFastSameArtist = makeSong("c_fast", "Club Dance Party Remix", "Singer A - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candFastSameArtist, candSufiSameArtist) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 2)
+        // Sufi track with matching genre & tempo receives artist boost and ranks first;
+        // Fast party track clashes in tempo and mood with the sufi seed
+        assertEquals("c_sufi", next[0].id)
     }
 }

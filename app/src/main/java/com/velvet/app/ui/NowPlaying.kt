@@ -14,6 +14,9 @@ import androidx.compose.material3.IconButton
 import kotlin.math.roundToInt
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -54,6 +57,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import com.velvet.app.playback.ShuffleMode
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -69,6 +73,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -957,6 +962,7 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun QueueSheet(onDismiss: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
     val userQueue = queueState.userQueue
@@ -1085,6 +1091,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = velvetColors.surface,
         tonalElevation = 0.dp,
         scrimColor = Color(0x99000000),
@@ -1230,7 +1237,11 @@ private fun LazyItemScope.QueueRow(
     onDragCancel: () -> Unit = {},
 ) {
     val isSmart = item.isSmartRecommended
-    var offsetX by remember { mutableFloatStateOf(0f) }
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { 85.dp.toPx() }
+    val animOffsetX = remember(item.qid) { Animatable(0f) }
+    var isLongPressActive by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -1250,186 +1261,270 @@ private fun LazyItemScope.QueueRow(
                 }
             }
             .zIndex(if (isDragging) 2f else 0f)
-            .offset { androidx.compose.ui.unit.IntOffset(offsetX.roundToInt(), 0) }
-            .then(
-                if (!isCurrent && !isQueueLocked && !isDragging) {
-                    Modifier.pointerInput(item.qid) {
-                        detectHorizontalDragGestures(
-                            onDragEnd = {
-                                if (offsetX > 100f) {
-                                    PlayerConnection.moveToTop(item.qid)
-                                    android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                                } else if (offsetX < -100f) {
-                                    PlayerConnection.removeItem(item.qid)
-                                    android.widget.Toast.makeText(context, "Removed from queue", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                                offsetX = 0f
-                            },
-                            onDragCancel = { offsetX = 0f },
-                            onHorizontalDrag = { _, dragAmount ->
-                                offsetX = (offsetX + dragAmount).coerceIn(-250f, 250f)
-                            },
-                        )
-                    }
-                } else Modifier
-            )
-            .padding(horizontal = 14.dp, vertical = 3.dp)
-            .then(
-                if (isSmart) {
-                    Modifier
-                        .background(velvetColors.accent.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
-                        .border(1.dp, velvetColors.accent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
-                } else if (isCurrent) {
-                    Modifier
-                        .background(velvetColors.raised, RoundedCornerShape(14.dp))
-                        .border(1.dp, velvetColors.rule, RoundedCornerShape(14.dp))
-                } else Modifier
-            )
-            .combinedClickable(
-                onClick = {
-                    if (!isCurrent) {
-                        PlayerConnection.jumpToQid(item.qid)
-                    }
-                },
-                onLongClick = {
-                    if (!isCurrent && !isQueueLocked) {
-                        PlayerConnection.moveToTop(item.qid)
-                        android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    openMenu(
-                        SongMenuRequest(
-                            song = item.song,
-                            queueItemId = item.qid,
-                            onMoveUp = if (!isCurrent && !isQueueLocked && canMoveUp) onMoveUp else null,
-                            onMoveDown = if (!isCurrent && !isQueueLocked && canMoveDown) onMoveDown else null,
-                        )
-                    )
-                },
-            )
-            .semantics {
-                if (!isCurrent && !isQueueLocked) {
-                    val actions = mutableListOf<CustomAccessibilityAction>()
-                    if (canMoveUp) {
-                        actions.add(
-                            CustomAccessibilityAction("Move up") {
-                                onMoveUp()
-                                true
-                            }
-                        )
-                    }
-                    if (canMoveDown) {
-                        actions.add(
-                            CustomAccessibilityAction("Move down") {
-                                onMoveDown()
-                                true
-                            }
-                        )
-                    }
-                    if (actions.isNotEmpty()) {
-                        customActions = actions
-                    }
-                }
-            }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 14.dp, vertical = 3.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(46.dp)) {
-                Artwork(item.song.thumb, 46.dp, corner = 14.dp)
-                if (isSmart) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(16.dp)
-                            .background(velvetColors.accent, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            AppIcons.Sparkles,
-                            contentDescription = "Smart recommendation",
-                            tint = velvetColors.onAccent,
-                            modifier = Modifier.size(10.dp),
-                        )
-                    }
-                }
-            }
-            Column(
-                Modifier
-                    .weight(1f)
-                    .padding(horizontal = 14.dp),
+        // Spotify-style swipe underlay revealed on horizontal swipe
+        val currentOffset = animOffsetX.value
+        if (currentOffset != 0f && !isDragging) {
+            val isSwipingRight = currentOffset > 0
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (isSwipingRight) Color(0xFF1DB954) else Color(0xFFE53935)),
+                contentAlignment = if (isSwipingRight) Alignment.CenterStart else Alignment.CenterEnd,
             ) {
-                Text(
-                    item.song.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = if (isCurrent) velvetColors.accentText else velvetColors.text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (isSmart) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (isSwipingRight) {
+                        Icon(
+                            AppIcons.PlayNext,
+                            contentDescription = "Play Next",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
                         Text(
-                            "✨ Recommended • ",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = velvetColors.accentText,
+                            "Play Next",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        )
+                    } else {
+                        Text(
+                            "Remove",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        )
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Remove",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
                         )
                     }
-                    Text(
-                        if (isCurrent) "Now playing" else item.song.artist,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isCurrent) velvetColors.accentText else if (isSmart) velvetColors.accentText.copy(alpha = 0.85f) else velvetColors.muted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
             }
-            if (!isCurrent && !isQueueLocked) {
-                if (isSmart) {
-                    var addedToPlaylist by remember(item.qid) { mutableStateOf(false) }
-                    DockButton(
-                        if (addedToPlaylist) Icons.Default.Check else Icons.Default.Add,
-                        "Add to playlist",
-                        tint = if (addedToPlaylist) velvetColors.accentText else velvetColors.accent,
-                    ) {
-                        val currentPid = PlayerConnection.currentPlaylistId
-                        if (currentPid != null) {
-                            VelvetApp.library.addToPlaylist(currentPid, item.song)
-                            addedToPlaylist = true
-                            android.widget.Toast.makeText(context, "Added to current playlist", android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            VelvetApp.library.toggleLike(item.song)
-                            addedToPlaylist = true
-                            android.widget.Toast.makeText(context, "Added to Liked Songs", android.widget.Toast.LENGTH_SHORT).show()
+        }
+
+        // Foreground track row card
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { androidx.compose.ui.unit.IntOffset(animOffsetX.value.roundToInt(), 0) }
+                .then(
+                    if (!isCurrent && !isQueueLocked && !isDragging) {
+                        Modifier.pointerInput(item.qid) {
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    val offset = animOffsetX.value
+                                    if (offset > swipeThresholdPx) {
+                                        PlayerConnection.moveToTop(item.qid)
+                                        android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
+                                        coroutineScope.launch {
+                                            animOffsetX.animateTo(
+                                                0f,
+                                                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                            )
+                                        }
+                                    } else if (offset < -swipeThresholdPx) {
+                                        android.widget.Toast.makeText(context, "Removed from queue", android.widget.Toast.LENGTH_SHORT).show()
+                                        coroutineScope.launch {
+                                            animOffsetX.animateTo(-1500f, tween(durationMillis = 180))
+                                            PlayerConnection.removeItem(item.qid)
+                                        }
+                                    } else {
+                                        coroutineScope.launch {
+                                            animOffsetX.animateTo(
+                                                0f,
+                                                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                            )
+                                        }
+                                    }
+                                },
+                                onDragCancel = {
+                                    coroutineScope.launch {
+                                        animOffsetX.animateTo(
+                                            0f,
+                                            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                        )
+                                    }
+                                },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    coroutineScope.launch {
+                                        val target = (animOffsetX.value + dragAmount).coerceIn(-600f, 600f)
+                                        animOffsetX.snapTo(target)
+                                    }
+                                },
+                            )
                         }
-                    }
-                }
-                DockButton(Icons.Default.KeyboardArrowUp, "Move to Top", tint = velvetColors.accentText) {
-                    PlayerConnection.moveToTop(item.qid)
-                    android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                DockButton(Icons.Default.Close, "Remove", tint = velvetColors.muted) {
-                    PlayerConnection.removeItem(item.qid)
-                }
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .pointerInput(item.qid) {
+                    } else Modifier
+                )
+                .then(
+                    if (!isCurrent && !isQueueLocked) {
+                        Modifier.pointerInput(item.qid) {
                             detectDragGesturesAfterLongPress(
-                                onDragStart = { onDragStart() },
+                                onDragStart = {
+                                    isLongPressActive = true
+                                    onDragStart()
+                                },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
                                     onDragDelta(dragAmount.y)
                                 },
-                                onDragEnd = { onDragEnd() },
-                                onDragCancel = { onDragCancel() },
+                                onDragEnd = {
+                                    isLongPressActive = false
+                                    onDragEnd()
+                                },
+                                onDragCancel = {
+                                    isLongPressActive = false
+                                    onDragCancel()
+                                },
+                            )
+                        }
+                    } else Modifier
+                )
+                .then(
+                    if (isSmart) {
+                        Modifier
+                            .background(velvetColors.surface, RoundedCornerShape(14.dp))
+                            .background(velvetColors.accent.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                            .border(1.dp, velvetColors.accent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                    } else if (isCurrent) {
+                        Modifier
+                            .background(velvetColors.raised, RoundedCornerShape(14.dp))
+                            .border(1.dp, velvetColors.rule, RoundedCornerShape(14.dp))
+                    } else {
+                        Modifier.background(velvetColors.surface, RoundedCornerShape(14.dp))
+                    }
+                )
+                .clickable(
+                    enabled = !isCurrent,
+                    onClick = {
+                        if (!isDragging && !isLongPressActive) {
+                            PlayerConnection.jumpToQid(item.qid)
+                        }
+                    },
+                )
+                .semantics {
+                    if (!isCurrent && !isQueueLocked) {
+                        val actions = mutableListOf<CustomAccessibilityAction>()
+                        if (canMoveUp) {
+                            actions.add(
+                                CustomAccessibilityAction("Move up") {
+                                    onMoveUp()
+                                    true
+                                },
+                            )
+                        }
+                        if (canMoveDown) {
+                            actions.add(
+                                CustomAccessibilityAction("Move down") {
+                                    onMoveDown()
+                                    true
+                                },
+                            )
+                        }
+                        if (actions.isNotEmpty()) {
+                            customActions = actions
+                        }
+                    }
+                }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(46.dp)) {
+                    Artwork(item.song.thumb, 46.dp, corner = 14.dp)
+                    if (isSmart) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(16.dp)
+                                .background(velvetColors.accent, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                AppIcons.Sparkles,
+                                contentDescription = "Smart recommendation",
+                                tint = velvetColors.onAccent,
+                                modifier = Modifier.size(10.dp),
+                            )
+                        }
+                    }
+                }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(horizontal = 14.dp),
+                ) {
+                    Text(
+                        item.song.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (isCurrent) velvetColors.accentText else velvetColors.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isSmart) {
+                            Text(
+                                "✨ Recommended • ",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = velvetColors.accentText,
+                            )
+                        }
+                        Text(
+                            if (isCurrent) "Now playing" else item.song.artist,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isCurrent) velvetColors.accentText else if (isSmart) velvetColors.accentText.copy(alpha = 0.85f) else velvetColors.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (!isCurrent && !isQueueLocked) {
+                    if (isSmart) {
+                        var addedToPlaylist by remember(item.qid) { mutableStateOf(false) }
+                        DockButton(
+                            if (addedToPlaylist) Icons.Default.Check else Icons.Default.Add,
+                            "Add to playlist",
+                            tint = if (addedToPlaylist) velvetColors.accentText else velvetColors.accent,
+                        ) {
+                            val currentPid = PlayerConnection.currentPlaylistId
+                            if (currentPid != null) {
+                                VelvetApp.library.addToPlaylist(currentPid, item.song)
+                                addedToPlaylist = true
+                                android.widget.Toast.makeText(context, "Added to current playlist", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                VelvetApp.library.toggleLike(item.song)
+                                addedToPlaylist = true
+                                android.widget.Toast.makeText(context, "Added to Liked Songs", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    IconButton(
+                        onClick = {
+                            openMenu(
+                                SongMenuRequest(
+                                    song = item.song,
+                                    queueItemId = item.qid,
+                                    onMoveUp = if (canMoveUp) onMoveUp else null,
+                                    onMoveDown = if (canMoveDown) onMoveDown else null,
+                                )
                             )
                         },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        AppIcons.DragHandle,
-                        contentDescription = "Reorder",
-                        tint = velvetColors.muted,
-                        modifier = Modifier.size(20.dp),
-                    )
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "Track options",
+                            tint = velvetColors.muted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
         }

@@ -135,6 +135,8 @@ data class UserTasteProfile(
     val likedTrackKeys: Set<String> = emptySet(),
     val recentTrackKeys: Set<String> = emptySet(),
     val preferredLanguages: List<String> = listOf("Hindi", "English"),
+    val frequentClusters: Map<MusicCluster, Int> = emptyMap(),
+    val frequentMoods: Map<SongMood, Int> = emptyMap(),
 )
 
 /**
@@ -150,6 +152,31 @@ enum class MusicCluster {
     ROMANTIC_POP_INDIE,
     WESTERN_POP,
     GENERAL,
+}
+
+enum class SongTempo {
+    FAST,
+    MEDIUM,
+    SLOW,
+}
+
+enum class SongMood {
+    DEVOTIONAL_SPIRITUAL,
+    ROMANTIC_LOVE,
+    SAD_MELANCHOLIC,
+    PARTY_CELEBRATORY,
+    SUFI_MYSTICAL,
+    NOSTALGIC_RETRO,
+    CHILL_RELAXING,
+    GENERAL,
+}
+
+enum class SongEra {
+    VINTAGE_RETRO,
+    EIGHTIES_NINETIES,
+    TWO_THOUSANDS,
+    MODERN_CONTEMPORARY,
+    UNKNOWN,
 }
 
 fun hasDevanagari(text: String): Boolean = text.any { it in '\u0900'..'\u097F' }
@@ -222,6 +249,52 @@ private val ROMANTIC_POP_ARTISTS = setOf(
     "sachin-jigar", "mithoon", "vishal mishra",
 )
 
+private val FAST_TEMPO_TERMS = setOf(
+    "dance", "remix", "bhangra", "dj", "party", "club", "dhamaal", "groove", "fast",
+    "dhol", "dhamaka", "beat", "bass", "trap", "mashup", "fest", "dynamite", "high rated",
+    "proper patola", "bom diggy", "kudi nu nachne de", "nachle", "nachange", "thumka", "daru",
+)
+
+private val FAST_TEMPO_ARTISTS = setOf(
+    "badshah", "yo yo honey singh", "honey singh", "sukhe", "mika singh", "hard kaur", "raftaar", "guru randhawa",
+)
+
+private val SLOW_TEMPO_TERMS = setOf(
+    "slowed", "reverb", "acoustic", "unplugged", "sad", "dard", "judaai", "melancholy", "lofi",
+    "lo-fi", "ballad", "ghazal", "khyal", "lori", "sleep", "soothing", "meditation", "peaceful",
+    "calm", "relaxing", "tanhai", "khamoshi", "virah", "chithi", "alvida", "dard e dil", "bichhad",
+)
+
+private val SLOW_TEMPO_ARTISTS = setOf(
+    "jagjit singh", "mehdi hassan", "ghulam ali", "pankaj udhas", "chitra singh", "tariq khan", "anup jalota",
+)
+
+private val SAD_MOOD_TERMS = setOf(
+    "sad", "dard", "bewafa", "judaai", "tanha", "tanhai", "alvida", "aansoo", "roothna",
+    "breakup", "heartbreak", "judai", "gham", "gam", "dhokha", "khamoshi", "tadap", "virah",
+    "bichhad", "roye", "ansu",
+)
+
+private val PARTY_MOOD_TERMS = setOf(
+    "party", "club", "daaru", "sharab", "nach", "dance", "dhamaka", "disco", "celebrat",
+    "shaadi", "wedding", "bhangra", "blast", "dhol", "peene", "shots",
+)
+
+private val ROMANTIC_MOOD_TERMS = setOf(
+    "love", "ishq", "pyaar", "pyar", "prem", "dil", "mohabbat", "hamsafar", "humsafar",
+    "romantic", "sanam", "jaan", "sajan", "saajna", "deewana", "deewani", "chahat",
+    "teri aashiqui", "tujhe dekha", "tum hi ho", "kesariya", "pehla nasha", "tum se hi",
+)
+
+private val CHILL_MOOD_TERMS = setOf(
+    "chill", "relax", "coffee", "calm", "peace", "lofi", "lo-fi", "breeze", "sukoon",
+)
+
+private val TWO_THOUSANDS_ARTISTS = setOf(
+    "shaan", "kk", "himesh reshammiya", "mohit chauhan", "sunidhi chauhan", "pritam",
+    "shankar ehsaan loy", "vishal shekhar",
+)
+
 fun detectCluster(song: Song): MusicCluster {
     val lowerTitle = song.title.lowercase(Locale.ROOT)
     val normArtist = normalizePrimaryArtist(song.artist)
@@ -248,6 +321,76 @@ fun detectCluster(song: Song): MusicCluster {
         return MusicCluster.ROMANTIC_POP_INDIE
     }
     return MusicCluster.GENERAL
+}
+
+fun detectTempo(song: Song): SongTempo {
+    val normArtist = normalizePrimaryArtist(song.artist)
+    val cluster = detectCluster(song)
+    if (containsTerm(song.title, SLOW_TEMPO_TERMS) || containsTerm(normArtist, SLOW_TEMPO_TERMS) || SLOW_TEMPO_ARTISTS.any { normArtist.contains(it) }) {
+        return SongTempo.SLOW
+    }
+    if (containsTerm(song.title, FAST_TEMPO_TERMS) || containsTerm(normArtist, FAST_TEMPO_TERMS) || FAST_TEMPO_ARTISTS.any { normArtist.contains(it) }) {
+        return SongTempo.FAST
+    }
+    if (cluster == MusicCluster.PUNJABI_BHANGRA) {
+        return SongTempo.FAST
+    }
+    if (cluster == MusicCluster.SUFI_GHAZAL) {
+        return SongTempo.SLOW
+    }
+    return SongTempo.MEDIUM
+}
+
+fun detectMood(song: Song): SongMood {
+    val cluster = detectCluster(song)
+    val normArtist = normalizePrimaryArtist(song.artist)
+    if (cluster == MusicCluster.DEVOTIONAL || containsTerm(song.title, DEVOTIONAL_TERMS) || containsTerm(normArtist, DEVOTIONAL_TERMS)) {
+        return SongMood.DEVOTIONAL_SPIRITUAL
+    }
+    if (cluster == MusicCluster.SUFI_GHAZAL || containsTerm(song.title, SUFI_GHAZAL_TERMS)) {
+        return SongMood.SUFI_MYSTICAL
+    }
+    if (containsTerm(song.title, SAD_MOOD_TERMS) || containsTerm(normArtist, SAD_MOOD_TERMS)) {
+        return SongMood.SAD_MELANCHOLIC
+    }
+    if (containsTerm(song.title, PARTY_MOOD_TERMS) || containsTerm(normArtist, PARTY_MOOD_TERMS) || FAST_TEMPO_ARTISTS.any { normArtist.contains(it) }) {
+        return SongMood.PARTY_CELEBRATORY
+    }
+    if (containsTerm(song.title, ROMANTIC_MOOD_TERMS) || containsTerm(normArtist, ROMANTIC_MOOD_TERMS) || ROMANTIC_POP_ARTISTS.any { normArtist.contains(it) }) {
+        return SongMood.ROMANTIC_LOVE
+    }
+    if (cluster == MusicCluster.RETRO_CLASSIC || containsTerm(song.title, setOf("purane", "purani yaadein", "old is gold", "retro", "vintage", "classic", "zamana"))) {
+        return SongMood.NOSTALGIC_RETRO
+    }
+    if (containsTerm(song.title, CHILL_MOOD_TERMS)) {
+        return SongMood.CHILL_RELAXING
+    }
+    return SongMood.GENERAL
+}
+
+fun detectEra(song: Song, releaseYear: Int? = null): SongEra {
+    if (releaseYear != null && releaseYear > 0) {
+        return when {
+            releaseYear < 1980 -> SongEra.VINTAGE_RETRO
+            releaseYear in 1980..1999 -> SongEra.EIGHTIES_NINETIES
+            releaseYear in 2000..2009 -> SongEra.TWO_THOUSANDS
+            else -> SongEra.MODERN_CONTEMPORARY
+        }
+    }
+    val normArtist = normalizePrimaryArtist(song.artist)
+    if (RETRO_ARTISTS.any { normArtist.contains(it) }) {
+        return SongEra.VINTAGE_RETRO
+    }
+    if (BOLLYWOOD_90S_ARTISTS.any { normArtist.contains(it) }) {
+        return SongEra.EIGHTIES_NINETIES
+    }
+    if (TWO_THOUSANDS_ARTISTS.any { normArtist.contains(it) }) {
+        return SongEra.TWO_THOUSANDS
+    }
+    if (ROMANTIC_POP_ARTISTS.any { normArtist.contains(it) } || PUNJABI_ARTISTS.any { normArtist.contains(it) }) {
+        return SongEra.MODERN_CONTEMPORARY
+    }
+    return SongEra.UNKNOWN
 }
 
 /**
@@ -529,11 +672,13 @@ class AutoplayPipeline(
     }
 
     /**
-     * Algorithmic, cluster-aware, and taste-bound scoring:
-     * - Evaluates thematic cluster affinity (e.g. devotional purity, Punjabi cohesion, retro classic).
-     * - Enforces language and script consistency (rejects non-preferred South Indic tracks during Hindi/Bhakti sessions).
-     * - Binds strongly with user's favorite and recent artists from library data.
-     * - Rewards official high-quality ATV audio and penalizes acoustic/unplugged variants.
+     * 6-Tier Hierarchical Scoring Model:
+     * 1. GENRE / CLUSTER: Dominant thematic compatibility (+80 / -150).
+     * 2. TEMPO: Cadence and energy alignment (+45 / -40).
+     * 3. MOOD: Emotional continuity (+35 / -35).
+     * 4. PAST SAME-TYPE SONG LISTENING ACTIVITY: Frequency-based taste binding from user history (+35 / +20).
+     * 5. SAME ERA AND TIMELINE: Cohesion within the same musical decade/era if genre matches (+25).
+     * 6. ARTIST: Artist continuity strictly conditioned on genre and tempo compatibility (+25 / +20).
      */
     fun scoreCandidates(
         candidates: List<Song>,
@@ -542,6 +687,9 @@ class AutoplayPipeline(
     ): List<Song> {
         val seedPrimary = normalizePrimaryArtist(seed.artist)
         val seedCluster = detectCluster(seed)
+        val seedTempo = detectTempo(seed)
+        val seedMood = detectMood(seed)
+        val seedEra = detectEra(seed, releaseYearCache[seed.id])
         val seedIsDevanagari = hasDevanagari(seed.title) || hasDevanagari(seed.artist)
 
         val views = candidates.mapNotNull { song ->
@@ -558,24 +706,31 @@ class AutoplayPipeline(
             var score = 0
             val candPrimary = normalizePrimaryArtist(candidate.artist)
             val candCluster = detectCluster(candidate)
+            val candTempo = detectTempo(candidate)
+            val candMood = detectMood(candidate)
+            val candEra = detectEra(candidate, releaseYearCache[candidate.id])
             val candIsDevanagari = hasDevanagari(candidate.title) || hasDevanagari(candidate.artist)
             val candIsSouth = hasSouthIndicScript(candidate.title) || isSouthIndic(candidate)
 
-            // 1. Audio quality / Official source
+            // 0. Audio quality / Official source
             if (isAtv(candidate)) score += 35
 
-            // 2. Cluster Match & Devotional Hard Purity
+            // ==========================================
+            // PRIORITY 1: GENRE / CLUSTER (+80 / -150)
+            // ==========================================
             if (seedCluster != MusicCluster.GENERAL && seedCluster == candCluster) {
-                score += 60
+                score += 80
             } else if (seedCluster == MusicCluster.DEVOTIONAL && candCluster != MusicCluster.DEVOTIONAL) {
-                score -= 150 // Devotional sessions must not mix with secular / party tracks
+                score -= 150 // Devotional sessions must NEVER mix with secular/party tracks
             } else if (seedCluster == MusicCluster.PUNJABI_BHANGRA && candCluster != MusicCluster.PUNJABI_BHANGRA) {
-                score -= 60
+                score -= 70
+            } else if (seedCluster != MusicCluster.GENERAL && candCluster != MusicCluster.GENERAL && seedCluster != candCluster) {
+                score -= 30
             }
 
-            // 3. Language & Script Affinity
+            // Language & Script consistency
             if (seedIsDevanagari && candIsDevanagari) {
-                score += 30
+                score += 20
             }
             if ((seedIsDevanagari || seedCluster == MusicCluster.DEVOTIONAL || seedCluster == MusicCluster.BOLLYWOOD_MELODY) && candIsSouth) {
                 val userAllowsSouth = taste.preferredLanguages.any {
@@ -583,36 +738,99 @@ class AutoplayPipeline(
                         it.equals("Malayalam", true) || it.equals("Kannada", true)
                 }
                 if (!userAllowsSouth && candPrimary !in taste.favoriteArtists && candPrimary !in taste.recentArtists) {
-                    score -= 150 // Language clash: drop Tamil/Telugu tracks from Hindi/Bhakti session
+                    score -= 150 // Language clash: suppress South Indian tracks in Hindi/Bhakti session
                 }
             }
 
-            // 4. Seed Artist Affinity
-            if (candPrimary.isNotEmpty() && candPrimary == seedPrimary) {
-                score += 25
+            // ==========================================
+            // PRIORITY 2: TEMPO (+45 / -40)
+            // ==========================================
+            if (seedTempo == candTempo) {
+                score += 45
+            } else if ((seedTempo == SongTempo.FAST && candTempo == SongTempo.SLOW) ||
+                (seedTempo == SongTempo.SLOW && candTempo == SongTempo.FAST)
+            ) {
+                score -= 40 // Major tempo clash: do not transition between high-energy fast and acoustic/sad slow
+            } else {
+                score += 10 // Medium tempo compatibility
             }
 
-            // 5. User Taste Binding
-            if (candPrimary.isNotEmpty()) {
-                if (candPrimary in taste.favoriteArtists) {
-                    score += 35
-                }
-                if (candPrimary in taste.recentArtists) {
-                    score += 25
-                }
-                if (candPrimary in taste.playlistArtists) {
-                    score += 15
-                }
+            // ==========================================
+            // PRIORITY 3: MOOD (+35 / -35)
+            // ==========================================
+            if (seedMood != SongMood.GENERAL && seedMood == candMood) {
+                score += 35
+            } else if (
+                (seedMood == SongMood.DEVOTIONAL_SPIRITUAL && candMood == SongMood.PARTY_CELEBRATORY) ||
+                (seedMood == SongMood.SAD_MELANCHOLIC && candMood == SongMood.PARTY_CELEBRATORY) ||
+                (seedMood == SongMood.PARTY_CELEBRATORY && candMood == SongMood.SAD_MELANCHOLIC)
+            ) {
+                score -= 35 // Mood clash
+            }
+
+            // ==========================================
+            // PRIORITY 4: PAST SAME-TYPE SONG ACTIVITY (+35 / +20)
+            // ==========================================
+            val clusterActivityCount = taste.frequentClusters[candCluster] ?: 0
+            if (clusterActivityCount > 0) {
+                score += Math.min(35, clusterActivityCount * 5)
+            }
+            val moodActivityCount = taste.frequentMoods[candMood] ?: 0
+            if (moodActivityCount > 0) {
+                score += Math.min(20, moodActivityCount * 3)
             }
             val key = canonicalKey(candidate.title, candidate.artist)
             if (key in taste.likedTrackKeys) {
                 score += 20
             }
+            if (key in taste.recentTrackKeys) {
+                score += 15
+            }
 
-            // 6. Style adjustments
+            // ==========================================
+            // PRIORITY 5: SAME ERA AND TIMELINE (+25)
+            // ("BUT THE GENURE MUST BE SAME")
+            // ==========================================
+            if (seedEra != SongEra.UNKNOWN && seedEra == candEra) {
+                val genreIsCompatible = seedCluster == candCluster ||
+                    seedCluster == MusicCluster.GENERAL ||
+                    candCluster == MusicCluster.GENERAL
+                if (genreIsCompatible) {
+                    score += 25
+                }
+            }
+
+            // ==========================================
+            // PRIORITY 6: ARTIST (+25 / +20)
+            // ("BUT WITH SAME CATEGORY AND SAME TEMPO AND GENURE SONGS")
+            // ==========================================
+            val isGenreCompatibleForArtist = seedCluster == candCluster ||
+                seedCluster == MusicCluster.GENERAL ||
+                candCluster == MusicCluster.GENERAL
+            val isTempoCompatibleForArtist = !(seedTempo == SongTempo.FAST && candTempo == SongTempo.SLOW) &&
+                !(seedTempo == SongTempo.SLOW && candTempo == SongTempo.FAST)
+
+            if (isGenreCompatibleForArtist && isTempoCompatibleForArtist) {
+                if (candPrimary.isNotEmpty() && candPrimary == seedPrimary) {
+                    score += 25
+                }
+                if (candPrimary in taste.favoriteArtists) {
+                    score += 20
+                }
+                if (candPrimary in taste.recentArtists) {
+                    score += 15
+                }
+                if (candPrimary in taste.playlistArtists) {
+                    score += 10
+                }
+            }
+
+            // Other metadata adjustments
             val lowerTitle = candidate.title.lowercase(Locale.ROOT)
             if (lowerTitle.contains("acoustic") || lowerTitle.contains("unplugged")) {
-                score -= 20
+                if (seedTempo != SongTempo.SLOW) {
+                    score -= 20
+                }
             }
             val v = views[candidate.id]
             if (v != null && bottomThreshold != null && v <= bottomThreshold) {
