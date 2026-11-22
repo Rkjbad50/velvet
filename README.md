@@ -13,7 +13,7 @@
 [![Developer: Rkjbad50](https://img.shields.io/badge/Developer-Rkjbad50-8B5CF6)](https://github.com/Rkjbad50)
 
 <p align="center">
-  <a href="#-whats-new-in-v27">What's New</a> •
+  <a href="#-whats-new-in-v271">What's New</a> •
   <a href="#-key-features">Key Features</a> •
   <a href="#-installation">Installation</a> •
   <a href="#%EF%B8%8F-architecture--tech-stack">Architecture</a> •
@@ -23,6 +23,36 @@
 </p>
 
 </div>
+
+---
+
+## 🌟 What's New in v2.7.1
+
+- 🔍 **In-Playlist Track Search**:
+  - Instantly search and filter tracks inside saved playlists by song title or artist.
+  - Sleek top header toggle button with responsive search panel.
+  - Zero disruption to playlist sorting, drag-reorder, duplicate, delete, or undo toast actions.
+
+- 🌊 **Fluid Minimal Wavy Pulse Visualizer Redesign**:
+  - Re-engineered with smooth, undulating traveling harmonic sine waves with radiant center ambient bloom.
+  - Replaced rigid vertical bars with continuous fluid acoustic crests and luminous micro-filaments.
+  - Accented with toned-down theme colors for a refined, modern audiophile aesthetic.
+
+- ⚡ **Real-Time Streaming Resolution Badge & Jitter Elimination**:
+  - Rapid 150ms resolution detection reflecting exact streaming bitrate (`OPUS 160K`, `OPUS 50K`, `OFFLINE`).
+  - Anchored mathematically to true screen center (`Modifier.align(Alignment.Center)`)—100% elimination of horizontal position jitter during track transitions.
+  - Tap to toggle audio streaming quality in real time.
+
+- ❤️ **Interactive Notification Panel Like Button**:
+  - Heart icon (`ic_heart_filled` / `ic_heart_outline`) added directly to the system media notification mini player.
+  - Tap to like/unlike songs instantly from the lockscreen or notification tray without opening the app.
+
+- ⏭️ **Continuous Notification Controls**:
+  - MediaSession explicitly grants `SEEK_TO_NEXT` and `SEEK_TO_PREVIOUS` commands, ensuring Next and Previous buttons remain visible and functional even on first standalone track playback.
+
+- 💫 **App-Wide Tactile Button Responsiveness**:
+  - Spring-scale press bounce (`0.88f` bounce) and crisp haptics across all buttons app-wide.
+  - Playlist Play/Pause/Shuffle buttons reflect live playback state with active Pause icon when playing.
 
 ---
 

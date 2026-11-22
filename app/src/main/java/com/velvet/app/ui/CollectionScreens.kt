@@ -39,7 +39,10 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -159,6 +162,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
         artworkUrl = info.thumb,
     )
 
+    val isPlayingAlbum = PlayerConnection.isPlaying && songs.any { it.id == PlayerConnection.current?.id }
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -168,7 +172,11 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
                 tint = tint,
                 art = { Artwork(info.thumb, 230.dp, corner = 34.dp, placeholder = AppIcons.Album) },
                 playEnabled = songs.isNotEmpty(),
-                onPlay = { PlayerConnection.play(songs, context = playbackContext) },
+                isPlaying = isPlayingAlbum,
+                onPlay = {
+                    if (isPlayingAlbum) PlayerConnection.togglePlay()
+                    else PlayerConnection.play(songs, context = playbackContext)
+                },
                 onShuffle = { shuffle(songs, context = playbackContext) },
                 onSubtitleClick = songs.firstOrNull()?.artistUrl?.takeIf { isAlbum }?.let { url ->
                     { nav.open(Route.Artist(ArtistRef(url, info.subtitle))) }
@@ -206,6 +214,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
 fun LikedScreen(onBack: () -> Unit) {
     val data by VelvetApp.library.data.collectAsStateWithLifecycle()
     val songs = data.liked
+    val isPlayingLiked = PlayerConnection.isPlaying && songs.any { it.id == PlayerConnection.current?.id }
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -215,7 +224,11 @@ fun LikedScreen(onBack: () -> Unit) {
                 tint = velvetColors.danger,
                 art = { LikedCover(230.dp, corner = 34.dp) },
                 playEnabled = songs.isNotEmpty(),
-                onPlay = { PlayerConnection.play(songs) },
+                isPlaying = isPlayingLiked,
+                onPlay = {
+                    if (isPlayingLiked) PlayerConnection.togglePlay()
+                    else PlayerConnection.play(songs)
+                },
                 onShuffle = { shuffle(songs) },
                 actions = { DownloadAllButton(songs) },
             )
@@ -430,6 +443,7 @@ fun DownloadsScreen(onBack: () -> Unit) {
     val data by VelvetApp.library.data.collectAsStateWithLifecycle()
     val progress by VelvetApp.downloads.progress.collectAsStateWithLifecycle()
     val songs = data.downloads
+    val isPlayingDownloads = PlayerConnection.isPlaying && songs.any { it.id == PlayerConnection.current?.id }
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -439,7 +453,11 @@ fun DownloadsScreen(onBack: () -> Unit) {
                 tint = velvetColors.accentText,
                 art = { DownloadsCover(230.dp, corner = 34.dp) },
                 playEnabled = songs.isNotEmpty(),
-                onPlay = { PlayerConnection.play(songs) },
+                isPlaying = isPlayingDownloads,
+                onPlay = {
+                    if (isPlayingDownloads) PlayerConnection.togglePlay()
+                    else PlayerConnection.play(songs)
+                },
                 onShuffle = { shuffle(songs) },
             )
         }
@@ -473,6 +491,8 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     var showEditSheet by remember { mutableStateOf(false) }
     var showSortSheet by remember { mutableStateOf(false) }
     var showOverflowMenu by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     ConfirmDialog(confirm) { confirm = null }
 
@@ -488,6 +508,16 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     }
     val activeSongs = remember(activeEntries) {
         activeEntries.map { it.song }
+    }
+    val filteredEntries = remember(activeEntries, searchQuery) {
+        if (searchQuery.isBlank()) activeEntries
+        else {
+            val q = searchQuery.trim().lowercase()
+            activeEntries.filter { entry ->
+                entry.song.title.lowercase().contains(q) ||
+                entry.song.artist.lowercase().contains(q)
+            }
+        }
     }
 
     var recentlyRemoved by remember { mutableStateOf<Pair<Int, PlaylistEntry>?>(null) }
@@ -508,6 +538,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
         subtitle = songCountStr,
         artworkUrl = coverUrl,
     )
+    val isCurrentPlaylistPlaying = PlayerConnection.isPlaying && activeSongs.any { it.id == PlayerConnection.current?.id }
 
     Box(Modifier.fillMaxSize()) {
         BackPage(onBack) {
@@ -538,9 +569,23 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     },
                     artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
                     playEnabled = activeSongs.isNotEmpty(),
-                    onPlay = { PlayerConnection.play(activeSongs, playlistId = id, context = playbackContext) },
+                    isPlaying = isCurrentPlaylistPlaying,
+                    onPlay = {
+                        if (isCurrentPlaylistPlaying) {
+                            PlayerConnection.togglePlay()
+                        } else if (activeSongs.isNotEmpty()) {
+                            PlayerConnection.play(activeSongs, playlistId = id, context = playbackContext)
+                        }
+                    },
                     onShuffle = { shuffle(activeSongs, playlistId = id, context = playbackContext) },
                     topActions = {
+                        PanelIconButton(
+                            if (showSearch) Icons.Default.Close else Icons.Default.Search,
+                            if (showSearch) "Close search" else "Search in playlist",
+                        ) {
+                            showSearch = !showSearch
+                            if (!showSearch) searchQuery = ""
+                        }
                         PanelIconButton(AppIcons.Pencil, "Edit playlist") { showEditSheet = true }
                         Box {
                             PanelIconButton(Icons.Default.MoreVert, "More options") { showOverflowMenu = true }
@@ -615,6 +660,57 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                 )
             }
 
+            if (showSearch) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 6.dp)
+                            .panel(RoundedCornerShape(14.dp), fill = velvetColors.raised)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = null,
+                                tint = velvetColors.muted,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            BasicTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(color = velvetColors.text),
+                                cursorBrush = SolidColor(velvetColors.accent),
+                                decorationBox = { innerTextField ->
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            "Search in playlist...",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = velvetColors.muted,
+                                        )
+                                    }
+                                    innerTextField()
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { searchQuery = "" },
+                                    modifier = Modifier.size(24.dp),
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear", tint = velvetColors.muted, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (playlist.sortKey != SortKey.CUSTOM && activeEntries.isNotEmpty()) {
                 item {
                     Text(
@@ -629,15 +725,20 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                 }
             }
 
-            if (activeEntries.isEmpty()) {
-                item { EmptyHint("No songs in this playlist.") }
+            if (filteredEntries.isEmpty()) {
+                if (searchQuery.isNotBlank()) {
+                    item { EmptyHint("No songs match \"$searchQuery\"") }
+                } else {
+                    item { EmptyHint("No songs in this playlist.") }
+                }
             }
 
-            itemsIndexed(activeEntries, key = { _, entry -> entry.entryId }) { index, entry ->
+            itemsIndexed(filteredEntries, key = { _, entry -> entry.entryId }) { _, entry ->
                 SongRow(
                     song = entry.song,
                     onClick = {
-                        PlayerConnection.play(activeSongs, index, playlistId = id, context = playbackContext)
+                        val origIdx = activeSongs.indexOfFirst { it.id == entry.song.id }.coerceAtLeast(0)
+                        PlayerConnection.play(activeSongs, origIdx, playlistId = id, context = playbackContext)
                     },
                     playlistId = id,
                 )

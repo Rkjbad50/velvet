@@ -801,6 +801,7 @@ fun CollectionHeader(
     tint: Color,
     art: @Composable () -> Unit,
     playEnabled: Boolean,
+    isPlaying: Boolean = false,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     artworkBackdropSize: Dp = 300.dp,
@@ -877,15 +878,30 @@ fun CollectionHeader(
                 actions()
                 Spacer(Modifier.weight(1f))
                 PanelIconButton(AppIcons.Shuffle, "Shuffle play", size = 48.dp, onClick = { if (playEnabled) onShuffle() })
-                PlayCircle(enabled = playEnabled, onClick = onPlay)
+                PlayCircle(
+                    enabled = playEnabled,
+                    icon = if (isPlaying) AppIcons.Pause else AppIcons.Play,
+                    onClick = onPlay,
+                )
             }
         }
     }
 }
 
 @Composable
-fun PlayCircle(enabled: Boolean = true, size: Dp = 60.dp, onClick: () -> Unit) =
-    AccentCircleButton(AppIcons.Play, "Play", size, enabled = enabled, onClick = onClick)
+fun PlayCircle(
+    enabled: Boolean = true,
+    size: Dp = 60.dp,
+    icon: ImageVector = AppIcons.Play,
+    onClick: () -> Unit,
+) =
+    AccentCircleButton(
+        icon = icon,
+        contentDescription = if (icon == AppIcons.Pause) "Pause" else "Play",
+        size = size,
+        enabled = enabled,
+        onClick = onClick,
+    )
 
 /** Download-all toggle for a list of songs; shows progress while downloading. */
 @Composable

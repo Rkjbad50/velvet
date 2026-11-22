@@ -26,9 +26,12 @@ import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.velvet.app.R
@@ -53,6 +56,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
+
+const val ACTION_TOGGLE_LIKE = "com.velvet.app.ACTION_TOGGLE_LIKE"
 
 /**
  * The invisible "backend": an ExoPlayer that keeps playing with the screen off, exposed
@@ -113,6 +118,11 @@ class PlaybackService : MediaSessionService() {
         onAudioSession(exo.audioSessionId)
         scope.launch {
             VelvetApp.library.data.map { it.eq }.distinctUntilChanged().collect { AudioFx.apply(it) }
+        }
+        scope.launch {
+            VelvetApp.library.likedIds.collect {
+                updateLikeButton()
+            }
         }
         // the cache before rendition-keyed entries; its keys can't be trusted any more
         scope.launch(Dispatchers.IO) { File(cacheDir, "media").deleteRecursively() }
@@ -220,7 +230,85 @@ class PlaybackService : MediaSessionService() {
             .build()
     }
 
+    private fun updateLikeButton() {
+        val sess = session ?: return
+        val currentSong = exo.currentMediaItem?.toSong() ?: return
+        val isLiked = currentSong.id in VelvetApp.library.likedIds.value
+        val likeCommand = SessionCommand(ACTION_TOGGLE_LIKE, android.os.Bundle.EMPTY)
+        val likeButton = CommandButton.Builder()
+            .setSessionCommand(likeCommand)
+            .setIconResId(if (isLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart_outline)
+            .setDisplayName(if (isLiked) "Unlike" else "Like")
+            .setEnabled(true)
+            .build()
+        sess.setCustomLayout(listOf(likeButton))
+    }
+
     private val callback = object : MediaSession.Callback {
+        override fun onConnect(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): MediaSession.ConnectionResult {
+            val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                .add(SessionCommand(ACTION_TOGGLE_LIKE, android.os.Bundle.EMPTY))
+                .build()
+
+            val playerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
+                .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                .add(Player.COMMAND_PLAY_PAUSE)
+                .add(Player.COMMAND_STOP)
+                .build()
+
+            return MediaSession.ConnectionResult.accept(sessionCommands, playerCommands)
+        }
+
+        override fun onPostConnect(mediaSession: MediaSession, controller: MediaSession.ControllerInfo) {
+            super.onPostConnect(mediaSession, controller)
+            updateLikeButton()
+        }
+
+        override fun onCustomCommand(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: android.os.Bundle,
+        ): ListenableFuture<SessionResult> {
+            if (customCommand.customAction == ACTION_TOGGLE_LIKE) {
+                val currentSong = exo.currentMediaItem?.toSong()
+                if (currentSong != null) {
+                    scope.launch(Dispatchers.Main) {
+                        VelvetApp.library.toggleLike(currentSong)
+                        updateLikeButton()
+                    }
+                }
+                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
+            return super.onCustomCommand(mediaSession, controller, customCommand, args)
+        }
+
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            playerCommand: Int,
+        ): Int {
+            when (playerCommand) {
+                Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+                    scope.launch(Dispatchers.Main) {
+                        PlayerConnection.next()
+                    }
+                    return SessionResult.RESULT_SUCCESS
+                }
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+                    scope.launch(Dispatchers.Main) {
+                        PlayerConnection.previous()
+                    }
+                    return SessionResult.RESULT_SUCCESS
+                }
+            }
+            return super.onPlayerCommandRequest(session, controller, playerCommand)
+        }
+
         // Items from controllers arrive without their URI: rebuild it from a validated media id
         override fun onAddMediaItems(
             mediaSession: MediaSession,
@@ -257,6 +345,7 @@ class PlaybackService : MediaSessionService() {
             trimPlayedHistory()
             prefetchNext()
             exo.volume = 1.0f
+            updateLikeButton()
         }
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {}

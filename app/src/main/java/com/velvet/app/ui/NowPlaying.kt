@@ -117,6 +117,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -308,14 +310,16 @@ private fun rememberLyrics(song: Song, automatic: Boolean, attempt: Int): Lyrics
         }
     }.value
 
-/** "OPUS 160K", or "OFFLINE" for downloads; appears once the service has resolved the stream. */
+/** "OPUS 160K", "OPUS 50K", or "OFFLINE" for downloads; fast-updating stream quality tracker. */
 @SuppressLint("ProduceStateDoesNotAssignValue")
 @Composable
-private fun rememberQuality(song: Song, hiRes: Boolean): String? =
-    // re-read after a quality switch
-    produceState<String?>(null, song.id, hiRes) {
-        value = null
-        repeat(30) {
+private fun rememberQuality(song: Song, hiRes: Boolean): String {
+    val initial = remember(song.id, hiRes) {
+        if (VelvetApp.downloads.fileFor(song.id) != null) "OFFLINE"
+        else StreamResolver.peek(song.id)?.quality ?: if (hiRes) "OPUS 160K" else "OPUS 50K"
+    }
+    return produceState(initialValue = initial, song.id, hiRes) {
+        repeat(40) {
             if (VelvetApp.downloads.fileFor(song.id) != null) {
                 value = "OFFLINE"
                 return@produceState
@@ -324,9 +328,10 @@ private fun rememberQuality(song: Song, hiRes: Boolean): String? =
                 value = it.quality
                 return@produceState
             }
-            delay(1000)
+            delay(150)
         }
     }.value
+}
 
 @Composable
 fun NowPlayingScreen(onClose: () -> Unit) {
@@ -730,11 +735,11 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                         onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
                         onSeekPreview = { seekPreview = it },
                     )
-                    Row(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 2.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        contentAlignment = Alignment.Center,
                     ) {
                         // Elapsed Time (left)
                         Text(
@@ -743,26 +748,22 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 fontSize = 12.sp,
                             ),
                             color = Color(0xFF9E9E9E),
+                            modifier = Modifier.align(Alignment.CenterStart),
                         )
 
-                        Spacer(Modifier.weight(1f))
-
-                        // Streaming resolution tag: plain text, accent color, no outer box/border, between seekbar & controls
-                        val badgeText = quality?.uppercase()?.let {
-                            if (it.contains("OPUS") || it.contains("160")) "OPUS 161K" else it
-                        } ?: "OPUS 161K"
+                        // Streaming resolution tag: locked to true center with absolute zero horizontal jitter
                         Text(
-                            badgeText,
+                            quality.uppercase(),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 letterSpacing = 0.5.sp,
                             ),
                             color = accent,
-                            modifier = Modifier.clickable { PlayerConnection.setHiRes(!hiRes) },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .clickable { PlayerConnection.setHiRes(!hiRes) },
                         )
-
-                        Spacer(Modifier.weight(1f))
 
                         // Duration (right)
                         Text(
@@ -771,6 +772,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 fontSize = 12.sp,
                             ),
                             color = Color(0xFF9E9E9E),
+                            modifier = Modifier.align(Alignment.CenterEnd),
                         )
                     }
                 }
@@ -811,17 +813,14 @@ private fun AudioWaveformVisualizer(
     accent: Color,
     modifier: Modifier = Modifier,
 ) {
-    val barCount = 41
-    val centerIdx = 20f
-
-    // Poweramp Equalizer Beat Synchronization (~125 BPM cadence: 480ms/beat, 1920ms for 4 beats)
-    val beatTransition = rememberInfiniteTransition(label = "powerampBeat")
+    // Cadence ~120 BPM fluid acoustic wave ripple (2400ms cycle)
+    val beatTransition = rememberInfiniteTransition(label = "fluidBeat")
     val beatCycle by if (isPlaying) {
         beatTransition.animateFloat(
             initialValue = 0f,
-            targetValue = (8 * Math.PI).toFloat(),
+            targetValue = (4 * Math.PI).toFloat(),
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1920, easing = LinearEasing),
+                animation = tween(durationMillis = 2400, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart,
             ),
             label = "beatCycle",
@@ -831,7 +830,7 @@ private fun AudioWaveformVisualizer(
     }
 
     // Toned down theme accent color for refined luminous acoustic aesthetic
-    val tonedAccent = remember(accent) { accent.copy(alpha = 0.88f) }
+    val tonedAccent = remember(accent) { accent.copy(alpha = 0.85f) }
 
     Box(
         modifier = modifier
@@ -839,57 +838,153 @@ private fun AudioWaveformVisualizer(
             .height(38.dp),
         contentAlignment = Alignment.Center,
     ) {
-        // Soft warm luminous ambient glow behind center bars
+        // Soft warm luminous ambient glow behind center waves
         Box(
             modifier = Modifier
-                .width(180.dp)
+                .width(220.dp)
                 .height(38.dp)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            accent.copy(alpha = 0.35f),
-                            accent.copy(alpha = 0.10f),
+                            accent.copy(alpha = 0.32f),
+                            accent.copy(alpha = 0.08f),
                             Color.Transparent,
                         ),
-                        radius = 240f,
-                    )
-                )
+                        radius = 280f,
+                    ),
+                ),
         )
 
         Canvas(modifier = Modifier.fillMaxWidth().height(38.dp)) {
             val width = size.width
-            val maxHeight = size.height
-            val totalBars = barCount
-            val barSpacing = width / totalBars
-            val barWidth = 2.2.dp.toPx()
+            val height = size.height
+            val midY = height / 2f
 
-            for (i in 0 until totalBars) {
-                val cx = i * barSpacing + barSpacing / 2f
-                val normalizedDist = kotlin.math.abs(i - centerIdx) / centerIdx
-                // Symmetrical Gaussian diamond/bell envelope (peak in center, smooth taper to ends)
-                val envelope = kotlin.math.exp(-3.2 * normalizedDist * normalizedDist).toFloat()
+            val primaryFillPath = Path()
+            val primaryStrokePath = Path()
+            val secondaryFillPath = Path()
+            val secondaryStrokePath = Path()
 
-                // Beat dynamic bounce: center bass punch & harmonic wave ripple
-                val beatBounce = if (isPlaying) {
-                    val b = kotlin.math.abs(kotlin.math.sin((beatCycle * 1.5 + (i - centerIdx) * 0.28).toDouble())).toFloat()
-                    0.40f + 0.60f * b
+            val stepPx = 4f
+            val count = (width / stepPx).toInt() + 1
+
+            // Dynamic beat bounce expands wave amplitude on the beat
+            val bounce = if (isPlaying) {
+                0.55f + 0.45f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
+            } else {
+                0.35f
+            }
+            val maxAmp = (height * 0.42f) * bounce
+
+            primaryFillPath.moveTo(0f, midY)
+            secondaryFillPath.moveTo(0f, midY)
+
+            for (i in 0..count) {
+                val x = (i * stepPx).coerceAtMost(width)
+                // Normalized coordinate: u in [-1, 1]
+                val u = ((x - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                // Symmetrical Gaussian envelope tapering smoothly to 0 at edges
+                val envelope = (kotlin.math.exp(-3.2 * u * u) * (1.0 - u * u)).toFloat().coerceAtLeast(0f)
+
+                // Traveling harmonic wave phases
+                val phase1 = (3.5 * Math.PI * (x / width) - beatCycle * 1.2).toDouble()
+                val phase2 = (5.2 * Math.PI * (x / width) + beatCycle * 0.9 + 1.2).toDouble()
+                val phase3 = (2.4 * Math.PI * (x / width) - beatCycle * 0.6 + 2.4).toDouble()
+
+                // Primary fluid wave elevation
+                val wave1 = (kotlin.math.sin(phase1) * 0.72 + kotlin.math.cos(phase2) * 0.28).toFloat()
+                val y1 = midY - maxAmp * envelope * wave1
+
+                // Secondary counter harmonic wave elevation
+                val wave2 = (kotlin.math.sin(phase2) * 0.60 - kotlin.math.cos(phase3) * 0.40).toFloat()
+                val y2 = midY + (maxAmp * 0.75f) * envelope * wave2
+
+                if (i == 0) {
+                    primaryStrokePath.moveTo(x, y1)
+                    secondaryStrokePath.moveTo(x, y2)
                 } else {
-                    0.72f
+                    primaryStrokePath.lineTo(x, y1)
+                    secondaryStrokePath.lineTo(x, y2)
                 }
+                primaryFillPath.lineTo(x, y1)
+                secondaryFillPath.lineTo(x, y2)
+            }
 
-                val barH = (maxHeight * envelope * beatBounce).coerceIn(2.5.dp.toPx(), maxHeight)
-                val top = (maxHeight - barH) / 2f
+            primaryFillPath.lineTo(width, midY)
+            primaryFillPath.close()
 
-                // Toned down theme color with center brightness falloff
-                val barAlpha = (0.28f + 0.72f * envelope).coerceIn(0.25f, 1f)
-                val barColor = tonedAccent.copy(alpha = barAlpha)
+            secondaryFillPath.lineTo(width, midY)
+            secondaryFillPath.close()
 
-                drawRoundRect(
-                    color = barColor,
-                    topLeft = Offset(cx - barWidth / 2f, top),
-                    size = Size(barWidth, barH),
-                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
-                )
+            // Translucent glowing gradients under wave crests
+            drawPath(
+                path = primaryFillPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(tonedAccent.copy(alpha = 0.22f), tonedAccent.copy(alpha = 0.02f)),
+                    startY = 0f,
+                    endY = midY,
+                ),
+            )
+            drawPath(
+                path = secondaryFillPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(tonedAccent.copy(alpha = 0.02f), tonedAccent.copy(alpha = 0.16f)),
+                    startY = midY,
+                    endY = height,
+                ),
+            )
+
+            // Flowing continuous luminous wave strokes
+            drawPath(
+                path = secondaryStrokePath,
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        tonedAccent.copy(alpha = 0.05f),
+                        tonedAccent.copy(alpha = 0.60f),
+                        tonedAccent.copy(alpha = 0.05f),
+                    ),
+                ),
+                style = Stroke(
+                    width = 1.6.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round,
+                ),
+            )
+            drawPath(
+                path = primaryStrokePath,
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        tonedAccent.copy(alpha = 0.10f),
+                        tonedAccent,
+                        tonedAccent.copy(alpha = 0.10f),
+                    ),
+                ),
+                style = Stroke(
+                    width = 2.4.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round,
+                ),
+            )
+
+            // Aesthetic luminous micro-filaments spaced along the wave
+            val filamentStep = 14.dp.toPx()
+            val filamentCount = (width / filamentStep).toInt()
+            for (j in 1 until filamentCount) {
+                val fx = j * filamentStep
+                val fu = ((fx - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                val fenvelope = (kotlin.math.exp(-3.2 * fu * fu) * (1.0 - fu * fu)).toFloat().coerceAtLeast(0f)
+                val fphase1 = (3.5 * Math.PI * (fx / width) - beatCycle * 1.2).toDouble()
+                val fwave1 = (kotlin.math.sin(fphase1) * 0.72).toFloat()
+                val fy1 = midY - maxAmp * fenvelope * fwave1
+
+                if (fenvelope > 0.05f) {
+                    val dotAlpha = (fenvelope * 0.85f).coerceIn(0f, 1f)
+                    drawCircle(
+                        color = tonedAccent.copy(alpha = dotAlpha),
+                        radius = 1.6.dp.toPx(),
+                        center = Offset(fx, fy1),
+                    )
+                }
             }
         }
     }
@@ -907,14 +1002,31 @@ private fun ModernControlDock(accent: Color) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val shuffleMode = PlayerConnection.shuffleMode
+        val shuffleInteractionSource = remember { MutableInteractionSource() }
+        val isShufflePressed by shuffleInteractionSource.collectIsPressedAsState()
+        val shuffleScale by animateFloatAsState(
+            targetValue = if (isShufflePressed) 0.88f else 1.0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow,
+            ),
+            label = "shuffleScale",
+        )
+
         Box(
             modifier = Modifier
+                .scale(shuffleScale)
                 .size(46.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF14171A))
                 .border(1.dp, Color(0x24FFFFFF), CircleShape)
-                .clickable {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                .clickable(
+                    interactionSource = shuffleInteractionSource,
+                    indication = null,
+                ) {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
                     PlayerConnection.cycleShuffle(context)
                 },
             contentAlignment = Alignment.Center,
@@ -956,12 +1068,29 @@ private fun ModernControlDock(accent: Color) {
             }
         }
 
+        val prevInteractionSource = remember { MutableInteractionSource() }
+        val isPrevPressed by prevInteractionSource.collectIsPressedAsState()
+        val prevScale by animateFloatAsState(
+            targetValue = if (isPrevPressed) 0.86f else 1.0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow,
+            ),
+            label = "prevScale",
+        )
+
         Box(
             modifier = Modifier
+                .scale(prevScale)
                 .size(48.dp)
                 .clip(CircleShape)
-                .clickable {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                .clickable(
+                    interactionSource = prevInteractionSource,
+                    indication = null,
+                ) {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
                     PlayerConnection.previous()
                 },
             contentAlignment = Alignment.Center,
@@ -1003,7 +1132,9 @@ private fun ModernControlDock(accent: Color) {
                     interactionSource = playPauseInteractionSource,
                     indication = null,
                 ) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    } catch (_: Exception) {}
                     PlayerConnection.togglePlay()
                 },
             contentAlignment = Alignment.Center,
@@ -1024,12 +1155,29 @@ private fun ModernControlDock(accent: Color) {
             }
         }
 
+        val nextInteractionSource = remember { MutableInteractionSource() }
+        val isNextPressed by nextInteractionSource.collectIsPressedAsState()
+        val nextScale by animateFloatAsState(
+            targetValue = if (isNextPressed) 0.86f else 1.0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow,
+            ),
+            label = "nextScale",
+        )
+
         Box(
             modifier = Modifier
+                .scale(nextScale)
                 .size(48.dp)
                 .clip(CircleShape)
-                .clickable {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                .clickable(
+                    interactionSource = nextInteractionSource,
+                    indication = null,
+                ) {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
                     PlayerConnection.next()
                 },
             contentAlignment = Alignment.Center,
@@ -1043,14 +1191,31 @@ private fun ModernControlDock(accent: Color) {
         }
 
         val repeatMode = PlayerConnection.repeatMode
+        val repeatInteractionSource = remember { MutableInteractionSource() }
+        val isRepeatPressed by repeatInteractionSource.collectIsPressedAsState()
+        val repeatScale by animateFloatAsState(
+            targetValue = if (isRepeatPressed) 0.88f else 1.0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow,
+            ),
+            label = "repeatScale",
+        )
+
         Box(
             modifier = Modifier
+                .scale(repeatScale)
                 .size(46.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF14171A))
                 .border(1.dp, Color(0x24FFFFFF), CircleShape)
-                .clickable {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                .clickable(
+                    interactionSource = repeatInteractionSource,
+                    indication = null,
+                ) {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
                     PlayerConnection.cycleRepeat()
                 },
             contentAlignment = Alignment.Center,
@@ -1075,6 +1240,32 @@ private fun PlayerBottomCards(
     onSleep: () -> Unit,
 ) {
     val sleepActive = sleep != SleepTimer.State.Off
+    val haptic = LocalHapticFeedback.current
+
+    val ultraInteraction = remember { MutableInteractionSource() }
+    val isUltraPressed by ultraInteraction.collectIsPressedAsState()
+    val ultraScale by animateFloatAsState(
+        targetValue = if (isUltraPressed) 0.92f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "ultraScale",
+    )
+
+    val queueInteraction = remember { MutableInteractionSource() }
+    val isQueuePressed by queueInteraction.collectIsPressedAsState()
+    val queueScale by animateFloatAsState(
+        targetValue = if (isQueuePressed) 0.92f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "queueScale",
+    )
+
+    val sleepInteraction = remember { MutableInteractionSource() }
+    val isSleepPressed by sleepInteraction.collectIsPressedAsState()
+    val sleepScale by animateFloatAsState(
+        targetValue = if (isSleepPressed) 0.92f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "sleepScale",
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1082,10 +1273,11 @@ private fun PlayerBottomCards(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Card 1: ULT Bass
+        // Card 1: ULT Bass (Tactile spring bounce)
         Box(
             modifier = Modifier
                 .weight(1f)
+                .scale(ultraScale)
                 .height(64.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .then(
@@ -1099,7 +1291,15 @@ private fun PlayerBottomCards(
                             .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
                     }
                 )
-                .clickable(onClick = onUltraToggle)
+                .clickable(
+                    interactionSource = ultraInteraction,
+                    indication = null,
+                ) {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
+                    onUltraToggle()
+                }
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -1125,15 +1325,24 @@ private fun PlayerBottomCards(
             }
         }
 
-        // Card 2: Queue
+        // Card 2: Queue (Tactile spring bounce)
         Box(
             modifier = Modifier
                 .weight(1f)
+                .scale(queueScale)
                 .height(64.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(Color(0xFF14171A))
                 .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
-                .clickable(onClick = onQueue)
+                .clickable(
+                    interactionSource = queueInteraction,
+                    indication = null,
+                ) {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
+                    onQueue()
+                }
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -1159,10 +1368,11 @@ private fun PlayerBottomCards(
             }
         }
 
-        // Card 3: Sleep Timer
+        // Card 3: Sleep Timer (Tactile spring bounce)
         Box(
             modifier = Modifier
                 .weight(1f)
+                .scale(sleepScale)
                 .height(64.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .then(
@@ -1176,7 +1386,15 @@ private fun PlayerBottomCards(
                             .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
                     }
                 )
-                .clickable(onClick = onSleep)
+                .clickable(
+                    interactionSource = sleepInteraction,
+                    indication = null,
+                ) {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
+                    onSleep()
+                }
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -1194,7 +1412,7 @@ private fun PlayerBottomCards(
                 Text(
                     if (sleepActive) sleepLabel(sleep) else "Sleep Timer",
                     style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = if (sleepActive) FontWeight.Bold else FontWeight.Medium,
+                        fontWeight = FontWeight.Medium,
                         fontSize = 12.sp,
                     ),
                     color = if (sleepActive) Color.White else Color(0xFFB0B0B0),

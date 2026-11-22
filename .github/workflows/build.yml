@@ -48,7 +48,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            TAG="v2.7"
+            TAG="v2.7.1"
           fi
           VERSION="${TAG#v}"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
@@ -71,19 +71,14 @@ jobs:
 
           **SHA-256:** \`$SHA256\`
 
-          #### 🌟 Highlights & What's New:
-          - 🎚️ **Poweramp-Style Pulse Wave Visualizer**: Dynamic beat-synchronized multi-frequency waveform (bass punch, vocal ripple, treble shimmer) with a warm luminous center bloom and elegant Gaussian diamond envelope. Toggleable in Settings.
-          - 🎨 **All-New Expressive Now Playing Screen**:
-            - Dynamic Cover Art Palette breathing gradient synced with live playback state.
-            - Mathematically centered "Now Playing" header and theme accent indicator.
-            - High-precision plain-text streaming resolution tag (\`OPUS 161K\`) centered between seekbar timestamps.
-            - Tactile spring press-scale Play/Pause button with haptic feedback.
-            - Fuller & edge-blended cover art style seamlessly merging into the dark background.
-            - 100% theme accent color integration across all elements.
-          - 🧠 **Autoplay Recommendation Engine V2**: Multi-factor machine intelligence prioritizing Genre > Tempo/BPM > Mood > Listening History > Era > Artist category.
-          - 📜 **Dedicated Listening History**: Home clock button decoupled into standalone \`HistoryScreen\` for individual track history.
-          - 📑 **Spotify-Grade Smooth Queue Swipes**: Full-length swipes (Right to Play Next, Left to Dismiss), drag-and-drop reordering, and 3-dot track menu.
-          - 🔒 **Google Play Protect Certified & Permanent Keystore**: 100% telemetry-free, strict modern Target SDK 35 compliance, and permanent RSA-2048 signing for conflict-free in-app updates.
+          #### 🌟 Highlights & What's New in v2.7.1:
+          - 🔍 **In-Playlist Track Search**: Search and filter tracks in your saved playlists in real-time by song title or artist without disrupting custom order, drag-and-drop reordering, delete, duplicate, or undo toast.
+          - 🌊 **Fluid Minimal Wavy Pulse Visualizer**: Redesigned from scratch with an aesthetic, fluid traveling harmonic wave with soft radiant ambient center bloom and toned-down theme accent color.
+          - ⚡ **Real-Time Streaming Resolution Badge**: Instantaneous and accurate bitrate display (e.g. \`OPUS 160K\`, \`OPUS 50K\`, \`OFFLINE\`) with fast 150ms polling, interactive quality switching, and mathematically anchored to true screen center with absolute zero horizontal jitter.
+          - ❤️ **Notification Mini Player Like Button**: Interactive Like button directly in the system media notification panel (\`ic_heart_filled\` / \`ic_heart_outline\`) that toggles like state without opening the app and updates visually in real-time.
+          - ⏭️ **Notification Controls Reliability**: MediaSession ensures Next and Previous buttons are permanently visible and functional even on first standalone track playback.
+          - 💫 **Tactile App-Wide Button Responsiveness**: Tactile spring-scale press animations (\`0.88f\` bounce) and subtle crisp haptics across all buttons, plus playlist Play/Pause/Shuffle buttons with dynamic active playback state indicators.
+          - 🔒 **Google Play Protect Passed**: Built with Target SDK 35, 100% telemetry-free, secure RSA-2048 signing.
 
           Direct download: **velvet.apk** below.
           EOF
