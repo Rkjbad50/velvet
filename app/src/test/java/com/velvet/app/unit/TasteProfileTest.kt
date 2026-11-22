@@ -25,7 +25,7 @@ class TasteProfileTest {
         title: String,
         artist: String,
         album: String? = null,
-        durationSec: Int = 240,
+        durationSec: Long = 240L,
     ) = Song(
         id = id,
         title = title,
