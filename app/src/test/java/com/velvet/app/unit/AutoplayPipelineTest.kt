@@ -13,7 +13,9 @@ import com.velvet.app.playback.SessionHistory
 import com.velvet.app.playback.SongEra
 import com.velvet.app.playback.SongMood
 import com.velvet.app.playback.SongTempo
+import com.velvet.app.playback.TasteProfile
 import com.velvet.app.playback.UserTasteProfile
+import com.velvet.app.playback.Weights
 import com.velvet.app.playback.canonicalKey
 import com.velvet.app.playback.detectCluster
 import com.velvet.app.playback.detectEra
@@ -614,5 +616,121 @@ class AutoplayPipelineTest {
         val pool2 = pipeline.fetchCandidatePool(SeedProfile(current = seed))
         assertEquals(1, callCount)
         assertEquals(pool1.size, pool2.size)
+    }
+
+    @Test
+    fun testScoring_multiTermFormula_movieAndArtistAndTaste() = runBlocking {
+        val seed = makeSong("seed_hddcs", "Aankhon Ki Gustakhiyan (From \"Hum Dil De Chuke Sanam\")", "Kumar Sanu")
+        val candSameMovie = makeSong("c_movie", "Chand Chupa Badal Mein (From \"Hum Dil De Chuke Sanam\")", "Udit Narayan - Topic", preferred = true)
+        val candOther = makeSong("c_other", "Tujhe Dekha To", "Kumar Sanu - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candOther, candSameMovie) }),
+            history = history,
+            tasteProfileProvider = {
+                TasteProfile(
+                    movieAffinity = mapOf("hum dil de chuke sanam" to 0.8),
+                    artistAffinity = mapOf("udit narayan" to 0.7),
+                )
+            },
+        )
+
+        val breakdowns = mutableMapOf<String, Map<String, Double>>()
+        val scored = pipeline.scoreCandidates(
+            candidates = listOf(candOther, candSameMovie),
+            seedProfile = SeedProfile(current = seed),
+            tasteProfile = TasteProfile(
+                movieAffinity = mapOf("hum dil de chuke sanam" to 0.8),
+                artistAffinity = mapOf("udit narayan" to 0.7),
+            ),
+            scoreBreakdownOut = breakdowns,
+        )
+
+        assertEquals("c_movie", scored.first().id)
+        val movieBreakdown = breakdowns["c_movie"]!!
+        assertEquals(Weights.W2_SAME_MOVIE_OR_ALBUM, movieBreakdown["w2_sameMovieOrAlbum"] ?: 0.0, 0.01)
+        assertTrue((movieBreakdown["w6_tasteScore"] ?: 0.0) > 0.0)
+    }
+
+    @Test
+    fun testScoring_libraryBoostCappedAt15() {
+        val seed = makeSong("s1", "Song A", "Artist 1")
+        val cand = makeSong("c1", "Song B", "Artist 2", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(cand) }),
+            history = history,
+        )
+
+        val breakdowns = mutableMapOf<String, Map<String, Double>>()
+        pipeline.scoreCandidates(
+            candidates = listOf(cand),
+            seedProfile = SeedProfile(current = seed),
+            userTaste = UserTasteProfile(
+                likedTrackKeys = setOf(canonicalKey(cand.title, cand.artist)),
+                favoriteArtists = setOf("artist 2"),
+            ),
+            scoreBreakdownOut = breakdowns,
+        )
+
+        val candBreakdown = breakdowns["c1"]!!
+        val libraryBoost = candBreakdown["w7_libraryBoost"] ?: 0.0
+        assertTrue("Library boost must be <= 15.0", libraryBoost <= 15.0)
+        assertEquals(15.0, libraryBoost, 0.01)
+    }
+
+    @Test
+    fun testDiversity_movieSpacingSeparatesSameMovieSoundtrackTracks() {
+        val cand1 = makeSong("c1", "Tum Hi Ho (From \"Aashiqui 2\")", "Arijit Singh")
+        val cand2 = makeSong("c2", "Sunn Raha Hai (From \"Aashiqui 2\")", "Ankit Tiwari")
+        val cand3 = makeSong("c3", "Kalank Title Track", "Arijit Singh")
+
+        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
+        val spaced = pipeline.spaceCandidates(
+            candidates = listOf(cand1, cand2, cand3),
+            lastQueuedArtist = null,
+            lastQueuedMovie = null,
+        )
+
+        // cand1 and cand2 share movie "Aashiqui 2". Spacing must not put cand2 immediately after cand1
+        // since cand3 has different movie and different artist!
+        assertEquals("c1", spaced[0].id)
+        assertEquals("c3", spaced[1].id)
+        assertEquals("c2", spaced[2].id)
+    }
+
+    @Test
+    fun testDiversity_noveltySlotSelectedEveryFiveTracks() {
+        val knownTrack = makeSong("k1", "Known 1", "Artist A")
+        val knownTrack2 = makeSong("k2", "Known 2", "Artist B")
+        val knownTrack3 = makeSong("k3", "Known 3", "Artist C")
+        val knownTrack4 = makeSong("k4", "Known 4", "Artist D")
+        val knownTrack5 = makeSong("k5", "Known 5", "Artist E")
+        val novelTrack = makeSong("novel1", "Novel Discovery", "Artist Novel")
+
+        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
+        val candidates = listOf(knownTrack, knownTrack2, knownTrack3, knownTrack4, knownTrack5, novelTrack)
+        val playedKeys = setOf("k1", "k2", "k3", "k4", "k5")
+
+        val spaced = pipeline.spaceCandidates(
+            candidates = candidates,
+            lastQueuedArtist = null,
+            playedOrKnownKeys = playedKeys,
+            epsilon = 0.0, // pure exploitation
+        )
+
+        // Novelty slot is index 4 (5th track)
+        assertEquals("novel1", spaced[4].id)
+    }
+
+    @Test
+    fun testDiversity_deterministicWithFixedRandomSeed() {
+        val songs = (1..10).map { makeSong("s$it", "Song $it", "Artist ${it % 3}") }
+        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
+
+        val run1 = pipeline.spaceCandidates(songs, lastQueuedArtist = null, randomSeed = 12345L)
+        val run2 = pipeline.spaceCandidates(songs, lastQueuedArtist = null, randomSeed = 12345L)
+
+        assertEquals(run1.map { it.id }, run2.map { it.id })
     }
 }

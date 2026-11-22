@@ -63,6 +63,48 @@ data class SeedProfile(
 }
 
 /**
+ * Inspection details for a single candidate evaluated by the autoplay pipeline (R5).
+ */
+data class CandidateInspection(
+    val song: Song,
+    val sources: Set<CandidateGeneratorType>,
+    val g1Rank: Int?,
+    val decision: String,
+    val duplicateOf: String? = null,
+    val duplicateScore: Double? = null,
+    val filterReason: String? = null,
+    val scoreBreakdown: Map<String, Double> = emptyMap(),
+    val finalScore: Double = 0.0,
+    val finalRank: Int = -1,
+)
+
+/**
+ * Log record for a candidate dropped as a duplicate of an existing kept song (R5).
+ */
+data class DroppedDuplicateEntry(
+    val droppedSongId: String,
+    val droppedTitle: String,
+    val droppedArtist: String,
+    val keptSongId: String,
+    val keptTitle: String,
+    val keptArtist: String,
+    val similarityScore: Double,
+    val timestamp: Long = System.currentTimeMillis(),
+)
+
+/**
+ * Inspection report capturing the candidate pool evaluation for Developer options (R5).
+ */
+data class AutoplayInspectionReport(
+    val seedId: String,
+    val seedTitle: String,
+    val seedArtist: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val candidates: List<CandidateInspection> = emptyList(),
+    val droppedDuplicates: List<DroppedDuplicateEntry> = emptyList(),
+)
+
+/**
  * Interface for fetching raw candidate songs for autoplay.
  */
 fun interface CandidateSource {
@@ -487,6 +529,12 @@ class AutoplayPipeline(
     private val persistedPlayedGroupIdsProvider: (() -> List<String>)? = null,
     private val tasteProfileProvider: (() -> TasteProfile)? = null,
 ) {
+    companion object {
+        @Volatile
+        var lastInspectionReport: AutoplayInspectionReport? = null
+        val recentDroppedDuplicates = java.util.concurrent.ConcurrentLinkedDeque<DroppedDuplicateEntry>()
+    }
+
     private val releaseYearCache = BoundedCache<String, Int>(200)
     private val candidatePoolCache = BoundedCache<String, List<CandidatePoolItem>>(50)
 
@@ -755,19 +803,101 @@ class AutoplayPipeline(
                 val allRanks = mutableMapOf<CandidateGeneratorType, Int>()
                 group.forEach { allRanks.putAll(it.sourceRanks) }
                 poolItemMap[winner.id] = CandidatePoolItem(winner, allSources, allRanks)
+
+                for (dropped in group) {
+                    if (dropped.song.id != winner.id) {
+                        val simScore = SongIdentity.sameSong(dropped.song, winner)
+                        recentDroppedDuplicates.addFirst(
+                            DroppedDuplicateEntry(
+                                droppedSongId = dropped.song.id,
+                                droppedTitle = dropped.song.title,
+                                droppedArtist = dropped.song.artist,
+                                keptSongId = winner.id,
+                                keptTitle = winner.title,
+                                keptArtist = winner.artist,
+                                similarityScore = simScore,
+                            )
+                        )
+                        while (recentDroppedDuplicates.size > 50) {
+                            recentDroppedDuplicates.removeLast()
+                        }
+                    }
+                }
             }
         }
 
-        val taste = userTasteProvider?.invoke() ?: UserTasteProfile()
-        // 6. Score (deterministic, cluster-aware, and taste-bound)
-        val scored = scoreCandidates(dedupedWinners, seed, taste, poolItemMap)
+        val tasteProfile = tasteProfileProvider?.invoke() ?: TasteProfile()
+        val userTaste = userTasteProvider?.invoke() ?: UserTasteProfile()
 
-        // 7. Space (separate consecutive songs by primary artist)
-        val lastQueuedArtist = queueSnapshot.lastOrNull()?.let { normalizePrimaryArtist(it.artist) }
-        val spaced = spaceCandidates(scored, lastQueuedArtist)
+        // 6. Score (multi-term ranking formula with personal taste)
+        val scoreBreakdowns = mutableMapOf<String, Map<String, Double>>()
+        val scored = scoreCandidates(
+            candidates = dedupedWinners,
+            seedProfile = seedProfile,
+            tasteProfile = tasteProfile,
+            userTaste = userTaste,
+            poolItemMap = poolItemMap,
+            scoreBreakdownOut = scoreBreakdowns,
+        )
+
+        // 7. Space (MMR diversity: artist spacing + movie spacing + novelty slot)
+        val lastQueuedSong = queueSnapshot.lastOrNull()
+        val lastQueuedArtist = lastQueuedSong?.let { normalizePrimaryArtist(it.artist) }
+        val lastQueuedMovie = lastQueuedSong?.let { SongIdentity.normalizeTitle(it.title).movie ?: it.album }
+        val playedOrKnownKeys = (queueSnapshot.map { it.id } +
+            queueSnapshot.map { canonicalKey(it.title, it.artist) } +
+            (persistedPlayedGroupIdsProvider?.invoke() ?: emptyList())).toSet()
+
+        val spaced = spaceCandidates(
+            candidates = scored,
+            lastQueuedArtist = lastQueuedArtist,
+            lastQueuedMovie = lastQueuedMovie,
+            playedOrKnownKeys = playedOrKnownKeys,
+        )
 
         // 8. Take
         val finalResult = spaced.take(n)
+
+        // Inspection report for Developer options
+        val finalRankMap = finalResult.mapIndexed { idx, s -> s.id to (idx + 1) }.toMap()
+        val inspections = mutableListOf<CandidateInspection>()
+        for (item in pool) {
+            val s = item.song
+            val g1Rank = item.sourceRanks[CandidateGeneratorType.G1_RADIO]
+            val breakdown = scoreBreakdowns[s.id] ?: emptyMap()
+            val finalScore = breakdown["totalScore"] ?: 0.0
+            val rank = finalRankMap[s.id] ?: -1
+
+            val decision = when {
+                finalRankMap.containsKey(s.id) -> "KEPT"
+                !isEligible(s, seedPrimaryArtist) -> "DROPPED_ELIGIBILITY"
+                isHardFiltered(s, seed.title) -> "DROPPED_HARD_FILTER"
+                SongIdentity.canonicalGroupId(s) in persistedGroups -> "DROPPED_PERSISTED_HISTORY"
+                SongIdentity.canonicalGroupId(s) in tasteProfile.fatiguedGroupIds -> "DROPPED_FATIGUE"
+                dedupedWinners.none { it.id == s.id } -> "DROPPED_DUPLICATE"
+                else -> "DROPPED_RANK"
+            }
+
+            inspections.add(
+                CandidateInspection(
+                    song = s,
+                    sources = item.sources,
+                    g1Rank = g1Rank,
+                    decision = decision,
+                    scoreBreakdown = breakdown,
+                    finalScore = finalScore,
+                    finalRank = rank,
+                )
+            )
+        }
+
+        lastInspectionReport = AutoplayInspectionReport(
+            seedId = seed.id,
+            seedTitle = seed.title,
+            seedArtist = seed.artist,
+            candidates = inspections,
+            droppedDuplicates = recentDroppedDuplicates.toList(),
+        )
 
         DiagnosticsLogger.i(
             "Autoplay",
@@ -928,13 +1058,45 @@ class AutoplayPipeline(
         seed: Song,
         taste: UserTasteProfile = UserTasteProfile(),
         poolItemMap: Map<String, CandidatePoolItem> = emptyMap(),
+    ): List<Song> = scoreCandidates(
+        candidates = candidates,
+        seedProfile = SeedProfile(current = seed),
+        tasteProfile = TasteProfile(),
+        userTaste = taste,
+        poolItemMap = poolItemMap,
+    )
+
+    /**
+     * Multi-term Personal Autoplay Ranking Formula (R4):
+     * score(candidate | seedProfile, taste) =
+     *    w1 * generatorRankScore (G1 rank & multi-generator agreement)
+     *  + w2 * sameMovieOrAlbum
+     *  + w3 * artistSimilarity (decay-weighted match with seed profile)
+     *  + w4 * eraProximity
+     *  + w5 * languageMatch & genre cluster alignment
+     *  + w6 * tasteScore (personal artistAffinity & movieAffinity)
+     *  + w7 * libraryBoost (liked / playlist tracks, capped at +15)
+     *  + w8 * qualityScore (ATV > OMV > UGC, metadata completeness)
+     *  - penalties (daily overplay, duration mismatch, remix mismatch, genre clash, language clash)
+     */
+    fun scoreCandidates(
+        candidates: List<Song>,
+        seedProfile: SeedProfile,
+        tasteProfile: TasteProfile = TasteProfile(),
+        userTaste: UserTasteProfile = UserTasteProfile(),
+        poolItemMap: Map<String, CandidatePoolItem> = emptyMap(),
+        scoreBreakdownOut: MutableMap<String, Map<String, Double>>? = null,
     ): List<Song> {
+        val seed = seedProfile.current
         val seedPrimary = normalizePrimaryArtist(seed.artist)
+        val seedParsed = SongIdentity.normalizeTitle(seed.title)
+        val seedMovie = seedParsed.movie ?: seed.album ?: seedProfile.contextName
         val seedCluster = detectCluster(seed)
         val seedTempo = detectTempo(seed)
         val seedMood = detectMood(seed)
         val seedEra = detectEra(seed, releaseYearCache[seed.id])
         val seedIsDevanagari = hasDevanagari(seed.title) || hasDevanagari(seed.artist)
+        val profileArtistWeights = seedProfile.artistWeights()
 
         val views = candidates.mapNotNull { song ->
             val v = viewCountProvider?.invoke(song.id)
@@ -947,8 +1109,9 @@ class AutoplayPipeline(
         } else null
 
         val scoredList = candidates.map { candidate ->
-            var score = 0
             val candPrimary = normalizePrimaryArtist(candidate.artist)
+            val candParsed = SongIdentity.normalizeTitle(candidate.title)
+            val candMovie = candParsed.movie ?: candidate.album
             val candCluster = detectCluster(candidate)
             val candTempo = detectTempo(candidate)
             val candMood = detectMood(candidate)
@@ -956,109 +1119,35 @@ class AutoplayPipeline(
             val candIsDevanagari = hasDevanagari(candidate.title) || hasDevanagari(candidate.artist)
             val candIsSouth = hasSouthIndicScript(candidate.title) || isSouthIndic(candidate)
 
-            // 0. Audio quality / Official source & Candidate Generator Agreement (R2)
-            if (isAtv(candidate)) score += 35
+            val breakdown = mutableMapOf<String, Double>()
 
+            // 1. W1: Generator Rank & Source Agreement
+            var w1 = 0.0
             val poolItem = poolItemMap[candidate.id]
             if (poolItem != null) {
                 if (poolItem.sources.size > 1) {
-                    score += (poolItem.sources.size - 1) * 20 // Source agreement bonus
+                    w1 += (poolItem.sources.size - 1) * Weights.MULTI_SOURCE_AGREEMENT_BONUS
                 }
                 val g1Rank = poolItem.sourceRanks[CandidateGeneratorType.G1_RADIO]
                 if (g1Rank != null) {
-                    score += maxOf(0, 20 - g1Rank) // Earlier position in G1 ranks higher
+                    w1 += maxOf(0.0, Weights.G1_RANK_MAX_BONUS - g1Rank)
                 }
             }
+            breakdown["w1_generatorRank"] = w1
 
-            // ==========================================
-            // PRIORITY 1: GENRE / CLUSTER (+80 / -150)
-            // ==========================================
-            if (seedCluster != MusicCluster.GENERAL && seedCluster == candCluster) {
-                score += 80
-            } else if (seedCluster == MusicCluster.DEVOTIONAL && candCluster != MusicCluster.DEVOTIONAL) {
-                score -= 150 // Devotional sessions must NEVER mix with secular/party tracks
-            } else if (seedCluster == MusicCluster.PUNJABI_BHANGRA && candCluster != MusicCluster.PUNJABI_BHANGRA) {
-                score -= 70
-            } else if (seedCluster != MusicCluster.GENERAL && candCluster != MusicCluster.GENERAL && seedCluster != candCluster) {
-                score -= 30
-            }
-
-            // Language & Script consistency
-            if (seedIsDevanagari && candIsDevanagari) {
-                score += 20
-            }
-            if ((seedIsDevanagari || seedCluster == MusicCluster.DEVOTIONAL || seedCluster == MusicCluster.BOLLYWOOD_MELODY) && candIsSouth) {
-                val userAllowsSouth = taste.preferredLanguages.any {
-                    it.equals("Tamil", true) || it.equals("Telugu", true) ||
-                        it.equals("Malayalam", true) || it.equals("Kannada", true)
-                }
-                if (!userAllowsSouth && candPrimary !in taste.favoriteArtists && candPrimary !in taste.recentArtists) {
-                    score -= 150 // Language clash: suppress South Indian tracks in Hindi/Bhakti session
+            // 2. W2: Same Movie or Album
+            var w2 = 0.0
+            if (!seedMovie.isNullOrBlank() && !candMovie.isNullOrBlank()) {
+                val seedMovieClean = SongIdentity.collapseHindiLatinVariants(seedMovie.lowercase(Locale.ROOT).trim())
+                val candMovieClean = SongIdentity.collapseHindiLatinVariants(candMovie.lowercase(Locale.ROOT).trim())
+                if (seedMovieClean == candMovieClean || seedMovie.equals(candMovie, ignoreCase = true)) {
+                    w2 = Weights.W2_SAME_MOVIE_OR_ALBUM
                 }
             }
+            breakdown["w2_sameMovieOrAlbum"] = w2
 
-            // ==========================================
-            // PRIORITY 2: TEMPO (+45 / -40)
-            // ==========================================
-            if (seedTempo == candTempo) {
-                score += 45
-            } else if ((seedTempo == SongTempo.FAST && candTempo == SongTempo.SLOW) ||
-                (seedTempo == SongTempo.SLOW && candTempo == SongTempo.FAST)
-            ) {
-                score -= 40 // Major tempo clash: do not transition between high-energy fast and acoustic/sad slow
-            } else {
-                score += 10 // Medium tempo compatibility
-            }
-
-            // ==========================================
-            // PRIORITY 3: MOOD (+35 / -35)
-            // ==========================================
-            if (seedMood != SongMood.GENERAL && seedMood == candMood) {
-                score += 35
-            } else if (
-                (seedMood == SongMood.DEVOTIONAL_SPIRITUAL && candMood == SongMood.PARTY_CELEBRATORY) ||
-                (seedMood == SongMood.SAD_MELANCHOLIC && candMood == SongMood.PARTY_CELEBRATORY) ||
-                (seedMood == SongMood.PARTY_CELEBRATORY && candMood == SongMood.SAD_MELANCHOLIC)
-            ) {
-                score -= 35 // Mood clash
-            }
-
-            // ==========================================
-            // PRIORITY 4: PAST SAME-TYPE SONG ACTIVITY (+35 / +20)
-            // ==========================================
-            val clusterActivityCount = taste.frequentClusters[candCluster] ?: 0
-            if (clusterActivityCount > 0) {
-                score += Math.min(35, clusterActivityCount * 5)
-            }
-            val moodActivityCount = taste.frequentMoods[candMood] ?: 0
-            if (moodActivityCount > 0) {
-                score += Math.min(20, moodActivityCount * 3)
-            }
-            val key = canonicalKey(candidate.title, candidate.artist)
-            if (key in taste.likedTrackKeys) {
-                score += 20
-            }
-            if (key in taste.recentTrackKeys) {
-                score += 15
-            }
-
-            // ==========================================
-            // PRIORITY 5: SAME ERA AND TIMELINE (+25)
-            // ("BUT THE GENURE MUST BE SAME")
-            // ==========================================
-            if (seedEra != SongEra.UNKNOWN && seedEra == candEra) {
-                val genreIsCompatible = seedCluster == candCluster ||
-                    seedCluster == MusicCluster.GENERAL ||
-                    candCluster == MusicCluster.GENERAL
-                if (genreIsCompatible) {
-                    score += 25
-                }
-            }
-
-            // ==========================================
-            // PRIORITY 6: ARTIST (+25 / +20)
-            // ("BUT WITH SAME CATEGORY AND SAME TEMPO AND GENURE SONGS")
-            // ==========================================
+            // 3. W3: Artist Similarity (conditioned on genre & tempo compatibility)
+            var w3 = 0.0
             val isGenreCompatibleForArtist = seedCluster == candCluster ||
                 seedCluster == MusicCluster.GENERAL ||
                 candCluster == MusicCluster.GENERAL
@@ -1066,33 +1155,141 @@ class AutoplayPipeline(
                 !(seedTempo == SongTempo.SLOW && candTempo == SongTempo.FAST)
 
             if (isGenreCompatibleForArtist && isTempoCompatibleForArtist) {
-                if (candPrimary.isNotEmpty() && candPrimary == seedPrimary) {
-                    score += 25
-                }
-                if (candPrimary in taste.favoriteArtists) {
-                    score += 20
-                }
-                if (candPrimary in taste.recentArtists) {
-                    score += 15
-                }
-                if (candPrimary in taste.playlistArtists) {
-                    score += 10
+                val candArtists = (SongIdentity.normalizeArtists(candidate.artist) + listOf(candPrimary))
+                    .filter { it.isNotBlank() }
+                    .map { SongIdentity.collapseHindiLatinVariants(it) }
+                val maxArtistWeight = candArtists.maxOfOrNull { profileArtistWeights[it] ?: 0.0 } ?: 0.0
+                if (maxArtistWeight > 0.0) {
+                    w3 = Weights.W3_ARTIST_SIMILARITY * maxArtistWeight
+                } else if (candPrimary.isNotEmpty() && candPrimary == seedPrimary) {
+                    w3 = Weights.W3_ARTIST_SIMILARITY
                 }
             }
+            breakdown["w3_artistSimilarity"] = w3
 
-            // Other metadata adjustments
-            val lowerTitle = candidate.title.lowercase(Locale.ROOT)
-            if (lowerTitle.contains("acoustic") || lowerTitle.contains("unplugged")) {
-                if (seedTempo != SongTempo.SLOW) {
-                    score -= 20
+            // 4. W4: Era Proximity (boosted when genre matches)
+            var w4 = 0.0
+            val genreIsCompatibleForEra = seedCluster == candCluster ||
+                seedCluster == MusicCluster.GENERAL ||
+                candCluster == MusicCluster.GENERAL
+
+            if (genreIsCompatibleForEra) {
+                val seedYear = releaseYearCache[seed.id]
+                val candYear = releaseYearCache[candidate.id]
+                if (seedYear != null && candYear != null && seedYear > 0 && candYear > 0) {
+                    val seedDecade = (seedYear / 10) * 10
+                    val candDecade = (candYear / 10) * 10
+                    val proximity = if (seedDecade == candDecade) 1.0 else if (abs(seedDecade - candDecade) <= 10) 0.5 else 0.0
+                    w4 = Weights.W4_ERA_PROXIMITY * proximity
+                } else if (seedEra != SongEra.UNKNOWN && seedEra == candEra) {
+                    w4 = Weights.W4_ERA_PROXIMITY
                 }
+            }
+            breakdown["w4_eraProximity"] = w4
+
+            // 5. W5: Language Match & Genre Cluster Alignment
+            var w5 = 0.0
+            if (seedIsDevanagari && candIsDevanagari) {
+                w5 += Weights.W5_LANGUAGE_MATCH
+            }
+            if (seedCluster != MusicCluster.GENERAL && seedCluster == candCluster) {
+                w5 += 80.0
+            }
+            if (seedTempo == candTempo) {
+                w5 += 35.0
+            }
+            if (seedMood != SongMood.GENERAL && seedMood == candMood) {
+                w5 += 25.0
+            }
+            breakdown["w5_languageMatch"] = w5
+
+            // 6. W6: Personal Taste Score
+            var w6 = 0.0
+            val candArtists = (SongIdentity.normalizeArtists(candidate.artist) + listOf(candPrimary))
+                .filter { it.isNotBlank() }
+                .map { SongIdentity.collapseHindiLatinVariants(it) }
+            val artistAffinity = candArtists.maxOfOrNull { tasteProfile.getArtistAffinity(it) } ?: 0.0
+            val movieAffinity = candMovie?.let { tasteProfile.getMovieAffinity(it) } ?: 0.0
+            val combinedTaste = (artistAffinity * 0.7 + movieAffinity * 0.3).coerceIn(-1.0, 1.0)
+            w6 = Weights.W6_TASTE_SCORE * combinedTaste
+
+            // Past activity frequency from UserTasteProfile
+            val clusterActivityCount = userTaste.frequentClusters[candCluster] ?: 0
+            if (clusterActivityCount > 0) {
+                w6 += Math.min(25.0, clusterActivityCount * 4.0)
+            }
+            val moodActivityCount = userTaste.frequentMoods[candMood] ?: 0
+            if (moodActivityCount > 0) {
+                w6 += Math.min(15.0, moodActivityCount * 2.0)
+            }
+            breakdown["w6_tasteScore"] = w6
+
+            // 7. W7: Library Boost (capped at +15.0)
+            var w7 = 0.0
+            val candidateKey = canonicalKey(candidate.title, candidate.artist)
+            if (candidateKey in userTaste.likedTrackKeys || candidate.id in userTaste.likedTrackKeys) {
+                w7 = Weights.W7_LIBRARY_BOOST
+            } else if (candPrimary in userTaste.favoriteArtists || candPrimary in userTaste.playlistArtists) {
+                w7 = 10.0
+            }
+            breakdown["w7_libraryBoost"] = w7
+
+            // 8. W8: Quality Score (ATV > OMV > UGC)
+            var w8 = 0.0
+            if (isAtv(candidate)) {
+                w8 += Weights.W8_QUALITY_ATV
+            } else if (isOmv(candidate, seedPrimary)) {
+                w8 += Weights.W8_QUALITY_OMV
+            }
+            if (!candidate.album.isNullOrBlank()) {
+                w8 += Weights.W8_QUALITY_METADATA
+            }
+            breakdown["w8_qualityScore"] = w8
+
+            // 9. Penalties
+            var penalties = 0.0
+            val groupId = SongIdentity.canonicalGroupId(candidate)
+            if (groupId in tasteProfile.dailyOverplayedGroupIds) {
+                penalties += Weights.PENALTY_DAILY_OVERPLAY
+            }
+            if (abs(seed.durationSec - candidate.durationSec) > 120 && candidate.durationSec > 0 && seed.durationSec > 0) {
+                penalties += Weights.PENALTY_DURATION_MISMATCH
+            }
+            val candVersions = candParsed.versionTags
+            val seedVersions = seedParsed.versionTags
+            if (candVersions.isNotEmpty() && !candVersions.all { it in seedVersions }) {
+                penalties += Weights.PENALTY_VERSION_TAG_MISMATCH
+            }
+            if (seedCluster == MusicCluster.DEVOTIONAL && candCluster != MusicCluster.DEVOTIONAL) {
+                penalties += Weights.PENALTY_GENRE_CLASH
+            } else if (seedCluster == MusicCluster.PUNJABI_BHANGRA && candCluster != MusicCluster.PUNJABI_BHANGRA) {
+                penalties += 60.0
+            }
+            if ((seedIsDevanagari || seedCluster == MusicCluster.DEVOTIONAL || seedCluster == MusicCluster.BOLLYWOOD_MELODY) && candIsSouth) {
+                val userAllowsSouth = userTaste.preferredLanguages.any {
+                    it.equals("Tamil", true) || it.equals("Telugu", true) ||
+                        it.equals("Malayalam", true) || it.equals("Kannada", true)
+                }
+                if (!userAllowsSouth && candPrimary !in userTaste.favoriteArtists) {
+                    penalties += Weights.PENALTY_LANGUAGE_CLASH
+                }
+            }
+            if ((seedTempo == SongTempo.FAST && candTempo == SongTempo.SLOW) ||
+                (seedTempo == SongTempo.SLOW && candTempo == SongTempo.FAST)
+            ) {
+                penalties += 35.0
             }
             val v = views[candidate.id]
             if (v != null && bottomThreshold != null && v <= bottomThreshold) {
-                score -= 10
+                penalties += 10.0
             }
+            breakdown["penalties"] = -penalties
 
-            candidate to score
+            val totalScore = (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8) - penalties
+            breakdown["totalScore"] = totalScore
+
+            scoreBreakdownOut?.put(candidate.id, breakdown)
+            candidate to totalScore
         }
 
         val filtered = scoredList.filter { it.second >= 0 }
@@ -1101,26 +1298,85 @@ class AutoplayPipeline(
     }
 
     /**
-     * Spaces songs so no two consecutive songs share primary artist.
-     * If mathematically impossible, relaxes only this spacing rule.
+     * Spaces candidates to preserve diversity:
+     * - No two consecutive songs share primary artist.
+     * - No two consecutive songs share movie / soundtrack album.
+     * - Novelty slot: dedicated slot every 5 songs for discovering songs never played by owner.
+     * - Epsilon-greedy top-K exploration (0.1 epsilon) for freshness with optional deterministic test seed.
      */
-    fun spaceCandidates(candidates: List<Song>, lastQueuedArtist: String?): List<Song> {
+    fun spaceCandidates(candidates: List<Song>, lastQueuedArtist: String?): List<Song> =
+        spaceCandidates(candidates, lastQueuedArtist, null)
+
+    fun spaceCandidates(
+        candidates: List<Song>,
+        lastQueuedArtist: String?,
+        lastQueuedMovie: String? = null,
+        playedOrKnownKeys: Set<String> = emptySet(),
+        randomSeed: Long? = null,
+        noveltyInterval: Int = Weights.NOVELTY_SLOT_INTERVAL,
+        epsilon: Double = Weights.EPSILON_GREEDY,
+    ): List<Song> {
         if (candidates.size <= 1) return candidates
         val pool = candidates.toMutableList()
         val spaced = mutableListOf<Song>()
         var prevArtist = lastQueuedArtist
+        var prevMovie = lastQueuedMovie
+        val rng = if (randomSeed != null) kotlin.random.Random(randomSeed) else kotlin.random.Random.Default
 
+        var pickIndex = 0
         while (pool.isNotEmpty()) {
-            val nextIdx = pool.indexOfFirst { normalizePrimaryArtist(it.artist) != prevArtist }
-            if (nextIdx >= 0) {
-                val chosen = pool.removeAt(nextIdx)
-                spaced.add(chosen)
-                prevArtist = normalizePrimaryArtist(chosen.artist)
-            } else {
-                // Relax rule: cannot separate anymore, append remainder
-                spaced.addAll(pool)
-                break
+            val isNoveltySlot = (pickIndex % noveltyInterval == (noveltyInterval - 1))
+            var chosenIndex = -1
+
+            // 1. If novelty slot, find the highest-scoring candidate not previously played/known
+            if (isNoveltySlot) {
+                chosenIndex = pool.indexOfFirst { song ->
+                    val key = canonicalKey(song.title, song.artist)
+                    val gid = SongIdentity.canonicalGroupId(song)
+                    val isNovel = song.id !in playedOrKnownKeys && key !in playedOrKnownKeys && gid !in playedOrKnownKeys
+                    val satisfiesArtistSpacing = normalizePrimaryArtist(song.artist) != prevArtist
+                    isNovel && satisfiesArtistSpacing
+                }
             }
+
+            // 2. Normal slot or novelty fallback
+            if (chosenIndex < 0) {
+                // Find candidates that satisfy both artist and movie spacing
+                var eligibleIndices = pool.indices.filter { idx ->
+                    val s = pool[idx]
+                    val artistOk = normalizePrimaryArtist(s.artist) != prevArtist
+                    val candMovie = SongIdentity.normalizeTitle(s.title).movie ?: s.album
+                    val movieOk = prevMovie.isNullOrBlank() || candMovie.isNullOrBlank() ||
+                        !candMovie.equals(prevMovie, ignoreCase = true)
+                    artistOk && movieOk
+                }
+
+                // If none, relax movie spacing (artist spacing only)
+                if (eligibleIndices.isEmpty()) {
+                    eligibleIndices = pool.indices.filter { idx ->
+                        normalizePrimaryArtist(pool[idx].artist) != prevArtist
+                    }
+                }
+
+                // If still none, relax artist spacing as well (all pool candidates)
+                if (eligibleIndices.isEmpty()) {
+                    eligibleIndices = pool.indices.toList()
+                }
+
+                // Epsilon-greedy top-K exploration vs exploitation
+                val topK = eligibleIndices.take(Weights.TOP_K_POOL_SIZE)
+                if (topK.size > 1 && rng.nextDouble() < epsilon) {
+                    chosenIndex = topK[rng.nextInt(topK.size)]
+                } else {
+                    chosenIndex = topK.first()
+                }
+            }
+
+            val chosen = pool.removeAt(chosenIndex)
+            spaced.add(chosen)
+            prevArtist = normalizePrimaryArtist(chosen.artist)
+            prevMovie = SongIdentity.normalizeTitle(chosen.title).movie ?: chosen.album
+            pickIndex++
         }
         return spaced
     }
