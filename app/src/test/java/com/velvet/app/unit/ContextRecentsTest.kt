@@ -210,4 +210,50 @@ class ContextRecentsTest {
         assertEquals("Renamed Vibes", recent.title)
         assertEquals("preset:3", recent.artworkUrl)
     }
+
+    @Test
+    fun testHomeFourPlaylistTilesAllocatedRankingWiseFromNewestPlayed() {
+        val dir = tempFolder.newFolder("home_tiles_ranking")
+        val library = Library(dir)
+
+        val p1 = library.createPlaylist("Playlist 1")
+        val p2 = library.createPlaylist("Playlist 2")
+        val p3 = library.createPlaylist("Playlist 3")
+        val p4 = library.createPlaylist("Playlist 4")
+
+        library.addToPlaylist(p1, Song("s1", "Song 1", "Artist 1"))
+        library.addToPlaylist(p2, Song("s2", "Song 2", "Artist 2"))
+        library.addToPlaylist(p3, Song("s3", "Song 3", "Artist 3"))
+        library.addToPlaylist(p4, Song("s4", "Song 4", "Artist 4"))
+
+        // Play P4, then P2, then P3, then P1
+        library.addContextRecent(PlaybackContext(p4, RecentType.LOCAL_PLAYLIST, "Playlist 4"))
+        Thread.sleep(10)
+        library.addContextRecent(PlaybackContext(p2, RecentType.LOCAL_PLAYLIST, "Playlist 2"))
+        Thread.sleep(10)
+        library.addContextRecent(PlaybackContext(p3, RecentType.LOCAL_PLAYLIST, "Playlist 3"))
+        Thread.sleep(10)
+        library.addContextRecent(PlaybackContext(p1, RecentType.LOCAL_PLAYLIST, "Playlist 1"))
+
+        // Very newest recently played playlist is P1 -> Tile 1
+        // 2nd newest is P3 -> Tile 2
+        // 3rd newest is P2 -> Tile 3
+        // 4th newest is P4 -> Tile 4
+        val recentsMap = library.data.value.contextRecents
+            .filter { it.type == RecentType.LOCAL_PLAYLIST }
+            .associate { it.id to it.lastPlayedAt }
+
+        val rankedPlaylists = library.data.value.playlists
+            .filter { it.songs.isNotEmpty() }
+            .sortedWith(
+                compareByDescending<Playlist> { p ->
+                    maxOf(p.lastPlayedAt, recentsMap[p.id] ?: 0L)
+                }.thenByDescending { p ->
+                    maxOf(p.createdAt, p.addedAt, p.updatedAt)
+                }.thenByDescending { it.playCount }
+            )
+            .take(4)
+
+        assertEquals(listOf(p1, p3, p2, p4), rankedPlaylists.map { it.id })
+    }
 }

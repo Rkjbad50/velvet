@@ -461,7 +461,17 @@ class Library(dir: File) {
     fun clearRecent() = update { it.copy(recent = emptyList()) }
 
     fun addContextRecent(context: PlaybackContext) = update { d ->
-        d.copy(contextRecents = ContextRecentsManager.record(d.contextRecents, context, now()))
+        val updatedContextRecents = ContextRecentsManager.record(d.contextRecents, context, now())
+        if (context.type == RecentType.LOCAL_PLAYLIST) {
+            d.copy(
+                contextRecents = updatedContextRecents,
+                playlists = d.playlists.map { p ->
+                    if (p.id == context.id) p.copy(lastPlayedAt = now(), playCount = p.playCount + 1) else p
+                },
+            )
+        } else {
+            d.copy(contextRecents = updatedContextRecents)
+        }
     }
 
     fun removeContextRecent(id: String, type: RecentType) = update { d ->

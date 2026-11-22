@@ -2,13 +2,19 @@ package com.velvet.app.ui
 
 import android.app.Application
 import android.content.Context
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import coil.compose.AsyncImage
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -19,6 +25,8 @@ import com.velvet.app.data.Playlist
 import com.velvet.app.data.RecentItem
 import com.velvet.app.data.RecentType
 import com.velvet.app.data.isPureMusic
+import com.velvet.app.data.thumbSized
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -234,8 +242,30 @@ fun HomeScreen(vm: HomeViewModel) {
     LaunchedEffect(recent) { vm.loadFor(recent) }
     LaunchedEffect(languages) { vm.loadMoreForYou(languages) }
 
-    // User's playlists and albums for top shortcuts (dynamic 2x2 matrix up to 4 items)
-    val userPlaylists = data.playlists.homePlaylists(4)
+    val filteredRecents = remember(data.contextRecents, data.playlists) {
+        ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
+    }
+
+    // Top 4 shortcut playlist tiles allocated strictly ranking-wise by recency of play:
+    // 1st tile (top-left) = Very newest recently played playlist
+    // 2nd tile (top-right) = 2nd newest recently played playlist
+    // 3rd tile (bottom-left) = 3rd newest recently played playlist
+    // 4th tile (bottom-right) = 4th newest recently played playlist
+    val contextPlaylistRecents = remember(filteredRecents) {
+        filteredRecents.filter { it.type == RecentType.LOCAL_PLAYLIST }.associate { it.id to it.lastPlayedAt }
+    }
+    val userPlaylists = remember(data.playlists, contextPlaylistRecents) {
+        data.playlists
+            .filter { it.songs.isNotEmpty() }
+            .sortedWith(
+                compareByDescending<Playlist> { p ->
+                    maxOf(p.lastPlayedAt, contextPlaylistRecents[p.id] ?: 0L)
+                }.thenByDescending { p ->
+                    maxOf(p.createdAt, p.addedAt, p.updatedAt)
+                }.thenByDescending { it.playCount }
+            )
+            .take(4)
+    }
     val savedAlbums = data.albums.sortedByDescending { it.addedAt }
     val shortcuts = buildList {
         userPlaylists.forEach { p ->
@@ -258,10 +288,6 @@ fun HomeScreen(vm: HomeViewModel) {
             .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
             .take(6)
         (userPicks + freshDiscovery).take(9)
-    }
-
-    val filteredRecents = remember(data.contextRecents, data.playlists) {
-        ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
     }
 
     val greeting = remember {
@@ -609,83 +635,184 @@ private fun SpeedDialSquareTile(
     }
 }
 
-/** The first card shows a real track from playback, history or the trending feed. */
+@Composable
+private fun SpinningCdArtwork(
+    url: String?,
+    size: Dp = 64.dp,
+    isPlaying: Boolean = false,
+) {
+    val rotation = remember { Animatable(0f) }
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            while (isActive) {
+                rotation.animateTo(
+                    targetValue = rotation.value + 360f,
+                    animationSpec = tween(durationMillis = 8000, easing = LinearEasing),
+                )
+                rotation.snapTo(rotation.value % 360f)
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(size)
+            .shadow(elevation = 6.dp, shape = CircleShape)
+            .rotate(rotation.value)
+            .clip(CircleShape)
+            .background(Color(0xFF141416))
+            .border(1.dp, Color(0x33FFFFFF), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (url != null) {
+            val px = with(LocalDensity.current) { size.roundToPx() }
+            AsyncImage(
+                model = thumbSized(url, px),
+                contentDescription = "CD Art",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape),
+            )
+        } else {
+            Icon(
+                AppIcons.MusicNote,
+                contentDescription = null,
+                tint = velvetColors.muted,
+                modifier = Modifier.size(size * 0.4f),
+            )
+        }
+
+        // Concentric vinyl groove highlights
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.84f)
+                .border(1.dp, Color(0x22FFFFFF), CircleShape),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.64f)
+                .border(1.dp, Color(0x18FFFFFF), CircleShape),
+        )
+
+        // Center hub ring
+        Box(
+            modifier = Modifier
+                .size(size * 0.32f)
+                .clip(CircleShape)
+                .background(Color(0xD91C1C22))
+                .border(1.5.dp, Color(0x88FFFFFF), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            // Center spindle hole
+            Box(
+                modifier = Modifier
+                    .size(size * 0.12f)
+                    .clip(CircleShape)
+                    .background(Color(0xFF0C0C0E))
+                    .border(1.dp, Color(0x55FFFFFF), CircleShape),
+            )
+        }
+    }
+}
+
+/** Sleek, lean, and modern NOW PLAYING card with spinning CD artwork and no seekbar. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
+    val nav = LocalNav.current
     val isCurrent = PlayerConnection.current?.id == song.id
+    val isPlaying = isCurrent && PlayerConnection.isPlaying
     val openMenu = LocalSongMenu.current
-    var position by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(isCurrent) {
-        while (isCurrent) {
-            position = PlayerConnection.positionMs()
-            delay(1000)
-        }
-    }
-    val duration = PlayerConnection.durationMs
-    val progress = if (isCurrent && duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+
     GlassSurface(
         modifier = Modifier
             .padding(horizontal = 20.dp)
             .fillMaxWidth()
             .combinedClickable(
                 onClick = {
-                    if (isCurrent) PlayerConnection.togglePlay()
+                    if (isCurrent) nav.open(Route.NowPlaying)
                     else PlayerConnection.play(queue.take(50), queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0))
                 },
                 onLongClick = { openMenu(SongMenuRequest(song)) },
             ),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(20.dp),
         color = velvetColors.surface,
         borderColor = velvetColors.glassBorder,
     ) {
-        Column(
-            Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                when {
-                    isCurrent -> "NOW PLAYING"
-                    featured -> "FROM TRENDING"
-                    else -> "CONTINUE LISTENING"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = velvetColors.accentText,
+            // Circular Spinning CD Album Art
+            SpinningCdArtwork(
+                url = song.thumb,
+                size = 64.dp,
+                isPlaying = isPlaying,
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Artwork(song.thumb, 84.dp, corner = 12.dp)
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .padding(horizontal = 14.dp),
+
+            // Song Info (Title, Artist, and Now Playing header)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text(song.title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(song.artist, style = MaterialTheme.typography.bodyMedium, color = velvetColors.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Box(
-                        Modifier
-                            .padding(top = 10.dp)
-                            .fillMaxWidth()
-                            .height(5.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(velvetColors.rule),
-                    ) {
+                    if (isPlaying) {
                         Box(
-                            Modifier
-                                .fillMaxWidth(progress)
-                                .height(5.dp)
-                                .clip(RoundedCornerShape(3.dp))
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
                                 .background(velvetColors.accentText),
                         )
                     }
+                    Text(
+                        when {
+                            isCurrent -> "NOW PLAYING"
+                            featured -> "FROM TRENDING"
+                            else -> "CONTINUE LISTENING"
+                        },
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 0.8.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = velvetColors.accentText,
+                    )
                 }
-                AccentCircleButton(
-                    if (isCurrent && PlayerConnection.isPlaying) AppIcons.Pause else AppIcons.Play,
-                    if (isCurrent && PlayerConnection.isPlaying) "Pause" else "Play",
-                    size = 56.dp,
-                ) {
-                    if (isCurrent) PlayerConnection.togglePlay()
-                    else PlayerConnection.play(queue.take(50), queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0))
-                }
+
+                Spacer(Modifier.height(3.dp))
+
+                Text(
+                    song.title,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = velvetColors.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                Text(
+                    song.artist,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = velvetColors.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // Sleek Modern Play / Pause Accent Button
+            AccentCircleButton(
+                icon = if (isPlaying) AppIcons.Pause else AppIcons.Play,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                size = 46.dp,
+            ) {
+                if (isCurrent) PlayerConnection.togglePlay()
+                else PlayerConnection.play(queue.take(50), queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0))
             }
         }
     }

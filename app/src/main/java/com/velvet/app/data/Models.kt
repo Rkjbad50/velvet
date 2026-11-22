@@ -82,7 +82,11 @@ data class Playlist(
 
 internal fun List<Playlist>.homePlaylists(limit: Int = 2): List<Playlist> = asSequence()
     .filter { it.songs.isNotEmpty() }
-    .sortedWith(compareByDescending<Playlist> { it.playCount }.thenByDescending { it.lastPlayedAt }.thenByDescending { it.addedAt })
+    .sortedWith(
+        compareByDescending<Playlist> { it.lastPlayedAt }
+            .thenByDescending { it.playCount }
+            .thenByDescending { maxOf(it.createdAt, it.addedAt, it.updatedAt) }
+    )
     .take(limit)
     .toList()
 
