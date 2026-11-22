@@ -227,6 +227,50 @@ fun LikedScreen(onBack: () -> Unit) {
     }
 }
 
+@Composable
+fun HistoryScreen(onBack: () -> Unit) {
+    val library = VelvetApp.library
+    val data by library.data.collectAsStateWithLifecycle()
+    val songs = data.recent
+    var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
+    ConfirmDialog(confirm) { confirm = null }
+
+    BackPage(onBack, heading = { ScreenHeading("HISTORY", "Listening history") }) {
+        if (songs.isNotEmpty()) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "${songs.size} ${if (songs.size == 1) "song" else "songs"}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = velvetColors.muted,
+                    )
+                    TextButton(
+                        onClick = {
+                            confirm = ConfirmRequest(
+                                "Clear history?",
+                                "Your listening history of played songs will be cleared.",
+                                "Clear",
+                            ) { library.clearRecent() }
+                        },
+                    ) {
+                        Text("Clear history", color = velvetColors.muted)
+                    }
+                }
+            }
+        }
+        if (songs.isEmpty()) {
+            item { EmptyHint("Songs you listen to will appear here in chronological order.") }
+        }
+        itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
+            SongRow(song, onClick = { PlayerConnection.play(songs, i) })
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RecentScreen(onBack: () -> Unit) {
@@ -240,7 +284,7 @@ fun RecentScreen(onBack: () -> Unit) {
         ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
     }
 
-    BackPage(onBack, heading = { ScreenHeading("HISTORY", "Recently played") }) {
+    BackPage(onBack, heading = { ScreenHeading("RECENTS", "Recently played") }) {
         if (recents.isNotEmpty()) {
             item {
                 Row(

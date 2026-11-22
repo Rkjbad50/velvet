@@ -15,11 +15,16 @@ import kotlin.math.roundToInt
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -105,6 +110,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -366,180 +372,308 @@ fun NowPlayingScreen(onClose: () -> Unit) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                artColor.copy(alpha = if (isDark) 0.38f else 0.22f),
-                                artColor.copy(alpha = if (isDark) 0.18f else 0.10f),
-                                Color.Transparent,
-                                Color.Transparent,
-                            ),
-                            startY = 0f,
-                            endY = 1350f,
-                        )
-                    )
+                    .background(Color(0xFF0A0C0E))
             )
-            // 2. Luminous ambient bloom centered behind the top album area
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(460.dp)
+                    .height(480.dp)
                     .background(
                         Brush.radialGradient(
                             colors = listOf(
-                                artColor.copy(alpha = if (isDark) 0.32f else 0.16f),
+                                artColor.copy(alpha = if (isDark) 0.35f else 0.20f),
+                                artColor.copy(alpha = if (isDark) 0.12f else 0.06f),
                                 Color.Transparent,
                             ),
-                            radius = 650f,
+                            radius = 700f,
                         )
                     )
             )
 
-            val gap = if (maxHeight < 720.dp) 6.dp else 14.dp
-            Column(Modifier.fillMaxSize().systemBarsPadding()) {
-                Column(
-                    Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, bottom = gap),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+            val gap = if (maxHeight < 720.dp) 6.dp else 12.dp
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .padding(start = 20.dp, end = 20.dp, bottom = gap),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                // Top Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x24FFFFFF))
+                            .clickable(onClick = onClose),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        PanelIconButton(
+                        Icon(
                             Icons.Default.KeyboardArrowDown,
-                            "Close",
-                            modifier = Modifier.align(Alignment.CenterStart),
-                            onClick = onClose,
+                            contentDescription = "Close",
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp),
                         )
-                        Text(
-                            "NOW PLAYING",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 2.sp,
-                                fontWeight = FontWeight.Bold,
-                            ),
-                            color = velvetColors.muted,
-                            modifier = Modifier.align(Alignment.Center),
-                        )
-                        Row(
-                            modifier = Modifier.align(Alignment.CenterEnd),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            PanelIconButton(
-                                AppIcons.Lyrics,
-                                "Lyrics",
-                                tint = if (showLyrics) velvetColors.accentText else velvetColors.text,
-                            ) {
-                                showLyrics = true
-                                if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            PanelIconButton(Icons.Default.MoreVert, "More") { openMenu(SongMenuRequest(song, null)) }
-                        }
                     }
 
-                    Spacer(Modifier.height(gap))
-                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        val artworkSize = minOf(maxWidth, maxHeight, 272.dp)
-                        if (artworkSize > 16.dp) Box(
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            "Now Playing",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp,
+                            ),
+                            color = Color.White,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(3.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(Color(0xFF00E676)),
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x24FFFFFF))
+                                .clickable {
+                                    showLyrics = true
+                                    if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                AppIcons.Lyrics,
+                                contentDescription = "Lyrics",
+                                tint = if (showLyrics) Color(0xFF00E676) else Color.White,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x24FFFFFF))
+                                .clickable { openMenu(SongMenuRequest(song, null)) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "More",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(gap))
+
+                // Artwork with floating Share button
+                BoxWithConstraints(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val artworkSize = minOf(maxWidth - 12.dp, maxHeight, 330.dp)
+                    if (artworkSize > 16.dp) {
+                        Box(
                             Modifier
+                                .size(artworkSize)
                                 .graphicsLayer {
                                     translationX = artDrag
                                     alpha = 1f - (abs(artDrag) / 900f).coerceAtMost(0.5f)
                                 }
                                 .swipeToSkip({ artDrag }, { artDrag = it })
-                                .shadow(24.dp, RoundedCornerShape(16.dp), spotColor = artColor.copy(alpha = 0.55f), ambientColor = artColor.copy(alpha = 0.35f))
-                                .panel(RoundedCornerShape(16.dp), fill = velvetColors.raised)
-                                .padding(8.dp),
+                                .shadow(
+                                    elevation = 28.dp,
+                                    shape = RoundedCornerShape(20.dp),
+                                    spotColor = artColor.copy(alpha = 0.55f),
+                                    ambientColor = artColor.copy(alpha = 0.35f),
+                                )
+                                .clip(RoundedCornerShape(20.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Artwork(song.thumb, artworkSize - 16.dp, corner = 10.dp)
-                        }
-                    }
-                    Spacer(Modifier.height(gap))
+                            Artwork(song.thumb, artworkSize, corner = 20.dp)
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(song.title, style = MaterialTheme.typography.headlineMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(4.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    song.artist,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = velvetColors.muted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = if (openArtist != null) Modifier.clickable(onClick = openArtist) else Modifier,
+                            // Floating Share Button in top right of album art
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(12.dp)
+                                    .size(42.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x66000000))
+                                    .border(1.dp, Color(0x33FFFFFF), CircleShape)
+                                    .clickable { shareSong(context, song) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Default.Share,
+                                    contentDescription = "Share",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp),
                                 )
-                                if (quality != null) {
-                                    Spacer(Modifier.width(10.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(velvetColors.raised)
-                                            .border(1.dp, velvetColors.rule, RoundedCornerShape(6.dp))
-                                            .padding(horizontal = 7.dp, vertical = 2.dp),
-                                    ) {
-                                        Text(
-                                            quality,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                letterSpacing = 0.6.sp,
-                                            ),
-                                            color = velvetColors.accentText,
-                                            maxLines = 1,
-                                        )
-                                    }
-                                }
                             }
                         }
-                        PanelIconButton(
-                            if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            if (liked) "Unlike" else "Like",
-                            size = 50.dp,
-                            tint = if (liked) velvetColors.danger else velvetColors.text,
-                            fill = velvetColors.surface,
-                        ) { VelvetApp.library.toggleLike(song) }
                     }
+                }
 
-                    Spacer(Modifier.height(gap))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 6.dp),
-                    ) {
-                        WavySeekBar(
-                            songId = song.id,
-                            progress = progress,
-                            isPlaying = PlayerConnection.isPlaying,
-                            modifier = Modifier.fillMaxWidth().height(36.dp),
-                            playedColor = velvetColors.accent,
-                            playheadColor = velvetColors.accent,
-                            unplayedColor = velvetColors.muted.copy(alpha = 0.28f),
-                            style = settings.seekbarStyle,
-                            onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
-                            onSeekPreview = { seekPreview = it },
+                Spacer(Modifier.height(gap))
+
+                // Track Info & Favorite Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            song.title,
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 23.sp,
+                            ),
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp)) {
-                            TimeLabel(seekPreview?.let { (it * duration).toLong() } ?: position)
-                            Spacer(Modifier.weight(1f))
-                            TimeLabel(duration)
+                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                song.artist,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontSize = 15.sp,
+                                ),
+                                color = Color(0xFFB0B0B0),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = if (openArtist != null) Modifier.clickable(onClick = openArtist) else Modifier,
+                            )
+                            val badgeText = quality?.uppercase()?.let {
+                                if (it.contains("OPUS") || it.contains("160")) "OPUS 161K" else it
+                            } ?: "OPUS 161K"
+                            Spacer(Modifier.width(10.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0x1F00E676))
+                                    .border(1.dp, Color(0xFF00E676), RoundedCornerShape(6.dp))
+                                    .clickable { PlayerConnection.setHiRes(!hiRes) }
+                                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                            ) {
+                                Text(
+                                    badgeText,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.5.sp,
+                                    ),
+                                    color = Color(0xFF00E676),
+                                    maxLines = 1,
+                                )
+                            }
                         }
                     }
 
-                    Spacer(Modifier.height(gap))
-                    ControlDock()
-                    Spacer(Modifier.height(gap))
-
-                    PlayerActionGrid(
-                        hiRes = hiRes,
-                        ultra = ultra,
-                        sleep = sleep,
-                        onQueue = { showQueue = true },
-                        onSleep = { showSleep = true },
-                        onShare = { shareSong(context, song) },
-                    )
+                    // Heart/Favorite inside circular button with glowing neon green border
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF14171A))
+                            .border(1.5.dp, Color(0xFF00E676), CircleShape)
+                            .clickable { VelvetApp.library.toggleLike(song) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = if (liked) "Unlike" else "Like",
+                            tint = Color(0xFF00E676),
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
                 }
 
+                Spacer(Modifier.height(gap))
+
+                // Waveform Audio Visualizer
+                AudioWaveformVisualizer(
+                    progress = progress,
+                    isPlaying = PlayerConnection.isPlaying,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                )
+
+                // Modern Sleek Seekbar & Timers
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                ) {
+                    ModernPlayerSeekBar(
+                        progress = progress,
+                        durationMs = duration,
+                        onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
+                        onSeekPreview = { seekPreview = it },
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 2.dp, vertical = 1.dp),
+                    ) {
+                        Text(
+                            formatDuration((seekPreview?.let { (it * duration).toLong() } ?: position) / 1000),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 12.sp,
+                            ),
+                            color = Color(0xFF9E9E9E),
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            formatDuration(duration / 1000),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 12.sp,
+                            ),
+                            color = Color(0xFF9E9E9E),
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(gap))
+
+                // Playback Controls Dock
+                ModernControlDock()
+
+                Spacer(Modifier.height(gap))
+
+                // Bottom 3 Action Cards (ULT Bass, Queue, Sleep Timer)
+                PlayerBottomCards(
+                    ultra = ultra,
+                    sleep = sleep,
+                    onUltraToggle = { VelvetApp.library.updateEq { it.copy(ultra = !it.ultra) } },
+                    onQueue = { showQueue = true },
+                    onSleep = { showSleep = true },
+                )
             }
 
             // Back closes the full-screen lyrics before it closes Now Playing
@@ -555,262 +689,432 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 }
 
 @Composable
-private fun PlayerActionGrid(
-    hiRes: Boolean,
-    ultra: Boolean,
-    sleep: SleepTimer.State,
-    onQueue: () -> Unit,
-    onSleep: () -> Unit,
-    onShare: () -> Unit,
+private fun AudioWaveformVisualizer(
+    progress: Float,
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier,
 ) {
-    val tileHeight = with(LocalDensity.current) { maxOf(60.dp, 38.sp.toDp() + 16.dp) }
-    Box(Modifier.fillMaxWidth()) {
-        Column(verticalArrangement = Arrangement.spacedBy(RemoteGap)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(RemoteGap)) {
-                SoundQualityMenu(hiRes, PlayerConnection::setHiRes, Modifier.weight(1f).height(tileHeight), QualityTile)
-                PlayerTile(
-                    modifier = Modifier.weight(1f).height(tileHeight).semantics { selected = ultra },
-                    shape = UltraTile,
-                    active = ultra,
-                    onClick = { VelvetApp.library.updateEq { it.copy(ultra = !it.ultra) } },
-                ) {
-                    TileLabel("ULT Bass")
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(RemoteGap)) {
-                PlayerTile(Modifier.weight(1f).height(tileHeight), QueueTile, onClick = onQueue) { TileLabel("Queue") }
-                PlayerTile(Modifier.weight(1f).height(tileHeight), SleepTile, active = sleep != SleepTimer.State.Off, onClick = onSleep) {
-                    TileLabel(sleepLabel(sleep))
-                }
-            }
-        }
-        PlayerTile(Modifier.align(Alignment.Center).size(ShareSize), CircleShape, onClick = onShare) {
-            Icon(Icons.Default.Share, "Share", modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-private val RemoteGap = 8.dp
-private val ShareSize = 52.dp
-private val QualityTile = RemoteTileShape(innerAtEnd = true, innerAtBottom = true)
-private val UltraTile = RemoteTileShape(innerAtEnd = false, innerAtBottom = true)
-private val QueueTile = RemoteTileShape(innerAtEnd = true, innerAtBottom = false)
-private val SleepTile = RemoteTileShape(innerAtEnd = false, innerAtBottom = false)
-
-/** Each tile extends across its half of the grid with a cutout for the central Share button. */
-private class RemoteTileShape(
-    private val innerAtEnd: Boolean,
-    private val innerAtBottom: Boolean,
-) : Shape {
-    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline = with(density) {
-        val halfGap = RemoteGap.toPx() / 2
-        val innerAtRight = innerAtEnd == (layoutDirection == LayoutDirection.Ltr)
-        val center = Offset(
-            if (innerAtRight) size.width + halfGap else -halfGap,
-            if (innerAtBottom) size.height + halfGap else -halfGap,
-        )
-        val tile = Path().apply {
-            addRoundRect(RoundRect(Rect(Offset.Zero, size), CornerRadius(12.dp.toPx())))
-        }
-        val cutout = Path().apply { addOval(Rect(center, ShareSize.toPx() / 2 + 5.dp.toPx())) }
-        Outline.Generic(Path.combine(PathOperation.Difference, tile, cutout))
-    }
-}
-
-@Composable
-private fun PlayerTile(
-    modifier: Modifier,
-    shape: Shape,
-    active: Boolean = false,
-    onClick: () -> Unit,
-    content: @Composable RowScope.() -> Unit,
-) {
-    val fill by animateColorAsState(
-        if (active) velvetColors.accent.copy(alpha = 0.15f).compositeOver(velvetColors.surface) else velvetColors.surface,
-        tween(160),
-        label = "playerTileFill",
-    )
-    CompositionLocalProvider(LocalContentColor provides if (active) velvetColors.accentText else velvetColors.text) {
-        Row(
-            modifier
-                .heightIn(min = 52.dp)
-                .panel(shape, fill = fill)
-                .clickable(role = Role.Button, onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-            content = content,
+    val barCount = 44
+    val baseWave = remember {
+        floatArrayOf(
+            0.20f, 0.35f, 0.55f, 0.45f, 0.75f, 0.65f, 0.95f, 0.80f, 0.50f, 0.35f,
+            0.70f, 0.85f, 0.60f, 0.80f, 0.95f, 0.70f, 0.45f, 0.60f, 0.80f, 1.00f,
+            0.85f, 0.60f, 0.45f, 0.70f, 0.90f, 0.55f, 0.65f, 0.80f, 0.95f, 0.65f,
+            0.50f, 0.75f, 0.90f, 0.60f, 0.40f, 0.65f, 0.80f, 0.60f, 0.45f, 0.50f,
+            0.35f, 0.30f, 0.25f, 0.20f,
         )
     }
-}
 
-@Composable
-private fun TileLabel(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        modifier = modifier,
-        style = MaterialTheme.typography.labelLarge,
-        textAlign = TextAlign.Center,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
+    val transition = rememberInfiniteTransition(label = "waveformAnim")
+    val phase by if (isPlaying) {
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2 * Math.PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1500, easing = LinearEasing),
+            ),
+            label = "wavePhase",
+        )
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
 
-@Composable
-private fun SoundQualityMenu(hiRes: Boolean, onSelect: (Boolean) -> Unit, modifier: Modifier, shape: Shape) {
-    var expanded by remember { mutableStateOf(false) }
-    Box(modifier) {
-        PlayerTile(
-            modifier = Modifier.fillMaxSize().semantics { contentDescription = "Sound quality" },
-            shape = shape,
-            onClick = { expanded = true },
-        ) {
-            TileLabel(if (hiRes) "Hi-Res" else "Data Saver", Modifier.weight(1f, fill = false))
-            Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(18.dp))
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text("Hi-Res") },
-                trailingIcon = { if (hiRes) Icon(Icons.Default.Check, "Selected") },
-                onClick = {
-                    expanded = false
-                    if (!hiRes) onSelect(true)
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Data Saver") },
-                trailingIcon = { if (!hiRes) Icon(Icons.Default.Check, "Selected") },
-                onClick = {
-                    expanded = false
-                    if (hiRes) onSelect(false)
-                },
+    Canvas(modifier = modifier.fillMaxWidth().height(26.dp)) {
+        val width = size.width
+        val maxHeight = size.height
+        val totalBars = barCount
+        val barSpacing = width / totalBars
+        val barWidth = (barSpacing * 0.55f).coerceAtLeast(2.dp.toPx())
+
+        for (i in 0 until totalBars) {
+            val cx = i * barSpacing + barSpacing / 2f
+            val base = baseWave[i % baseWave.size]
+            val dynamic = if (isPlaying) {
+                0.60f + 0.40f * kotlin.math.sin(phase + i * 0.42f).toFloat()
+            } else {
+                0.75f
+            }
+            val barH = (maxHeight * base * dynamic).coerceIn(3.dp.toPx(), maxHeight)
+            val top = (maxHeight - barH) / 2f
+
+            val isPlayed = (cx / width) <= progress
+            val color = if (isPlayed) Color(0xFF00E676) else Color(0x38FFFFFF)
+
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(cx - barWidth / 2f, top),
+                size = Size(barWidth, barH),
+                cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
             )
         }
     }
 }
 
 @Composable
-private fun ControlDock() {
+private fun ModernPlayerSeekBar(
+    progress: Float,
+    durationMs: Long,
+    onSeek: (Float) -> Unit,
+    onSeekPreview: (Float?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dragProgress by remember { mutableStateOf<Float?>(null) }
+    val displayProgress = (dragProgress ?: progress).coerceIn(0f, 1f)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(26.dp)
+            .pointerInput(durationMs) {
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        val f = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        dragProgress = f
+                        onSeekPreview(f)
+                    },
+                    onDragEnd = {
+                        dragProgress?.let { onSeek(it) }
+                        dragProgress = null
+                        onSeekPreview(null)
+                    },
+                    onDragCancel = {
+                        dragProgress = null
+                        onSeekPreview(null)
+                    },
+                ) { change, _ ->
+                    change.consume()
+                    val f = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                    dragProgress = f
+                    onSeekPreview(f)
+                }
+            }
+            .pointerInput(durationMs) {
+                detectTapGestures { offset ->
+                    val f = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                    onSeek(f)
+                }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(16.dp)) {
+            val trackY = size.height / 2f
+            val trackHeight = 3.5.dp.toPx()
+            val thumbRadius = 6.dp.toPx()
+            val glowRadius = 10.dp.toPx()
+
+            // Inactive track
+            drawLine(
+                color = Color(0x33FFFFFF),
+                start = Offset(0f, trackY),
+                end = Offset(size.width, trackY),
+                strokeWidth = trackHeight,
+                cap = StrokeCap.Round,
+            )
+
+            val activeEnd = size.width * displayProgress
+
+            // Active track
+            if (activeEnd > 0f) {
+                drawLine(
+                    color = Color(0xFF00E676),
+                    start = Offset(0f, trackY),
+                    end = Offset(activeEnd, trackY),
+                    strokeWidth = trackHeight,
+                    cap = StrokeCap.Round,
+                )
+            }
+
+            // Glow around thumb
+            drawCircle(
+                color = Color(0x4400E676),
+                radius = glowRadius,
+                center = Offset(activeEnd, trackY),
+            )
+
+            // Thumb
+            drawCircle(
+                color = Color(0xFF00E676),
+                radius = thumbRadius,
+                center = Offset(activeEnd, trackY),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModernControlDock() {
     val context = LocalContext.current
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(horizontal = 6.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val shuffleMode = PlayerConnection.shuffleMode
-        ShuffleModeButton(
-            mode = shuffleMode,
-            onClick = { PlayerConnection.cycleShuffle(context) },
-        )
-        DockButton(AppIcons.SkipPrevious, "Previous", iconSize = 32, onClick = PlayerConnection::previous)
-        PlayPauseButton(size = 64)
-        DockButton(AppIcons.SkipNext, "Next", iconSize = 32, onClick = PlayerConnection::next)
-        val mode = PlayerConnection.repeatMode
-        DockButton(
-            if (mode == Player.REPEAT_MODE_ONE) AppIcons.RepeatOne else AppIcons.Repeat,
-            "Repeat",
-            tint = if (mode == Player.REPEAT_MODE_OFF) velvetColors.muted else velvetColors.accentText,
-            onClick = PlayerConnection::cycleRepeat,
-        )
-    }
-}
-
-@Composable
-private fun ShuffleModeButton(
-    mode: ShuffleMode,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        AnimatedContent(
-            targetState = mode,
-            transitionSpec = {
-                (fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 0.75f))
-                    .togetherWith(fadeOut(animationSpec = tween(180)) + scaleOut(targetScale = 0.75f))
-            },
-            label = "ShuffleModeAnim",
-        ) { targetMode ->
-            when (targetMode) {
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF14171A))
+                .border(1.dp, Color(0x24FFFFFF), CircleShape)
+                .clickable { PlayerConnection.cycleShuffle(context) },
+            contentAlignment = Alignment.Center,
+        ) {
+            when (shuffleMode) {
                 ShuffleMode.OFF -> {
                     Icon(
                         AppIcons.Shuffle,
                         contentDescription = "Shuffle off",
-                        tint = velvetColors.muted,
-                        modifier = Modifier.size(24.dp),
+                        tint = Color(0xFF757575),
+                        modifier = Modifier.size(22.dp),
                     )
                 }
                 ShuffleMode.STANDARD -> {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(
-                            AppIcons.Shuffle,
-                            contentDescription = "Shuffle on",
-                            tint = velvetColors.accentText,
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Box(
-                            Modifier
-                                .size(4.dp)
-                                .background(velvetColors.accent, CircleShape),
-                        )
-                    }
+                    Icon(
+                        AppIcons.Shuffle,
+                        contentDescription = "Shuffle on",
+                        tint = Color(0xFF00E676),
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
                 ShuffleMode.SMART -> {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(velvetColors.accent.copy(alpha = 0.20f), RoundedCornerShape(12.dp))
-                            .border(1.5.dp, velvetColors.accentText, RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
+                    Box(contentAlignment = Alignment.Center) {
                         Icon(
                             AppIcons.Shuffle,
                             contentDescription = "Smart Shuffle on",
-                            tint = velvetColors.accentText,
-                            modifier = Modifier.size(20.dp),
+                            tint = Color(0xFF00E676),
+                            modifier = Modifier.size(22.dp),
                         )
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .offset(x = 3.dp, y = (-3).dp)
-                                .size(14.dp)
-                                .background(velvetColors.accent, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                AppIcons.Sparkles,
-                                contentDescription = null,
-                                tint = velvetColors.onAccent,
-                                modifier = Modifier.size(9.dp),
-                            )
-                        }
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .size(9.dp)
+                                .background(Color(0xFF00E676), CircleShape),
+                        )
                     }
                 }
             }
+        }
+
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .clickable(onClick = PlayerConnection::previous),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                AppIcons.SkipPrevious,
+                contentDescription = "Previous",
+                tint = Color.White,
+                modifier = Modifier.size(30.dp),
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .size(68.dp)
+                .shadow(
+                    elevation = 16.dp,
+                    shape = CircleShape,
+                    spotColor = Color(0xFF00E676),
+                    ambientColor = Color(0xFF00E676),
+                )
+                .clip(CircleShape)
+                .background(Color(0xFF00E676))
+                .clickable(onClick = PlayerConnection::togglePlay),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (PlayerConnection.isBuffering) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    color = Color(0xFF09140D),
+                    strokeWidth = 3.dp,
+                )
+            } else {
+                Icon(
+                    if (PlayerConnection.isPlaying) AppIcons.Pause else AppIcons.Play,
+                    contentDescription = if (PlayerConnection.isPlaying) "Pause" else "Play",
+                    tint = Color(0xFF09140D),
+                    modifier = Modifier.size(32.dp),
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .clickable(onClick = PlayerConnection::next),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                AppIcons.SkipNext,
+                contentDescription = "Next",
+                tint = Color.White,
+                modifier = Modifier.size(30.dp),
+            )
+        }
+
+        val repeatMode = PlayerConnection.repeatMode
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF14171A))
+                .border(1.dp, Color(0x24FFFFFF), CircleShape)
+                .clickable(onClick = PlayerConnection::cycleRepeat),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (repeatMode == Player.REPEAT_MODE_ONE) AppIcons.RepeatOne else AppIcons.Repeat,
+                contentDescription = "Repeat",
+                tint = if (repeatMode == Player.REPEAT_MODE_OFF) Color(0xFF757575) else Color(0xFF00E676),
+                modifier = Modifier.size(22.dp),
+            )
         }
     }
 }
 
 @Composable
-private fun DockButton(icon: ImageVector, label: String, iconSize: Int = 24, tint: Color = velvetColors.text, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+private fun PlayerBottomCards(
+    ultra: Boolean,
+    sleep: SleepTimer.State,
+    onUltraToggle: () -> Unit,
+    onQueue: () -> Unit,
+    onSleep: () -> Unit,
+) {
+    val sleepActive = sleep != SleepTimer.State.Off
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, label, tint = tint, modifier = Modifier.size(iconSize.dp))
+        // Card 1: ULT Bass
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .then(
+                    if (ultra) {
+                        Modifier
+                            .background(Brush.verticalGradient(listOf(Color(0x3300E676), Color(0x1000E676))))
+                            .border(1.5.dp, Color(0xFF00E676), RoundedCornerShape(16.dp))
+                    } else {
+                        Modifier
+                            .background(Color(0xFF14171A))
+                            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
+                    }
+                )
+                .clickable(onClick = onUltraToggle)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    AppIcons.VolumeUp,
+                    contentDescription = "ULT Bass",
+                    tint = if (ultra) Color(0xFF00E676) else Color(0xFF9E9E9E),
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "ULT Bass",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                    ),
+                    color = if (ultra) Color.White else Color(0xFFB0B0B0),
+                )
+            }
+        }
+
+        // Card 2: Queue
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xFF14171A))
+                .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
+                .clickable(onClick = onQueue)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    AppIcons.QueueMusic,
+                    contentDescription = "Queue",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Queue",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 12.sp,
+                    ),
+                    color = Color.White,
+                )
+            }
+        }
+
+        // Card 3: Sleep Timer
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .then(
+                    if (sleepActive) {
+                        Modifier
+                            .background(Brush.verticalGradient(listOf(Color(0x3300E676), Color(0x1000E676))))
+                            .border(1.5.dp, Color(0xFF00E676), RoundedCornerShape(16.dp))
+                    } else {
+                        Modifier
+                            .background(Color(0xFF14171A))
+                            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
+                    }
+                )
+                .clickable(onClick = onSleep)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    AppIcons.Timer,
+                    contentDescription = "Sleep Timer",
+                    tint = if (sleepActive) Color(0xFF00E676) else Color(0xFF9E9E9E),
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (sleepActive) sleepLabel(sleep) else "Sleep Timer",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = if (sleepActive) FontWeight.Bold else FontWeight.Medium,
+                        fontSize = 12.sp,
+                    ),
+                    color = if (sleepActive) Color.White else Color(0xFFB0B0B0),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

@@ -261,6 +261,7 @@ private fun AppRoot() {
                             }
                             Route.Liked -> LikedScreen(onBack = nav::back)
                             Route.Recent -> RecentScreen(onBack = nav::back)
+                            Route.History -> HistoryScreen(onBack = nav::back)
                             Route.Downloads -> DownloadsScreen(onBack = nav::back)
                             Route.Settings -> SettingsScreen(onBack = nav::back)
                             Route.Equalizer -> EqualizerScreen(onBack = nav::back)

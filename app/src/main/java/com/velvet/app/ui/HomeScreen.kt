@@ -328,8 +328,8 @@ fun HomeScreen(vm: HomeViewModel) {
                     color = velvetColors.text,
                     modifier = Modifier.weight(1f),
                 )
-                // History clock icon button immediately to the left of Settings
-                PanelIconButton(AppIcons.History, "History") { nav.open(Route.Recent) }
+                // History clock icon button immediately to the left of Settings opens played songs history
+                PanelIconButton(AppIcons.History, "Listening history") { nav.open(Route.History) }
                 Spacer(Modifier.width(8.dp))
                 PanelIconButton(Icons.Default.Settings, "Settings") { nav.open(Route.Settings) }
             }
