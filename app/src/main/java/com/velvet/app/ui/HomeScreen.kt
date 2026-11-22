@@ -619,7 +619,7 @@ private fun SpeedDialSquareTile(
             Column {
                 Text(
                     text = song.title,
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 11.sp),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = Color.White,
@@ -791,7 +791,7 @@ private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
 
                 Text(
                     song.title,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.titleMedium,
                     color = velvetColors.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

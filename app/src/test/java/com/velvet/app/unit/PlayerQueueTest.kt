@@ -288,6 +288,7 @@ class PlayerQueueTest {
         assertEquals("m2", manager.userQueue[1].song.id)
         assertTrue(manager.upNext.any { it.song.id == "a1" })
         assertTrue(manager.upNext.any { it.song.id == "a2" })
+        assertTrue("Normal autoplay items must NOT be smart recommended", manager.upNext.none { it.isSmartRecommended })
 
         // 3. User queue songs play first in order before upNext
         val next1 = manager.advance()

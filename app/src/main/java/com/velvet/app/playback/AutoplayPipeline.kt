@@ -126,6 +126,123 @@ fun normalizePrimaryArtist(artist: String): String {
 }
 
 /**
+ * User taste profile captured from library data (liked, recents, playlists, followed artists, preferred languages).
+ */
+data class UserTasteProfile(
+    val favoriteArtists: Set<String> = emptySet(),
+    val recentArtists: Set<String> = emptySet(),
+    val playlistArtists: Set<String> = emptySet(),
+    val likedTrackKeys: Set<String> = emptySet(),
+    val recentTrackKeys: Set<String> = emptySet(),
+    val preferredLanguages: List<String> = listOf("Hindi", "English"),
+)
+
+/**
+ * Thematic music clusters for high-precision algorithmic cohesion.
+ */
+enum class MusicCluster {
+    DEVOTIONAL,
+    SUFI_GHAZAL,
+    RETRO_CLASSIC,
+    BOLLYWOOD_MELODY,
+    PUNJABI_BHANGRA,
+    CARNATIC_SOUTH_FILM,
+    ROMANTIC_POP_INDIE,
+    WESTERN_POP,
+    GENERAL,
+}
+
+fun hasDevanagari(text: String): Boolean = text.any { it in '\u0900'..'\u097F' }
+fun hasSouthIndicScript(text: String): Boolean = text.any { it in '\u0B80'..'\u0D7F' }
+fun hasGurmukhi(text: String): Boolean = text.any { it in '\u0A00'..'\u0A7F' }
+
+private val SOUTH_INDIC_TERMS = setOf(
+    "tamil", "telugu", "malayalam", "kannada", "anirudh", "harris jayaraj", "d. imman",
+    "d imman", "yuvan", "sid sriram", "ilayaraja", "spb", "s. p. balasubrahmanyam", "chithra",
+    "santhosh narayanan", "gv prakash", "g.v. prakash", "thaman", "devi sri prasad", "ghibran",
+    "keeravani", "pala pala", "saamikittay", "chinna chinna", "nila kaaigiradhu", "kollywood", "tollywood",
+)
+
+fun isSouthIndic(song: Song): Boolean {
+    val lowerTitle = song.title.lowercase(Locale.ROOT)
+    val lowerArtist = song.artist.lowercase(Locale.ROOT)
+    return SOUTH_INDIC_TERMS.any { term ->
+        lowerTitle.contains(term) || lowerArtist.contains(term)
+    }
+}
+
+private val DEVOTIONAL_TERMS = setOf(
+    "chalisa", "bhajan", "aarti", "arti", "mantra", "stotram", "stotra", "jaap", "jap",
+    "kirtan", "keertan", "bhakti", "devotional", "hanuman", "shree", "shri", "ram", "rama",
+    "krishna", "radha", "shiv", "shiva", "mahadev", "bholenath", "ganesh", "ganpati",
+    "durga", "mata", "devi", "amritwani", "kavach", "katha", "dhun", "sankatmochan",
+    "ashtak", "ashtakam", "sunderkand", "prarthana", "vandana", "har har", "om namah",
+    "gayatri", "vishnu", "sai", "govind", "gopal", "bhagwan", "mandir",
+)
+
+private val DEVOTIONAL_ARTISTS = setOf(
+    "gulshan kumar", "anuradha paudwal", "anup jalota", "lakhbir singh lakkha", "suresh wadkar",
+    "mahendra kapoor", "ravindra jain", "shankar sahney", "t series bhakti", "bhakti sagar",
+)
+
+private val PUNJABI_ARTISTS = setOf(
+    "sidhu moosewala", "karan aujla", "diljit dosanjh", "ap dhillon", "shubh", "amrit maan",
+    "jassi gill", "jordan sandhu", "cheema y", "b praak", "jaani", "harrdy sandhu", "kaka", "sukhe",
+)
+
+private val SUFI_GHAZAL_TERMS = setOf(
+    "ghazal", "sufi", "qawwali", "khyal", "thumri", "nazm", "nusrat fateh ali khan",
+    "rahat fateh ali khan", "jagjit singh", "ghulam ali", "mehdi hassan", "pankaj udhas",
+    "chitra singh", "sabri brothers", "wadali brothers", "abida parveen",
+)
+
+private val RETRO_ARTISTS = setOf(
+    "lata mangeshkar", "kishore kumar", "mohammed rafi", "asha bhosle", "mukesh",
+    "manna dey", "r.d. burman", "rd burman", "s.d. burman", "sd burman",
+    "laxmikant pyarelal", "kalyanji anandji", "talat mahmood", "geeta dutt", "hemant kumar",
+)
+
+private val BOLLYWOOD_90S_ARTISTS = setOf(
+    "kumar sanu", "udit narayan", "alka yagnik", "abhijeet", "sonu nigam",
+    "kavita krishnamurthy", "sadhana sargam", "shaan", "kk", "babul supriyo",
+    "lucky ali", "jatin lalit", "nadeem shravan", "anu malik", "himesh reshammiya",
+)
+
+private val ROMANTIC_POP_ARTISTS = setOf(
+    "arijit singh", "shreya ghoshal", "atif aslam", "jubin nautiyal", "darshan raval",
+    "prateek kuhad", "anuv jain", "jasleen royal", "armaan malik", "amit trivedi",
+    "sachin-jigar", "mithoon", "vishal mishra",
+)
+
+fun detectCluster(song: Song): MusicCluster {
+    val lowerTitle = song.title.lowercase(Locale.ROOT)
+    val normArtist = normalizePrimaryArtist(song.artist)
+
+    if (DEVOTIONAL_TERMS.any { lowerTitle.contains(it) } || DEVOTIONAL_ARTISTS.any { normArtist.contains(it) }) {
+        return MusicCluster.DEVOTIONAL
+    }
+    if (SUFI_GHAZAL_TERMS.any { lowerTitle.contains(it) || normArtist.contains(it) }) {
+        return MusicCluster.SUFI_GHAZAL
+    }
+    if (hasGurmukhi(song.title) || lowerTitle.contains("punjabi") || PUNJABI_ARTISTS.any { normArtist.contains(it) }) {
+        return MusicCluster.PUNJABI_BHANGRA
+    }
+    if (hasSouthIndicScript(song.title) || isSouthIndic(song)) {
+        return MusicCluster.CARNATIC_SOUTH_FILM
+    }
+    if (RETRO_ARTISTS.any { normArtist.contains(it) } || lowerTitle.contains("purane geet") || lowerTitle.contains("old is gold")) {
+        return MusicCluster.RETRO_CLASSIC
+    }
+    if (BOLLYWOOD_90S_ARTISTS.any { normArtist.contains(it) }) {
+        return MusicCluster.BOLLYWOOD_MELODY
+    }
+    if (ROMANTIC_POP_ARTISTS.any { normArtist.contains(it) }) {
+        return MusicCluster.ROMANTIC_POP_INDIE
+    }
+    return MusicCluster.GENERAL
+}
+
+/**
  * Pure-Kotlin Autoplay Candidate Pipeline:
  * fetch -> normalize -> eligibility -> hardFilter -> dedupe -> score -> space -> take(N)
  */
@@ -135,6 +252,7 @@ class AutoplayPipeline(
     val config: AutoplayConfig = AutoplayConfig(),
     private val releaseYearProvider: (suspend (String) -> Int?)? = null,
     private val viewCountProvider: ((String) -> Long?)? = null,
+    private val userTasteProvider: (() -> UserTasteProfile)? = null,
 ) {
     private val releaseYearCache = BoundedCache<String, Int>(200)
 
@@ -246,8 +364,9 @@ class AutoplayPipeline(
             }
         }
 
-        // 6. Score (deterministic)
-        val scored = scoreCandidates(dedupedWinners, seed)
+        val taste = userTasteProvider?.invoke() ?: UserTasteProfile()
+        // 6. Score (deterministic, cluster-aware, and taste-bound)
+        val scored = scoreCandidates(dedupedWinners, seed, taste)
 
         // 7. Space (separate consecutive songs by primary artist)
         val lastQueuedArtist = queueSnapshot.lastOrNull()?.let { normalizePrimaryArtist(it.artist) }
@@ -402,14 +521,21 @@ class AutoplayPipeline(
     }
 
     /**
-     * Deterministic scoring:
-     * +50 ATV / official artist channel
-     * +10 artist equals seed artist
-     * -20 acoustic / unplugged
-     * -10 bottom view-count quartile
+     * Algorithmic, cluster-aware, and taste-bound scoring:
+     * - Evaluates thematic cluster affinity (e.g. devotional purity, Punjabi cohesion, retro classic).
+     * - Enforces language and script consistency (rejects non-preferred South Indic tracks during Hindi/Bhakti sessions).
+     * - Binds strongly with user's favorite and recent artists from library data.
+     * - Rewards official high-quality ATV audio and penalizes acoustic/unplugged variants.
      */
-    private fun scoreCandidates(candidates: List<Song>, seed: Song): List<Song> {
+    fun scoreCandidates(
+        candidates: List<Song>,
+        seed: Song,
+        taste: UserTasteProfile = UserTasteProfile(),
+    ): List<Song> {
         val seedPrimary = normalizePrimaryArtist(seed.artist)
+        val seedCluster = detectCluster(seed)
+        val seedIsDevanagari = hasDevanagari(seed.title) || hasDevanagari(seed.artist)
+
         val views = candidates.mapNotNull { song ->
             val v = viewCountProvider?.invoke(song.id)
             if (v != null && v >= 0) song.id to v else null
@@ -422,8 +548,60 @@ class AutoplayPipeline(
 
         val scoredList = candidates.map { candidate ->
             var score = 0
-            if (isAtv(candidate)) score += 50
-            if (normalizePrimaryArtist(candidate.artist) == seedPrimary) score += 10
+            val candPrimary = normalizePrimaryArtist(candidate.artist)
+            val candCluster = detectCluster(candidate)
+            val candIsDevanagari = hasDevanagari(candidate.title) || hasDevanagari(candidate.artist)
+            val candIsSouth = hasSouthIndicScript(candidate.title) || isSouthIndic(candidate)
+
+            // 1. Audio quality / Official source
+            if (isAtv(candidate)) score += 35
+
+            // 2. Cluster Match & Devotional Hard Purity
+            if (seedCluster != MusicCluster.GENERAL && seedCluster == candCluster) {
+                score += 60
+            } else if (seedCluster == MusicCluster.DEVOTIONAL && candCluster != MusicCluster.DEVOTIONAL) {
+                score -= 150 // Devotional sessions must not mix with secular / party tracks
+            } else if (seedCluster == MusicCluster.PUNJABI_BHANGRA && candCluster != MusicCluster.PUNJABI_BHANGRA) {
+                score -= 60
+            }
+
+            // 3. Language & Script Affinity
+            if (seedIsDevanagari && candIsDevanagari) {
+                score += 30
+            }
+            if ((seedIsDevanagari || seedCluster == MusicCluster.DEVOTIONAL || seedCluster == MusicCluster.BOLLYWOOD_MELODY) && candIsSouth) {
+                val userAllowsSouth = taste.preferredLanguages.any {
+                    it.equals("Tamil", true) || it.equals("Telugu", true) ||
+                        it.equals("Malayalam", true) || it.equals("Kannada", true)
+                }
+                if (!userAllowsSouth && candPrimary !in taste.favoriteArtists && candPrimary !in taste.recentArtists) {
+                    score -= 150 // Language clash: drop Tamil/Telugu tracks from Hindi/Bhakti session
+                }
+            }
+
+            // 4. Seed Artist Affinity
+            if (candPrimary.isNotEmpty() && candPrimary == seedPrimary) {
+                score += 25
+            }
+
+            // 5. User Taste Binding
+            if (candPrimary.isNotEmpty()) {
+                if (candPrimary in taste.favoriteArtists) {
+                    score += 35
+                }
+                if (candPrimary in taste.recentArtists) {
+                    score += 25
+                }
+                if (candPrimary in taste.playlistArtists) {
+                    score += 15
+                }
+            }
+            val key = canonicalKey(candidate.title, candidate.artist)
+            if (key in taste.likedTrackKeys) {
+                score += 20
+            }
+
+            // 6. Style adjustments
             val lowerTitle = candidate.title.lowercase(Locale.ROOT)
             if (lowerTitle.contains("acoustic") || lowerTitle.contains("unplugged")) {
                 score -= 20
@@ -432,11 +610,13 @@ class AutoplayPipeline(
             if (v != null && bottomThreshold != null && v <= bottomThreshold) {
                 score -= 10
             }
+
             candidate to score
         }
 
-        // Stable sort descending by score (preserves relative source order for ties)
-        return scoredList.sortedByDescending { it.second }.map { it.first }
+        val filtered = scoredList.filter { it.second > -100 }
+        val toSort = if (filtered.isNotEmpty()) filtered else scoredList
+        return toSort.sortedByDescending { it.second }.map { it.first }
     }
 
     /**

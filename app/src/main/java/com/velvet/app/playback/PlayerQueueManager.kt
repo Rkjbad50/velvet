@@ -697,7 +697,7 @@ class QueueManager(initialState: QueueState = QueueState()) {
             }
             if (fresh.isEmpty()) return state
 
-            val newItems = fresh.map { QueueItem(it, isSmartRecommended = true) }
+            val newItems = fresh.map { QueueItem(it, isSmartRecommended = false) }
             return state.copy(
                 upNext = state.upNext + newItems,
             )

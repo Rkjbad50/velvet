@@ -36,8 +36,65 @@ class VelvetApp : Application(), ImageLoaderFactory {
     val sessionHistory = com.velvet.app.playback.SessionHistory(50)
     val autoplayPipeline by lazy {
         com.velvet.app.playback.AutoplayPipeline(
-            sources = listOf(com.velvet.app.playback.CandidateSource { com.velvet.app.data.StreamResolver.related(it.id) }),
+            sources = listOf(
+                com.velvet.app.playback.CandidateSource { com.velvet.app.data.StreamResolver.related(it.id) },
+                com.velvet.app.playback.CandidateSource { seed ->
+                    val cluster = com.velvet.app.playback.detectCluster(seed)
+                    val extra = mutableListOf<com.velvet.app.data.Song>()
+
+                    // 1. Contextual thematic search (for Devotional / Punjabi / Artist)
+                    if (cluster == com.velvet.app.playback.MusicCluster.DEVOTIONAL) {
+                        runCatching {
+                            val q = if (seed.title.contains("chalisa", ignoreCase = true) || seed.title.contains("hanuman", ignoreCase = true)) {
+                                "Hanuman Chalisa Sankatmochan Bajrang Baan"
+                            } else if (seed.title.contains("shiv", ignoreCase = true) || seed.title.contains("mahadev", ignoreCase = true)) {
+                                "Shiv Tandav Mahadev Bhajan Aarti"
+                            } else {
+                                "${seed.title} bhajan"
+                            }
+                            com.velvet.app.data.YouTube.Search(q, com.velvet.app.data.YouTube.FILTER_SONGS).loadNext()
+                                .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
+                                .map { it.song }
+                                .filter { it.id != seed.id && it.isPureMusic() && it.isOriginalMusicAudio() }
+                        }.getOrNull()?.let { extra.addAll(it) }
+                    } else {
+                        val artist = seed.artist.removeSuffix(" - Topic").trim()
+                        if (artist.isNotBlank()) {
+                            runCatching {
+                                com.velvet.app.data.YouTube.Search("$artist songs", com.velvet.app.data.YouTube.FILTER_SONGS).loadNext()
+                                    .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
+                                    .map { it.song }
+                                    .filter { it.id != seed.id && it.isPureMusic() && it.isOriginalMusicAudio() }
+                            }.getOrNull()?.let { extra.addAll(it) }
+                        }
+                    }
+
+                    // 2. User Library & Taste chaining: include matching tracks from liked & recent
+                    val libSongs = (library.data.value.liked + library.data.value.recent.take(30))
+                        .filter { s ->
+                            s.id != seed.id &&
+                            (com.velvet.app.playback.detectCluster(s) == cluster ||
+                             com.velvet.app.playback.normalizePrimaryArtist(s.artist) == com.velvet.app.playback.normalizePrimaryArtist(seed.artist))
+                        }
+                    extra.addAll(libSongs)
+                    extra
+                }
+            ),
             history = sessionHistory,
+            userTasteProvider = {
+                val data = library.data.value
+                com.velvet.app.playback.UserTasteProfile(
+                    favoriteArtists = (data.artists.map { it.name } + data.liked.map { it.artist })
+                        .map { com.velvet.app.playback.normalizePrimaryArtist(it) }.filter { it.isNotBlank() }.toSet(),
+                    recentArtists = data.recent.take(30)
+                        .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) }.filter { it.isNotBlank() }.toSet(),
+                    playlistArtists = data.playlists.flatMap { it.songs }
+                        .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) }.filter { it.isNotBlank() }.toSet(),
+                    likedTrackKeys = data.liked.map { com.velvet.app.playback.canonicalKey(it.title, it.artist) }.toSet(),
+                    recentTrackKeys = data.recent.take(30).map { com.velvet.app.playback.canonicalKey(it.title, it.artist) }.toSet(),
+                    preferredLanguages = data.musicLanguages,
+                )
+            }
         )
     }
 

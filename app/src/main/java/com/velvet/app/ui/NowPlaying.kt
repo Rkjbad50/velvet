@@ -1174,14 +1174,14 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                 val sourceLabel = when {
                     PlayerConnection.isRadioActive -> "RADIO"
                     !PlayerConnection.currentPlaylistId.isNullOrBlank() -> "PLAYLIST"
-                    else -> "RECOMMENDED"
+                    else -> "AUTOPLAY"
                 }
                 item(key = "header_up_next") {
                     Text(
                         "NEXT FROM $sourceLabel",
                         style = MaterialTheme.typography.labelSmall,
                         color = velvetColors.muted,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
                     )
                 }

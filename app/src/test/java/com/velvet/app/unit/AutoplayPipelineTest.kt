@@ -270,4 +270,86 @@ class AutoplayPipelineTest {
         // Ensure qids are distinct
         assertFalse(state.userQueue[0].qid == state.userQueue[1].qid)
     }
+
+    @Test
+    fun testLanguageAndDevotionalAffinity_hanumanChalisaRejectsTamilFilmAndKeepsDevotional() = runBlocking {
+        val seed = makeSong("seed_hc", "Shree Hanuman Chalisa", "Hariharan")
+        val dev1 = makeSong("dev1", "Sankatmochan Hanuman Ashtak", "Hariharan - Topic", preferred = true)
+        val dev2 = makeSong("dev2", "श्री हनुमान चालीसा", "Gulshan Kumar - Topic", preferred = true)
+        val dev3 = makeSong("dev3", "Mahadev Shankar", "Gulshan Kumar - Topic", preferred = true)
+        val tamil1 = makeSong("tam1", "Pala Pala", "Harris Jayaraj - Topic", preferred = true)
+        val tamil2 = makeSong("tam2", "Saamikittay", "Himesh Reshammiya - Topic", preferred = true)
+        val tamil3 = makeSong("tam3", "Chinna Chinna Aasai", "A. R. Rahman - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(tamil1, dev1, tamil2, dev2, dev3, tamil3) }),
+            history = history,
+            userTasteProvider = {
+                com.velvet.app.playback.UserTasteProfile(
+                    favoriteArtists = setOf("hariharan", "gulshan kumar"),
+                    preferredLanguages = listOf("Hindi", "English"),
+                )
+            },
+        )
+
+        val next = pipeline.next(seed, n = 5)
+        // Tamil film songs must be filtered out / suppressed from devotional Hindi seed
+        assertTrue(next.none { it.id == "tam1" })
+        assertTrue(next.none { it.id == "tam2" })
+        assertTrue(next.none { it.id == "tam3" })
+        assertEquals(3, next.size)
+        assertTrue(next.all { it.id in setOf("dev1", "dev2", "dev3") })
+    }
+
+    @Test
+    fun testUserTasteBinding_boostsFavoriteAndRecentArtists() = runBlocking {
+        val seed = makeSong("seed_pop", "Pop Seed Song", "Seed Singer")
+        val candUnknown = makeSong("c_unk", "Track Unknown", "Unknown Artist - Topic", preferred = true)
+        val candFav = makeSong("c_fav", "Track Fav", "Loved Singer - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candUnknown, candFav) }),
+            history = history,
+            userTasteProvider = {
+                com.velvet.app.playback.UserTasteProfile(
+                    favoriteArtists = setOf("loved singer"),
+                    preferredLanguages = listOf("Hindi", "English"),
+                )
+            },
+        )
+
+        val next = pipeline.next(seed, n = 2)
+        assertEquals(2, next.size)
+        // User's loved artist must rank first due to taste binding
+        assertEquals("c_fav", next[0].id)
+        assertEquals("c_unk", next[1].id)
+    }
+
+    @Test
+    fun testDetectCluster_identifiesClustersAccurately() {
+        assertEquals(
+            com.velvet.app.playback.MusicCluster.DEVOTIONAL,
+            com.velvet.app.playback.detectCluster(makeSong("1", "Shree Hanuman Chalisa", "Hariharan")),
+        )
+        assertEquals(
+            com.velvet.app.playback.MusicCluster.DEVOTIONAL,
+            com.velvet.app.playback.detectCluster(makeSong("2", "Shiv Tandav Stotram", "Shankar Mahadevan")),
+        )
+        assertEquals(
+            com.velvet.app.playback.MusicCluster.PUNJABI_BHANGRA,
+            com.velvet.app.playback.detectCluster(makeSong("3", "Winning Speech", "Karan Aujla")),
+        )
+        assertEquals(
+            com.velvet.app.playback.MusicCluster.RETRO_CLASSIC,
+            com.velvet.app.playback.detectCluster(makeSong("4", "Lag Ja Gale", "Lata Mangeshkar")),
+        )
+        assertEquals(
+            com.velvet.app.playback.MusicCluster.BOLLYWOOD_MELODY,
+            com.velvet.app.playback.detectCluster(makeSong("5", "Aankhon Ki Gustakhiyan", "Kumar Sanu")),
+        )
+        assertEquals(
+            com.velvet.app.playback.MusicCluster.CARNATIC_SOUTH_FILM,
+            com.velvet.app.playback.detectCluster(makeSong("6", "Pala Pala", "Harris Jayaraj")),
+        )
+    }
 }

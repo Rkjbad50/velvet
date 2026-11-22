@@ -217,18 +217,18 @@ fun getFontFamily(fontName: String): FontFamily = when (fontName.uppercase()) {
 }
 
 private fun createTypography(family: FontFamily, isMonospace: Boolean = false) = Typography(
-    displaySmall = TextStyle(fontFamily = family, fontSize = 42.sp, lineHeight = 46.sp, letterSpacing = (-1).sp, fontWeight = FontWeight.Bold),
-    headlineMedium = TextStyle(fontFamily = family, fontSize = 30.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp, fontWeight = FontWeight.Bold),
-    headlineSmall = TextStyle(fontFamily = family, fontSize = 24.sp, lineHeight = 29.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
-    titleLarge = TextStyle(fontFamily = family, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
-    titleMedium = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
-    titleSmall = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
-    bodyLarge = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
-    bodyMedium = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
-    bodySmall = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 17.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
-    labelLarge = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.SemiBold),
-    labelMedium = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
-    labelSmall = TextStyle(fontFamily = family, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.5.sp, fontWeight = if (isMonospace) FontWeight.Bold else FontWeight.Medium),
+    displaySmall = TextStyle(fontFamily = family, fontSize = 42.sp, lineHeight = 46.sp, letterSpacing = (-1).sp, fontWeight = FontWeight.SemiBold),
+    headlineMedium = TextStyle(fontFamily = family, fontSize = 30.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp, fontWeight = FontWeight.SemiBold),
+    headlineSmall = TextStyle(fontFamily = family, fontSize = 24.sp, lineHeight = 29.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
+    titleLarge = TextStyle(fontFamily = family, fontSize = 19.sp, lineHeight = 24.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
+    titleMedium = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
+    titleSmall = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
+    bodyLarge = TextStyle(fontFamily = family, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Normal),
+    bodyMedium = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Normal),
+    bodySmall = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.Normal),
+    labelLarge = TextStyle(fontFamily = family, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Medium),
+    labelMedium = TextStyle(fontFamily = family, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = if (isMonospace) FontWeight.Medium else FontWeight.Normal),
+    labelSmall = TextStyle(fontFamily = family, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.5.sp, fontWeight = if (isMonospace) FontWeight.SemiBold else FontWeight.Normal),
 )
 
 @Composable
