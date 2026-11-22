@@ -3,6 +3,7 @@ package com.velvet.app.ui
 import android.app.Application
 import android.content.Context
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -13,6 +14,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import coil.compose.AsyncImage
@@ -717,7 +721,7 @@ private fun SpinningCdArtwork(
     }
 }
 
-/** Sleek, lean, and modern NOW PLAYING card with spinning CD artwork and no seekbar. */
+/** Sleek, lean, and modern NOW PLAYING card with spinning CD artwork, breathing ambient gradient, and no seekbar. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
@@ -725,6 +729,36 @@ private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
     val isCurrent = PlayerConnection.current?.id == song.id
     val isPlaying = isCurrent && PlayerConnection.isPlaying
     val openMenu = LocalSongMenu.current
+    val artColor = rememberArtColor(song.thumb, fallback = velvetColors.accent)
+
+    // Breathing effect animation that pulses while song is playing and freezes when paused
+    val breathingFraction = remember { Animatable(0.25f) }
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            while (isActive) {
+                breathingFraction.animateTo(
+                    targetValue = 0.9f,
+                    animationSpec = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+                )
+                breathingFraction.animateTo(
+                    targetValue = 0.25f,
+                    animationSpec = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+                )
+            }
+        }
+    }
+
+    val gradientBrush = remember(artColor, breathingFraction.value) {
+        val alphaStart = (0.30f * breathingFraction.value).coerceIn(0.06f, 0.42f)
+        val alphaMid = (0.12f * breathingFraction.value).coerceIn(0.02f, 0.20f)
+        Brush.horizontalGradient(
+            colors = listOf(
+                artColor.copy(alpha = alphaStart),
+                artColor.copy(alpha = alphaMid),
+                Color.Transparent,
+            ),
+        )
+    }
 
     GlassSurface(
         modifier = Modifier
@@ -741,18 +775,43 @@ private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
         color = velvetColors.surface,
         borderColor = velvetColors.glassBorder,
     ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(gradientBrush),
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Circular Spinning CD Album Art
-            SpinningCdArtwork(
-                url = song.thumb,
-                size = 64.dp,
-                isPlaying = isPlaying,
-            )
+            // Circular Spinning CD Album Art with breathing ambient halo
+            Box(contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .graphicsLayer {
+                            scaleX = 1f + 0.12f * breathingFraction.value
+                            scaleY = 1f + 0.12f * breathingFraction.value
+                            alpha = breathingFraction.value
+                        }
+                        .background(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    artColor.copy(alpha = 0.50f),
+                                    Color.Transparent,
+                                ),
+                            ),
+                            shape = CircleShape,
+                        ),
+                )
+                SpinningCdArtwork(
+                    url = song.thumb,
+                    size = 64.dp,
+                    isPlaying = isPlaying,
+                )
+            }
 
             // Song Info (Title, Artist, and Now Playing header)
             Column(

@@ -962,7 +962,7 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun QueueSheet(onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
     val userQueue = queueState.userQueue
@@ -1123,7 +1123,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                 )
             }
         }
-        LazyColumn(state = listState, modifier = Modifier.padding(bottom = 16.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(bottom = 16.dp)) {
             if (currentItem != null) {
                 item(key = "header_now_playing") {
                     Text(
