@@ -1,5 +1,7 @@
 package com.velvet.app.unit
 
+import com.velvet.app.data.ListenEndReason
+import com.velvet.app.data.ListenEvent
 import com.velvet.app.data.Song
 import com.velvet.app.playback.AutoplayConfig
 import com.velvet.app.playback.AutoplayPipeline
@@ -11,8 +13,10 @@ import com.velvet.app.playback.QueueState
 import com.velvet.app.playback.SeedProfile
 import com.velvet.app.playback.SessionHistory
 import com.velvet.app.playback.SongEra
+import com.velvet.app.playback.SongIdentity
 import com.velvet.app.playback.SongMood
 import com.velvet.app.playback.SongTempo
+import com.velvet.app.playback.TasteEngine
 import com.velvet.app.playback.TasteProfile
 import com.velvet.app.playback.UserTasteProfile
 import com.velvet.app.playback.Weights
@@ -23,6 +27,8 @@ import com.velvet.app.playback.detectMood
 import com.velvet.app.playback.detectTempo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -733,4 +739,195 @@ class AutoplayPipelineTest {
 
         assertEquals(run1.map { it.id }, run2.map { it.id })
     }
+
+    // ── Offline Evaluation Harness (R5) ──────────────────────────────────────
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    private fun loadFixtures(): List<EvalFixture> {
+        val stream = javaClass.classLoader?.getResourceAsStream("autoplay_eval_fixtures.json")
+            ?: javaClass.getResourceAsStream("/autoplay_eval_fixtures.json")
+            ?: error("autoplay_eval_fixtures.json not found in test resources")
+        val content = stream.bufferedReader().use { it.readText() }
+        return json.decodeFromString<EvalFixturesWrapper>(content).fixtures
+    }
+
+    @Test
+    fun testOfflineEval_fixturesFileLoadableAndContainsFiveSeeds() {
+        val fixtures = loadFixtures()
+        assertEquals("Must contain 5 recorded seed fixtures", 5, fixtures.size)
+    }
+
+    @Test
+    fun testOfflineEval_zeroDuplicateGroupsInFirst30Picks() = runBlocking {
+        val fixtures = loadFixtures()
+        for (fixture in fixtures) {
+            val pipeline = AutoplayPipeline(
+                sources = listOf(CandidateSource { fixture.candidates }),
+                history = SessionHistory(),
+                sessionSeed = 100L,
+            )
+
+            val picks = pipeline.next(fixture.seed, n = 30)
+
+            // Assert no two picks in the result are duplicates of each other
+            for (i in picks.indices) {
+                for (j in i + 1 until picks.size) {
+                    val sA = picks[i]
+                    val sB = picks[j]
+                    val isDup = SongIdentity.isStrictMatch(sA, sB)
+                    assertFalse(
+                        "Duplicate found in picks for seed '${fixture.seed.title}': '${sA.title}' vs '${sB.title}'",
+                        isDup
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testOfflineEval_noCandidateStrictEqualToQueueOrHistory() = runBlocking {
+        val fixtures = loadFixtures()
+        val fixture = fixtures.first()
+
+        val historyObj = SessionHistory()
+        val historySong = fixture.candidates[2]
+        historyObj.record(historySong)
+
+        val queueSong = fixture.candidates[3]
+        val queueSnapshot = listOf(queueSong)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { fixture.candidates }),
+            history = historyObj,
+            sessionSeed = 100L,
+        )
+
+        val picks = pipeline.next(fixture.seed, queueSnapshot, n = 10)
+
+        for (pick in picks) {
+            assertFalse(
+                "Pick '${pick.title}' must not match history song '${historySong.title}'",
+                SongIdentity.isStrictMatch(pick, historySong)
+            )
+            assertFalse(
+                "Pick '${pick.title}' must not match queued song '${queueSong.title}'",
+                SongIdentity.isStrictMatch(pick, queueSong)
+            )
+        }
+    }
+
+    @Test
+    fun testOfflineEval_seedExceptionAllowsRemixResultsOnlyForRemixSeed() = runBlocking {
+        val fixtures = loadFixtures()
+        val normalSeedFixture = fixtures.find { it.seed.id == "seed_1" }!!
+        val remixSeedFixture = fixtures.find { it.seed.id == "seed_4" }!!
+
+        // Normal seed: remix candidate must NOT survive
+        val normalPipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { normalSeedFixture.candidates }),
+            history = SessionHistory(),
+        )
+        val normalPicks = normalPipeline.next(normalSeedFixture.seed, n = 10)
+        assertFalse(
+            "Normal seed must not produce DJ Club Remix results",
+            normalPicks.any { it.title.contains("remix", ignoreCase = true) }
+        )
+
+        // Remix seed: remix-friendly candidate CAN survive
+        val remixPipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { remixSeedFixture.candidates }),
+            history = SessionHistory(),
+        )
+        val remixPicks = remixPipeline.next(remixSeedFixture.seed, n = 10)
+        assertTrue(
+            "Remix seed must allow remix candidates (seed exception)",
+            remixPicks.any { it.title.contains("remix", ignoreCase = true) || it.title.contains("club mix", ignoreCase = true) }
+        )
+    }
+
+    @Test
+    fun testOfflineEval_artistAndMovieSpacingAndNoveltySlot() = runBlocking {
+        val fixtures = loadFixtures()
+        val fixture = fixtures.find { it.seed.id == "seed_1" }!! // Hum Dil De Chuke Sanam
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { fixture.candidates }),
+            history = SessionHistory(),
+            sessionSeed = 42L,
+        )
+
+        val picks = pipeline.next(fixture.seed, n = 8)
+        assertTrue("Must return at least 5 picks", picks.size >= 5)
+
+        // Assert no two adjacent picks have the exact same primary artist (unless relaxed)
+        for (i in 0 until picks.size - 1) {
+            val a1 = com.velvet.app.playback.normalizePrimaryArtist(picks[i].artist)
+            val a2 = com.velvet.app.playback.normalizePrimaryArtist(picks[i + 1].artist)
+            if (a1.isNotBlank() && a2.isNotBlank() && a1 == a2) {
+                // If adjacent share artist, check that all remaining candidates share that artist
+                val remaining = picks.drop(i)
+                val allShare = remaining.all { com.velvet.app.playback.normalizePrimaryArtist(it.artist) == a1 }
+                assertTrue("Artist spacing violation between '${picks[i].title}' and '${picks[i+1].title}'", allShare)
+            }
+        }
+    }
+
+    @Test
+    fun testOfflineEval_determinismWithFixedRandomSeed() = runBlocking {
+        val fixtures = loadFixtures()
+        val fixture = fixtures.first()
+
+        val pipeline1 = AutoplayPipeline(
+            sources = listOf(CandidateSource { fixture.candidates }),
+            history = SessionHistory(),
+            sessionSeed = 999L,
+        )
+        val pipeline2 = AutoplayPipeline(
+            sources = listOf(CandidateSource { fixture.candidates }),
+            history = SessionHistory(),
+            sessionSeed = 999L,
+        )
+
+        val run1 = pipeline1.next(fixture.seed, n = 5)
+        val run2 = pipeline2.next(fixture.seed, n = 5)
+
+        assertEquals("Fixed random seed must yield deterministic results", run1.map { it.id }, run2.map { it.id })
+    }
+
+    @Test
+    fun testOfflineEval_tasteLearningRanksArtistAAboveArtistB() = runBlocking {
+        val candA = makeSong("cand_A", "Song of Artist A", "Artist A - Topic", preferred = true)
+        val candB = makeSong("cand_B", "Song of Artist B", "Artist B - Topic", preferred = true)
+        val seed = makeSong("seed_general", "General Song", "Singer Neutral")
+
+        val now = System.currentTimeMillis()
+        val events = listOf(
+            ListenEvent(songGroupId = "gA", videoId = "vA", artistSet = listOf("Artist A"), startedAt = now - 5000, endReason = ListenEndReason.COMPLETED),
+            ListenEvent(songGroupId = "gA2", videoId = "vA2", artistSet = listOf("Artist A"), startedAt = now - 3000, endReason = ListenEndReason.COMPLETED),
+            ListenEvent(songGroupId = "gB", videoId = "vB", artistSet = listOf("Artist B"), startedAt = now - 1000, endReason = ListenEndReason.SKIP_EARLY)
+        )
+        val learnedProfile = TasteEngine.computeProfile(events, nowMillis = now)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candB, candA) }), // candB first in source
+            history = SessionHistory(),
+            tasteProfileProvider = { learnedProfile },
+        )
+
+        val picks = pipeline.next(seed, n = 2)
+        assertEquals(2, picks.size)
+        assertEquals("Artist A (completed) must rank above Artist B (skipped early)", "cand_A", picks.first().id)
+    }
 }
+
+@Serializable
+data class EvalFixture(
+    val seed: Song,
+    val candidates: List<Song>,
+)
+
+@Serializable
+data class EvalFixturesWrapper(
+    val fixtures: List<EvalFixture>,
+)

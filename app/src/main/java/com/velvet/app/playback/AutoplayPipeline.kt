@@ -103,7 +103,48 @@ data class AutoplayInspectionReport(
     val timestamp: Long = System.currentTimeMillis(),
     val candidates: List<CandidateInspection> = emptyList(),
     val droppedDuplicates: List<DroppedDuplicateEntry> = emptyList(),
-)
+) {
+    fun toJson(): String {
+        val sb = StringBuilder()
+        sb.append("{\n")
+        sb.append("  \"seedId\": \"").append(seedId).append("\",\n")
+        sb.append("  \"seedTitle\": \"").append(seedTitle.replace("\"", "\\\"")).append("\",\n")
+        sb.append("  \"seedArtist\": \"").append(seedArtist.replace("\"", "\\\"")).append("\",\n")
+        sb.append("  \"timestamp\": ").append(timestamp).append(",\n")
+        sb.append("  \"candidatesCount\": ").append(candidates.size).append(",\n")
+        sb.append("  \"candidates\": [\n")
+        candidates.forEachIndexed { i, c ->
+            sb.append("    {\n")
+            sb.append("      \"id\": \"").append(c.song.id).append("\",\n")
+            sb.append("      \"title\": \"").append(c.song.title.replace("\"", "\\\"")).append("\",\n")
+            sb.append("      \"artist\": \"").append(c.song.artist.replace("\"", "\\\"")).append("\",\n")
+            sb.append("      \"decision\": \"").append(c.decision).append("\",\n")
+            sb.append("      \"sources\": [").append(c.sources.joinToString { "\"$it\"" }).append("],\n")
+            sb.append("      \"finalRank\": ").append(c.finalRank).append(",\n")
+            sb.append("      \"finalScore\": ").append(c.finalScore).append(",\n")
+            sb.append("      \"breakdown\": {")
+            sb.append(c.scoreBreakdown.entries.joinToString { "\"${it.key}\": ${it.value}" })
+            sb.append("}\n")
+            sb.append("    }").append(if (i < candidates.size - 1) "," else "").append("\n")
+        }
+        sb.append("  ],\n")
+        sb.append("  \"droppedDuplicates\": [\n")
+        droppedDuplicates.forEachIndexed { i, d ->
+            sb.append("    {\n")
+            sb.append("      \"droppedId\": \"").append(d.droppedSongId).append("\",\n")
+            sb.append("      \"droppedTitle\": \"").append(d.droppedTitle.replace("\"", "\\\"")).append("\",\n")
+            sb.append("      \"droppedArtist\": \"").append(d.droppedArtist.replace("\"", "\\\"")).append("\",\n")
+            sb.append("      \"keptId\": \"").append(d.keptSongId).append("\",\n")
+            sb.append("      \"keptTitle\": \"").append(d.keptTitle.replace("\"", "\\\"")).append("\",\n")
+            sb.append("      \"keptArtist\": \"").append(d.keptArtist.replace("\"", "\\\"")).append("\",\n")
+            sb.append("      \"similarity\": ").append(d.similarityScore).append("\n")
+            sb.append("    }").append(if (i < droppedDuplicates.size - 1) "," else "").append("\n")
+        }
+        sb.append("  ]\n")
+        sb.append("}")
+        return sb.toString()
+    }
+}
 
 /**
  * Interface for fetching raw candidate songs for autoplay.

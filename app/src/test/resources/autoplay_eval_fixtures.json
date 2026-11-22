@@ -1,0 +1,97 @@
+{
+  "fixtures": [
+    {
+      "seed": {
+        "id": "seed_1",
+        "title": "Aankhon Ki Gustakhiyan (From \"Hum Dil De Chuke Sanam\")",
+        "artist": "Kumar Sanu, Alka Yagnik",
+        "album": "Hum Dil De Chuke Sanam",
+        "durationSec": 306,
+        "preferredMusicSource": true
+      },
+      "candidates": [
+        { "id": "c1_atv", "title": "Aankhon Ki Gustakhiyan", "artist": "Kumar Sanu - Topic", "album": "Hum Dil De Chuke Sanam", "durationSec": 306, "preferredMusicSource": true },
+        { "id": "c1_lyric", "title": "Aankhon Ki Gustakhiyan Lyrical Video Song", "artist": "T-Series", "album": "Hum Dil De Chuke Sanam", "durationSec": 306, "preferredMusicSource": false },
+        { "id": "c1_movie_1", "title": "Chand Chupa Badal Mein (From \"Hum Dil De Chuke Sanam\")", "artist": "Udit Narayan, Alka Yagnik - Topic", "album": "Hum Dil De Chuke Sanam", "durationSec": 345, "preferredMusicSource": true },
+        { "id": "c1_movie_2", "title": "Nimbooda (From \"Hum Dil De Chuke Sanam\")", "artist": "Kavita Krishnamurthy - Topic", "album": "Hum Dil De Chuke Sanam", "durationSec": 380, "preferredMusicSource": true },
+        { "id": "c1_san_1", "title": "Mera Dil Bhi Kitna Pagal Hai", "artist": "Kumar Sanu, Alka Yagnik - Topic", "album": "Saajan", "durationSec": 325, "preferredMusicSource": true },
+        { "id": "c1_san_2", "title": "Dheere Dheere Se Meri Zindagi Mein Aana", "artist": "Kumar Sanu - Topic", "album": "Aashiqui", "durationSec": 330, "preferredMusicSource": true },
+        { "id": "c1_udit_1", "title": "Pehla Nasha", "artist": "Udit Narayan - Topic", "album": "Jo Jeeta Wohi Sikandar", "durationSec": 290, "preferredMusicSource": true },
+        { "id": "c1_remix", "title": "Aankhon Ki Gustakhiyan DJ Club Remix 2024", "artist": "DJ Remix Official", "durationSec": 200, "preferredMusicSource": false },
+        { "id": "c1_novelty", "title": "Kitna Haseen Chehra", "artist": "Kumar Sanu - Topic", "album": "Dilwale", "durationSec": 280, "preferredMusicSource": true }
+      ]
+    },
+    {
+      "seed": {
+        "id": "seed_2",
+        "title": "Shree Hanuman Chalisa",
+        "artist": "Hariharan - Topic",
+        "album": "Shree Hanuman Chalisa",
+        "durationSec": 580,
+        "preferredMusicSource": true
+      },
+      "candidates": [
+        { "id": "c2_dup_1", "title": "Shree Hanuman Chalisa (Full Audio)", "artist": "T-Series Bhakti Sagar", "album": "Shree Hanuman Chalisa", "durationSec": 580, "preferredMusicSource": false },
+        { "id": "c2_dup_2", "title": "Shree Hanuman Chalisa - Hariharan", "artist": "Hariharan - Topic", "album": "Hanuman Chalisa", "durationSec": 580, "preferredMusicSource": true },
+        { "id": "c2_bhajan_1", "title": "Sankat Mochan Hanuman Ashtak", "artist": "Hariharan - Topic", "album": "Sankat Mochan", "durationSec": 360, "preferredMusicSource": true },
+        { "id": "c2_bhajan_2", "title": "Jai Ganesh Deva", "artist": "Anuradha Paudwal - Topic", "album": "Aarti", "durationSec": 310, "preferredMusicSource": true },
+        { "id": "c2_bhajan_3", "title": "Shiv Tandav Stotram", "artist": "Shankar Mahadevan - Topic", "album": "Shiv Tandav", "durationSec": 540, "preferredMusicSource": true },
+        { "id": "c2_secular_clash", "title": "Saturday Saturday Party Anthem", "artist": "Badshah - Topic", "durationSec": 210, "preferredMusicSource": true },
+        { "id": "c2_novelty", "title": "Bajrang Baan", "artist": "Hariharan - Topic", "album": "Hanuman Bhajan", "durationSec": 420, "preferredMusicSource": true }
+      ]
+    },
+    {
+      "seed": {
+        "id": "seed_3",
+        "title": "Brown Munde",
+        "artist": "AP Dhillon, Gurinder Gill, Shinda Kahlon",
+        "album": "Not by Chance",
+        "durationSec": 260,
+        "preferredMusicSource": true
+      },
+      "candidates": [
+        { "id": "c3_dup_topic", "title": "Brown Munde", "artist": "AP Dhillon - Topic", "album": "Not by Chance", "durationSec": 260, "preferredMusicSource": true },
+        { "id": "c3_dup_omv", "title": "Brown Munde (Official Music Video)", "artist": "Run-Up Records", "album": "Not by Chance", "durationSec": 260, "preferredMusicSource": false },
+        { "id": "c3_collab_1", "title": "Excuses", "artist": "AP Dhillon, Gurinder Gill - Topic", "album": "Hidden Gems", "durationSec": 255, "preferredMusicSource": true },
+        { "id": "c3_collab_2", "title": "Majhail", "artist": "AP Dhillon, Gurinder Gill - Topic", "album": "Majhail", "durationSec": 210, "preferredMusicSource": true },
+        { "id": "c3_punjabi_1", "title": "Insane", "artist": "AP Dhillon, Shinda Kahlon - Topic", "durationSec": 205, "preferredMusicSource": true },
+        { "id": "c3_novelty", "title": "Goat", "artist": "AP Dhillon - Topic", "album": "Two Hearts Never Break The Same", "durationSec": 195, "preferredMusicSource": true }
+      ]
+    },
+    {
+      "seed": {
+        "id": "seed_4",
+        "title": "Kajra Re (Club Remix)",
+        "artist": "Alisha Chinai, Shankar Mahadevan",
+        "album": "Bunty Aur Babli Remixes",
+        "durationSec": 310,
+        "preferredMusicSource": true
+      },
+      "candidates": [
+        { "id": "c4_remix_dup", "title": "Kajra Re (Club Remix)", "artist": "Alisha Chinai - Topic", "album": "Bunty Aur Babli Remixes", "durationSec": 310, "preferredMusicSource": true },
+        { "id": "c4_remix_2", "title": "Where's The Party Tonight (Club Mix)", "artist": "Shankar Mahadevan - Topic", "album": "KANK Remixes", "durationSec": 290, "preferredMusicSource": true },
+        { "id": "c4_remix_3", "title": "Dus Bahane (DJ Remix)", "artist": "KK, Shaan - Topic", "durationSec": 275, "preferredMusicSource": true },
+        { "id": "c4_orig", "title": "Kajra Re", "artist": "Alisha Chinai - Topic", "album": "Bunty Aur Babli", "durationSec": 480, "preferredMusicSource": true },
+        { "id": "c4_novelty", "title": "Right Here Right Now (Remix)", "artist": "Abhishek Bachchan - Topic", "durationSec": 240, "preferredMusicSource": true }
+      ]
+    },
+    {
+      "seed": {
+        "id": "seed_5",
+        "title": "Perfect",
+        "artist": "Ed Sheeran",
+        "album": "Divide",
+        "durationSec": 263,
+        "preferredMusicSource": true
+      },
+      "candidates": [
+        { "id": "c5_dup", "title": "Perfect (Official Audio)", "artist": "Ed Sheeran - Topic", "album": "Divide", "durationSec": 263, "preferredMusicSource": true },
+        { "id": "c5_pop_1", "title": "Shape of You", "artist": "Ed Sheeran - Topic", "album": "Divide", "durationSec": 233, "preferredMusicSource": true },
+        { "id": "c5_pop_2", "title": "Photograph", "artist": "Ed Sheeran - Topic", "album": "Multiply", "durationSec": 258, "preferredMusicSource": true },
+        { "id": "c5_collab", "title": "Thinking Out Loud", "artist": "Ed Sheeran - Topic", "album": "Multiply", "durationSec": 281, "preferredMusicSource": true },
+        { "id": "c5_pop_3", "title": "Someone You Loved", "artist": "Lewis Capaldi - Topic", "durationSec": 182, "preferredMusicSource": true },
+        { "id": "c5_novelty", "title": "Castle on the Hill", "artist": "Ed Sheeran - Topic", "album": "Divide", "durationSec": 261, "preferredMusicSource": true }
+      ]
+    }
+  ]
+}
