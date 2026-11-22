@@ -402,6 +402,12 @@ object PlayerConnection {
 
     /** Add song to play immediately after current. */
     fun playNext(song: Song) {
+        val isAlreadyQueued = (listOfNotNull(current) + queueManager.upNext.map { it.song } + queueManager.userQueue.map { it.song })
+            .any { it.id == song.id || com.velvet.app.playback.SongIdentity.isStrictMatch(it, song) }
+        if (isAlreadyQueued) {
+            appContext?.let { Toast.makeText(it, "Already in your queue", Toast.LENGTH_SHORT).show() }
+        }
+
         VelvetApp.sessionHistory.record(song)
         if (controller?.mediaItemCount == 0 || current == null) {
             play(listOf(song))
@@ -410,24 +416,34 @@ object PlayerConnection {
         queueManager.playNext(song)
         syncQueueState()
         syncToExoPlayer()
-        appContext?.let { Toast.makeText(it, "\"${song.title}\" will play next", Toast.LENGTH_SHORT).show() }
+        if (!isAlreadyQueued) {
+            appContext?.let { Toast.makeText(it, "\"${song.title}\" will play next", Toast.LENGTH_SHORT).show() }
+        }
     }
 
     /** Add song to end of queue. */
     fun enqueue(song: Song) {
+        val isAlreadyQueued = (listOfNotNull(current) + queueManager.upNext.map { it.song } + queueManager.userQueue.map { it.song })
+            .any { it.id == song.id || com.velvet.app.playback.SongIdentity.isStrictMatch(it, song) }
+        if (isAlreadyQueued) {
+            appContext?.let { Toast.makeText(it, "Already in your queue", Toast.LENGTH_SHORT).show() }
+        }
+
         VelvetApp.sessionHistory.record(song)
         if (controller?.mediaItemCount == 0 || current == null) {
             play(listOf(song))
             return
         }
         val added = queueManager.enqueue(song)
-        if (!added) {
+        if (!added && !isAlreadyQueued) {
             appContext?.let { Toast.makeText(it, "\"${song.title}\" already in queue", Toast.LENGTH_SHORT).show() }
             return
         }
         syncQueueState()
         syncToExoPlayer()
-        appContext?.let { Toast.makeText(it, "Added to queue", Toast.LENGTH_SHORT).show() }
+        if (!isAlreadyQueued) {
+            appContext?.let { Toast.makeText(it, "Added to queue", Toast.LENGTH_SHORT).show() }
+        }
     }
 
     /** Move a queue item (by qid) to the top of the upcoming list (play next). */
@@ -533,7 +549,13 @@ object PlayerConnection {
         isExtendingAutoplay = true
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val snapshot = (listOfNotNull(current) + queueManager.userQueue.map { it.song } + queueManager.upNext.map { it.song })
+                val snapshot = (
+                    queueManager.history +
+                    queueManager.sourceList +
+                    listOfNotNull(current) +
+                    queueManager.userQueue.map { it.song } +
+                    queueManager.upNext.map { it.song }
+                )
                 val related = VelvetApp.autoplayPipeline.next(targetSeed, snapshot, n = 10)
 
                 withContext(Dispatchers.Main) {

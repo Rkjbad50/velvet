@@ -41,6 +41,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -390,6 +391,40 @@ fun DeveloperScreen(onBack: () -> Unit) {
                 onClick = {
                     DiagnosticRunner.resetExtractor(context)
                     Toast.makeText(context, "Extractor reset", Toast.LENGTH_SHORT).show()
+                },
+            )
+
+            HorizontalDivider(color = velvetColors.rule, thickness = 1.dp)
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Skip near-duplicates in shuffle", style = MaterialTheme.typography.titleSmall, color = velvetColors.text)
+                    Text(
+                        "Treat near-duplicate uploads as one slot during playlist shuffle",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = velvetColors.muted,
+                    )
+                }
+                Switch(
+                    checked = data.skipNearDuplicatesInShuffle,
+                    onCheckedChange = { library.setSkipNearDuplicatesInShuffle(it) },
+                )
+            }
+
+            HorizontalDivider(color = velvetColors.rule, thickness = 1.dp)
+
+            ActionTile(
+                title = "Clear Listening & Autoplay History",
+                subtitle = "Resets taste affinity events and 200-track no-repeat cache",
+                onClick = {
+                    library.clearListenEvents()
+                    Toast.makeText(context, "Listening & autoplay history cleared", Toast.LENGTH_SHORT).show()
                 },
             )
 

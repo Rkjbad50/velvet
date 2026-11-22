@@ -35,38 +35,56 @@ data class AutoplayConfig(
  * Thread-safe in-memory ring buffer (default size 50) of canonicalKey + videoId.
  * Used to prevent previously played or queued songs from appearing in autoplay.
  */
-class SessionHistory(val maxSize: Int = 50) {
+class SessionHistory(val maxSize: Int = 200) {
     private val lock = Any()
-    private val entries = ArrayDeque<Pair<String, String>>()
+    private val songEntries = ArrayDeque<Song>()
+    private val keyEntries = ArrayDeque<Pair<String, String>>()
 
     fun record(song: Song) {
         val key = canonicalKey(song.title, song.artist)
         record(key, song.id)
+        synchronized(lock) {
+            songEntries.removeAll { it.id == song.id || SongIdentity.isStrictMatch(it, song) }
+            songEntries.addLast(song)
+            while (songEntries.size > maxSize) {
+                songEntries.removeFirst()
+            }
+        }
     }
 
     fun record(canonicalKey: String, videoId: String) {
         synchronized(lock) {
-            entries.removeAll { it.first == canonicalKey || it.second == videoId }
-            entries.addLast(canonicalKey to videoId)
-            while (entries.size > maxSize) {
-                entries.removeFirst()
+            keyEntries.removeAll { it.first == canonicalKey || it.second == videoId }
+            keyEntries.addLast(canonicalKey to videoId)
+            while (keyEntries.size > maxSize) {
+                keyEntries.removeFirst()
             }
+        }
+    }
+
+    fun contains(song: Song): Boolean {
+        synchronized(lock) {
+            if (songEntries.any { it.id == song.id || SongIdentity.isStrictMatch(it, song) }) return true
+            val key = canonicalKey(song.title, song.artist)
+            return keyEntries.any { it.first == key || it.second == song.id }
         }
     }
 
     fun contains(canonicalKey: String, videoId: String): Boolean {
         synchronized(lock) {
-            return entries.any { it.first == canonicalKey || it.second == videoId }
+            return keyEntries.any { it.first == canonicalKey || it.second == videoId } ||
+                songEntries.any { it.id == videoId || canonicalKey(it.title, it.artist) == canonicalKey }
         }
     }
 
     fun clear() {
         synchronized(lock) {
-            entries.clear()
+            songEntries.clear()
+            keyEntries.clear()
         }
     }
 
-    fun size(): Int = synchronized(lock) { entries.size }
+    fun size(): Int = synchronized(lock) { maxOf(songEntries.size, keyEntries.size) }
 }
 
 /**
@@ -471,33 +489,33 @@ class AutoplayPipeline(
             }
         }
 
-        // 5. Dedupe (history + queueSnapshot + group by canonicalKey)
+        // 5. Dedupe (history + queueSnapshot + group by SongIdentity)
         val queueKeys = queueSnapshot.map { canonicalKey(it.title, it.artist) }.toSet()
         val queueIds = queueSnapshot.map { it.id }.toSet()
 
         val nonDuplicateCandidates = mutableListOf<Song>()
         for (candidate in filtered) {
             val key = canonicalKey(candidate.title, candidate.artist)
-            if (candidate.id == seed.id || key == seedKey || areSameRecording(seed, candidate)) {
+            if (candidate.id == seed.id || key == seedKey || areSameRecording(seed, candidate) || SongIdentity.isStrictMatch(seed, candidate)) {
                 removedDedupe++
                 continue
             }
-            if (candidate.id in queueIds || key in queueKeys || queueSnapshot.any { areSameRecording(it, candidate) }) {
+            if (candidate.id in queueIds || key in queueKeys || queueSnapshot.any { areSameRecording(it, candidate) || SongIdentity.isStrictMatch(it, candidate) }) {
                 removedDedupe++
                 continue
             }
-            if (history.contains(key, candidate.id)) {
+            if (history.contains(candidate) || history.contains(key, candidate.id)) {
                 removedDedupe++
                 continue
             }
             nonDuplicateCandidates.add(candidate)
         }
 
-        // Group candidates by recording identity (canonicalKey or title match with label/same artist)
+        // Group candidates by recording identity (SongIdentity strict clustering)
         val groups = mutableListOf<MutableList<Song>>()
         for (candidate in nonDuplicateCandidates) {
             val matchedGroup = groups.find { group ->
-                group.any { areSameRecording(it, candidate) }
+                group.any { areSameRecording(it, candidate) || SongIdentity.isStrictMatch(it, candidate) }
             }
             if (matchedGroup != null) {
                 matchedGroup.add(candidate)
@@ -512,7 +530,7 @@ class AutoplayPipeline(
                 dedupedWinners.add(group.first())
             } else {
                 removedDedupe += (group.size - 1)
-                val winner = selectWinner(group)
+                val winner = SongIdentity.selectRepresentative(group)
                 dedupedWinners.add(winner)
             }
         }

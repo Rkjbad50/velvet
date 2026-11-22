@@ -875,8 +875,6 @@ private fun SpotlightCard(song: Song, queue: List<Song>, featured: Boolean) {
         }
     }
 }
-    }
-}
 
 @Composable
 private fun ShortcutTile(s: Shortcut, modifier: Modifier) {

@@ -574,6 +574,7 @@ class QueueManager(initialState: QueueState = QueueState()) {
             state: QueueState,
             mode: ShuffleMode = ShuffleMode.STANDARD,
             allowSmartShuffle: Boolean = true,
+            skipNearDuplicates: Boolean = true,
             rng: Random = Random(),
         ): QueueState {
             val targetMode = if (mode == ShuffleMode.SMART && !allowSmartShuffle) ShuffleMode.STANDARD else mode
@@ -581,10 +582,26 @@ class QueueManager(initialState: QueueState = QueueState()) {
             val userQueueSongIds = state.userQueue.map { it.song.id }.toSet()
             val historySongIds = state.history.map { it.song.id }.toSet()
 
-            val pool = state.sourceList.filter {
+            val rawPool = state.sourceList.filter {
                 it.song.id != currentItem.song.id &&
                     it.song.id !in historySongIds &&
                     it.song.id !in userQueueSongIds
+            }
+
+            // Treat duplicate group as one slot per shuffle cycle if skipNearDuplicates is enabled
+            val pool = if (skipNearDuplicates && rawPool.size > 1) {
+                val groupMap = SongIdentity.canonicalGroupId(rawPool.map { it.song })
+                val seenGroups = mutableSetOf<String>()
+                val filteredPool = mutableListOf<QueueItem>()
+                for (item in rawPool) {
+                    val gid = groupMap[item.song.id] ?: item.song.id
+                    if (seenGroups.add(gid)) {
+                        filteredPool.add(item)
+                    }
+                }
+                filteredPool
+            } else {
+                rawPool
             }
 
             val previousIds = state.upNext.map { it.song.id }

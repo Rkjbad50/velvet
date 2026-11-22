@@ -1,0 +1,506 @@
+[
+  {
+    "id": "pair_01",
+    "expected": "SAME",
+    "songA": { "id": "v101", "title": "Aankhon Ki Gustakhiyan (From \"Hum Dil De Chuke Sanam\")", "artist": "Kumar Sanu, Alka Yagnik", "durationSec": 300, "preferredMusicSource": true },
+    "songB": { "id": "v102", "title": "Ankhon Ki Gustakhiyaan - Lyrical Video", "artist": "Alka Yagnik & Kumar Sanu", "durationSec": 302, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_02",
+    "expected": "SAME",
+    "songA": { "id": "v103", "title": "Tujhe Dekha Toh Yeh Jaana Sanam (Full Video)", "artist": "Kumar Sanu, Lata Mangeshkar", "durationSec": 304, "preferredMusicSource": false },
+    "songB": { "id": "v104", "title": "Tujhe Dekha To Ye Jana Sanam", "artist": "Lata Mangeshkar, Kumar Sanu - Topic", "durationSec": 305, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_03",
+    "expected": "SAME",
+    "songA": { "id": "v105", "title": "Chaiyya Chaiyya - Sukhwinder Singh, Sapna Awasthi | Dil Se", "artist": "A.R. Rahman", "durationSec": 395, "preferredMusicSource": false },
+    "songB": { "id": "v106", "title": "Chaiya Chaiya", "artist": "Sukhwinder Singh & Sapna Awasthi", "durationSec": 393, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_04",
+    "expected": "SAME",
+    "songA": { "id": "v107", "title": "Jeena Jeena (Audio) | Badlapur", "artist": "Atif Aslam", "durationSec": 229, "preferredMusicSource": true },
+    "songB": { "id": "v108", "title": "Jeena Jeena - Lyrical | Varun Dhawan | Atif Aslam", "artist": "Zee Music Company", "durationSec": 231, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_05",
+    "expected": "SAME",
+    "songA": { "id": "v109", "title": "Kal Ho Naa Ho (Official Audio)", "artist": "Sonu Nigam", "durationSec": 322, "preferredMusicSource": true },
+    "songB": { "id": "v110", "title": "Kal Ho Na Ho Full Song", "artist": "Sonu Nigam - Topic", "durationSec": 321, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_06",
+    "expected": "SAME",
+    "songA": { "id": "v111", "title": "Tum Hi Ho | Aashiqui 2", "artist": "Arijit Singh", "durationSec": 262, "preferredMusicSource": true },
+    "songB": { "id": "v112", "title": "Tum Hi Ho (Lyrical Video Song) | Mithoon", "artist": "T-Series", "durationSec": 264, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_07",
+    "expected": "SAME",
+    "songA": { "id": "v113", "title": "Pee Loon (From \"Once Upon a Time in Mumbaai\")", "artist": "Mohit Chauhan", "durationSec": 288, "preferredMusicSource": true },
+    "songB": { "id": "v114", "title": "Pi Loon - Full Track", "artist": "Mohit Chauhan", "durationSec": 290, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_08",
+    "expected": "SAME",
+    "songA": { "id": "v115", "title": "Agar Tum Saath Ho (Audio)", "artist": "Alka Yagnik, Arijit Singh", "durationSec": 341, "preferredMusicSource": true },
+    "songB": { "id": "v116", "title": "Agar Tum Sath Ho - Tamasha", "artist": "Arijit Singh & Alka Yagnik", "durationSec": 342, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_09",
+    "expected": "SAME",
+    "songA": { "id": "v117", "title": "Kun Faya Kun (Lyrical Video)", "artist": "A.R. Rahman, Javed Ali, Mohit Chauhan", "durationSec": 472, "preferredMusicSource": false },
+    "songB": { "id": "v118", "title": "Kun Faaya Kun", "artist": "A.R. Rahman - Topic", "durationSec": 473, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_10",
+    "expected": "SAME",
+    "songA": { "id": "v119", "title": "Tere Bina (Guru)", "artist": "A.R. Rahman, Chinmayi", "durationSec": 310, "preferredMusicSource": true },
+    "songB": { "id": "v120", "title": "Tere Bina - Guru | Full Song", "artist": "Chinmayi & A.R. Rahman", "durationSec": 312, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_11",
+    "expected": "SAME",
+    "songA": { "id": "v121", "title": "Bulleya (Ae Dil Hai Mushkil)", "artist": "Amit Mishra, Shilpa Rao", "durationSec": 348, "preferredMusicSource": true },
+    "songB": { "id": "v122", "title": "Bulleya - Audio Song", "artist": "Pritam, Amit Mishra, Shilpa Rao", "durationSec": 350, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_12",
+    "expected": "SAME",
+    "songA": { "id": "v123", "title": "Kabira (Audio)", "artist": "Tochi Raina, Rekha Bhardwaj", "durationSec": 223, "preferredMusicSource": true },
+    "songB": { "id": "v124", "title": "Kabira - Yeh Jawaani Hai Deewani", "artist": "Rekha Bhardwaj, Tochi Raina", "durationSec": 224, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_13",
+    "expected": "SAME",
+    "songA": { "id": "v125", "title": "Mitwa - Kabhi Alvida Naa Kehna", "artist": "Shafqat Amanat Ali, Shankar Mahadevan, Caralisa Monteiro", "durationSec": 382, "preferredMusicSource": false },
+    "songB": { "id": "v126", "title": "Mitwa", "artist": "Shafqat Amanat Ali - Topic", "durationSec": 383, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_14",
+    "expected": "SAME",
+    "songA": { "id": "v127", "title": "श्री हनुमान चालीसा", "artist": "Hariharan", "durationSec": 580, "preferredMusicSource": true },
+    "songB": { "id": "v128", "title": "Shree Hanuman Chalisa", "artist": "Hariharan - Topic", "durationSec": 582, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_15",
+    "expected": "SAME",
+    "songA": { "id": "v129", "title": "Kesariya (From \"Brahmastra\")", "artist": "Pritam, Arijit Singh, Amitabh Bhattacharya", "durationSec": 268, "preferredMusicSource": true },
+    "songB": { "id": "v130", "title": "Kesariya - Audio", "artist": "Arijit Singh", "durationSec": 270, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_16",
+    "expected": "SAME",
+    "songA": { "id": "v131", "title": "Raataan Lambiyan (Official Video)", "artist": "Tanishk Bagchi, Jubin Nautiyal, Asees Kaur", "durationSec": 230, "preferredMusicSource": false },
+    "songB": { "id": "v132", "title": "Raatan Lambiyan", "artist": "Jubin Nautiyal & Asees Kaur", "durationSec": 231, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_17",
+    "expected": "SAME",
+    "songA": { "id": "v133", "title": "Dil Diyan Gallan (Tiger Zinda Hai)", "artist": "Atif Aslam", "durationSec": 320, "preferredMusicSource": true },
+    "songB": { "id": "v134", "title": "Dil Diyan Gallan - Lyrical Song", "artist": "Vishal-Shekhar, Atif Aslam", "durationSec": 322, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_18",
+    "expected": "SAME",
+    "songA": { "id": "v135", "title": "Apna Bana Le (From \"Bhediya\")", "artist": "Arijit Singh, Sachin-Jigar", "durationSec": 261, "preferredMusicSource": true },
+    "songB": { "id": "v136", "title": "Apna Bana Le - Full Song", "artist": "Sachin-Jigar, Arijit Singh", "durationSec": 263, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_19",
+    "expected": "SAME",
+    "songA": { "id": "v137", "title": "Pehla Nasha (Jo Jeeta Wohi Sikandar)", "artist": "Udit Narayan, Sadhana Sargam", "durationSec": 291, "preferredMusicSource": true },
+    "songB": { "id": "v138", "title": "Pehla Nasha - Audio", "artist": "Sadhana Sargam, Udit Narayan", "durationSec": 290, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_20",
+    "expected": "SAME",
+    "songA": { "id": "v139", "title": "Channa Mereya", "artist": "Arijit Singh - Topic", "durationSec": 289, "preferredMusicSource": true },
+    "songB": { "id": "v140", "title": "Channa Mereya (Lyrical Video) | Ae Dil Hai Mushkil", "artist": "Pritam, Arijit Singh", "durationSec": 292, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_21",
+    "expected": "SAME",
+    "songA": { "id": "v141", "title": "Hawayein (From \"Jab Harry Met Sejal\")", "artist": "Pritam, Arijit Singh", "durationSec": 290, "preferredMusicSource": true },
+    "songB": { "id": "v142", "title": "Hawayein - Audio", "artist": "Arijit Singh", "durationSec": 291, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_22",
+    "expected": "SAME",
+    "songA": { "id": "v143", "title": "Shayad (Love Aaj Kal)", "artist": "Arijit Singh, Pritam", "durationSec": 248, "preferredMusicSource": true },
+    "songB": { "id": "v144", "title": "Shayad - Full Audio Song", "artist": "Pritam, Arijit Singh", "durationSec": 250, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_23",
+    "expected": "SAME",
+    "songA": { "id": "v145", "title": "Zaalima (Raees)", "artist": "Arijit Singh, Harshdeep Kaur", "durationSec": 299, "preferredMusicSource": true },
+    "songB": { "id": "v146", "title": "Zalima - Full Video", "artist": "Harshdeep Kaur & Arijit Singh", "durationSec": 301, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_24",
+    "expected": "SAME",
+    "songA": { "id": "v147", "title": "Gerua (Dilwale)", "artist": "Arijit Singh, Antara Mitra", "durationSec": 345, "preferredMusicSource": true },
+    "songB": { "id": "v148", "title": "Gerua - Lyrical Song", "artist": "Antara Mitra & Arijit Singh", "durationSec": 347, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_25",
+    "expected": "SAME",
+    "songA": { "id": "v149", "title": "Nashe Si Chadh Gayi (Befikre)", "artist": "Arijit Singh", "durationSec": 238, "preferredMusicSource": true },
+    "songB": { "id": "v150", "title": "Nashe Si Chadh Gayi - Audio", "artist": "Arijit Singh - Topic", "durationSec": 239, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_26",
+    "expected": "SAME",
+    "songA": { "id": "v151", "title": "Ghungroo (From \"War\")", "artist": "Arijit Singh, Shilpa Rao", "durationSec": 302, "preferredMusicSource": true },
+    "songB": { "id": "v152", "title": "Ghungroo Song | Hrithik Roshan", "artist": "Shilpa Rao, Arijit Singh", "durationSec": 304, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_27",
+    "expected": "SAME",
+    "songA": { "id": "v153", "title": "Phir Bhi Tumko Chahunga (Half Girlfriend)", "artist": "Arijit Singh, Shashaa Tirupati", "durationSec": 351, "preferredMusicSource": true },
+    "songB": { "id": "v154", "title": "Phir Bhi Tumko Chahunga - Full Track", "artist": "Mithoon, Arijit Singh", "durationSec": 353, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_28",
+    "expected": "SAME",
+    "songA": { "id": "v155", "title": "Soch Na Sake (Airlift)", "artist": "Arijit Singh, Tulsi Kumar", "durationSec": 281, "preferredMusicSource": true },
+    "songB": { "id": "v156", "title": "Soch Na Sake - Audio", "artist": "Tulsi Kumar & Arijit Singh", "durationSec": 283, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_29",
+    "expected": "SAME",
+    "songA": { "id": "v157", "title": "Kaun Tujhe (M.S. Dhoni)", "artist": "Palak Muchhal", "durationSec": 241, "preferredMusicSource": true },
+    "songB": { "id": "v158", "title": "Kaun Tujhe - Lyrical Song", "artist": "Amaal Mallik, Palak Muchhal", "durationSec": 243, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_30",
+    "expected": "SAME",
+    "songA": { "id": "v159", "title": "Hasi (Hamari Adhuri Kahani)", "artist": "Ami Mishra", "durationSec": 272, "preferredMusicSource": true },
+    "songB": { "id": "v160", "title": "Hasi - Male | Emraan Hashmi", "artist": "Ami Mishra - Topic", "durationSec": 273, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_31",
+    "expected": "SAME",
+    "songA": { "id": "v161", "title": "Muskurane (Citylights)", "artist": "Arijit Singh", "durationSec": 334, "preferredMusicSource": true },
+    "songB": { "id": "v162", "title": "Muskurane Ki Wajah Tum Ho", "artist": "Arijit Singh", "durationSec": 335, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_32",
+    "expected": "SAME",
+    "songA": { "id": "v163", "title": "Main Rang Sharbaton Ka (Phata Poster Nikhla Hero)", "artist": "Atif Aslam, Chinmayi", "durationSec": 263, "preferredMusicSource": true },
+    "songB": { "id": "v164", "title": "Main Rang Sharbaton Ka - Audio", "artist": "Pritam, Atif Aslam", "durationSec": 264, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_33",
+    "expected": "SAME",
+    "songA": { "id": "v165", "title": "Subhanallah (Yeh Jawaani Hai Deewani)", "artist": "Sreerama Chandra, Shilpa Rao", "durationSec": 249, "preferredMusicSource": true },
+    "songB": { "id": "v166", "title": "Subhanallah - Lyrical", "artist": "Shilpa Rao & Sreerama Chandra", "durationSec": 251, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_34",
+    "expected": "SAME",
+    "songA": { "id": "v167", "title": "Ilahi (Yeh Jawaani Hai Deewani)", "artist": "Arijit Singh", "durationSec": 229, "preferredMusicSource": true },
+    "songB": { "id": "v168", "title": "Ilahi - Audio Song", "artist": "Pritam, Arijit Singh", "durationSec": 231, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_35",
+    "expected": "SAME",
+    "songA": { "id": "v169", "title": "Badtameez Dil (Yeh Jawaani Hai Deewani)", "artist": "Benny Dayal, Shefali Alvares", "durationSec": 252, "preferredMusicSource": true },
+    "songB": { "id": "v170", "title": "Badtameez Dil - Full Song", "artist": "Pritam, Benny Dayal", "durationSec": 254, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_36",
+    "expected": "SAME",
+    "songA": { "id": "v171", "title": "Dilliwaali Girlfriend", "artist": "Arijit Singh, Sunidhi Chauhan", "durationSec": 260, "preferredMusicSource": true },
+    "songB": { "id": "v172", "title": "Dilliwali Girlfriend (Lyrical)", "artist": "Sunidhi Chauhan & Arijit Singh", "durationSec": 262, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_37",
+    "expected": "SAME",
+    "songA": { "id": "v173", "title": "Tum Se Hi (Jab We Met)", "artist": "Mohit Chauhan", "durationSec": 321, "preferredMusicSource": true },
+    "songB": { "id": "v174", "title": "Tum Se Hi - Audio Track", "artist": "Pritam, Mohit Chauhan", "durationSec": 323, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_38",
+    "expected": "SAME",
+    "songA": { "id": "v175", "title": "Mauja Hi Mauja (Jab We Met)", "artist": "Mika Singh", "durationSec": 244, "preferredMusicSource": true },
+    "songB": { "id": "v176", "title": "Mauja Hi Mauja - Full Video", "artist": "Pritam, Mika Singh", "durationSec": 246, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_39",
+    "expected": "SAME",
+    "songA": { "id": "v177", "title": "Nagada Sang Dhol (Goliyon Ki Raasleela Ram-Leela)", "artist": "Shreya Ghoshal, Osman Mir", "durationSec": 273, "preferredMusicSource": true },
+    "songB": { "id": "v178", "title": "Nagada Sang Dhol - Audio", "artist": "Osman Mir, Shreya Ghoshal", "durationSec": 275, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_40",
+    "expected": "SAME",
+    "songA": { "id": "v179", "title": "Lahu Munh Lag Gaya", "artist": "Shail Hada - Topic", "durationSec": 300, "preferredMusicSource": true },
+    "songB": { "id": "v180", "title": "Lahu Munh Lag Gaya (Full Song)", "artist": "Sanjay Leela Bhansali, Shail Hada", "durationSec": 302, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_41",
+    "expected": "SAME",
+    "songA": { "id": "v181", "title": "Malhari (Bajirao Mastani)", "artist": "Vishal Dadlani", "durationSec": 245, "preferredMusicSource": true },
+    "songB": { "id": "v182", "title": "Malhari - Audio Song", "artist": "Sanjay Leela Bhansali, Vishal Dadlani", "durationSec": 246, "preferredMusicSource": false }
+  },
+  {
+    "id": "pair_42",
+    "expected": "SAME",
+    "songA": { "id": "v183", "title": "Deewani Mastani (Bajirao Mastani)", "artist": "Shreya Ghoshal", "durationSec": 340, "preferredMusicSource": true },
+    "songB": { "id": "v184", "title": "Deewani Mastani - Lyrical Song", "artist": "Shreya Ghoshal - Topic", "durationSec": 342, "preferredMusicSource": true }
+  },
+  {
+    "id": "pair_43",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v201", "title": "Tum Hi Ho (Original)", "artist": "Arijit Singh", "durationSec": 262 },
+    "songB": { "id": "v202", "title": "Tum Hi Ho (Remix)", "artist": "Arijit Singh, DJ Chetas", "durationSec": 240 }
+  },
+  {
+    "id": "pair_44",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v203", "title": "Kesariya", "artist": "Arijit Singh", "durationSec": 268 },
+    "songB": { "id": "v204", "title": "Kesariya (Slowed + Reverb)", "artist": "Arijit Singh", "durationSec": 320 }
+  },
+  {
+    "id": "pair_45",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v205", "title": "Apna Bana Le", "artist": "Arijit Singh", "durationSec": 261 },
+    "songB": { "id": "v206", "title": "Apna Bana Le (Lofi Mix)", "artist": "Sachin-Jigar", "durationSec": 230 }
+  },
+  {
+    "id": "pair_46",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v207", "title": "Channa Mereya", "artist": "Arijit Singh", "durationSec": 289 },
+    "songB": { "id": "v208", "title": "Channa Mereya (Unplugged)", "artist": "Arijit Singh", "durationSec": 210 }
+  },
+  {
+    "id": "pair_47",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v209", "title": "Jeena Jeena", "artist": "Atif Aslam", "durationSec": 229 },
+    "songB": { "id": "v210", "title": "Jeena Jeena (Acoustic Cover)", "artist": "Siddharth Slathia", "durationSec": 220 }
+  },
+  {
+    "id": "pair_48",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v211", "title": "Kabira", "artist": "Tochi Raina, Rekha Bhardwaj", "durationSec": 223 },
+    "songB": { "id": "v212", "title": "Kabira (Encore)", "artist": "Arijit Singh, Harshdeep Kaur", "durationSec": 191 }
+  },
+  {
+    "id": "pair_49",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v213", "title": "Hasi (Male Version)", "artist": "Ami Mishra", "durationSec": 272 },
+    "songB": { "id": "v214", "title": "Hasi (Female Version)", "artist": "Shreya Ghoshal", "durationSec": 194 }
+  },
+  {
+    "id": "pair_50",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v215", "title": "Agar Tum Saath Ho", "artist": "Alka Yagnik, Arijit Singh", "durationSec": 341 },
+    "songB": { "id": "v216", "title": "Agar Tum Saath Ho (Live in Concert)", "artist": "Arijit Singh", "durationSec": 410 }
+  },
+  {
+    "id": "pair_51",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v217", "title": "Pee Loon", "artist": "Mohit Chauhan", "durationSec": 288 },
+    "songB": { "id": "v218", "title": "Pee Loon (Remix)", "artist": "Mohit Chauhan, DJ Angel", "durationSec": 260 }
+  },
+  {
+    "id": "pair_52",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v219", "title": "Kal Ho Naa Ho", "artist": "Sonu Nigam", "durationSec": 322 },
+    "songB": { "id": "v220", "title": "Kal Ho Naa Ho (Sad Version)", "artist": "Sonu Nigam, Alka Yagnik", "durationSec": 195 }
+  },
+  {
+    "id": "pair_53",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v221", "title": "Tum Hi Ho", "artist": "Arijit Singh", "durationSec": 262 },
+    "songB": { "id": "v222", "title": "Tum Hi Ho Mehboob Mere", "artist": "Mukesh", "durationSec": 340 }
+  },
+  {
+    "id": "pair_54",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v223", "title": "Pehla Nasha", "artist": "Udit Narayan", "durationSec": 291 },
+    "songB": { "id": "v224", "title": "Pehla Nasha (Sped Up)", "artist": "Udit Narayan", "durationSec": 198 }
+  },
+  {
+    "id": "pair_55",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v225", "title": "Dil Diyan Gallan", "artist": "Atif Aslam", "durationSec": 320 },
+    "songB": { "id": "v226", "title": "Dil Diyan Gallan (Karaoke Track)", "artist": "Instrumental", "durationSec": 320 }
+  },
+  {
+    "id": "pair_56",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v227", "title": "Bulleya", "artist": "Amit Mishra, Shilpa Rao", "durationSec": 348 },
+    "songB": { "id": "v228", "title": "Bulleya (Sultan)", "artist": "Papon", "durationSec": 337 }
+  },
+  {
+    "id": "pair_57",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v229", "title": "Tere Bina", "artist": "A.R. Rahman, Chinmayi", "durationSec": 310 },
+    "songB": { "id": "v230", "title": "Tere Bina (1920)", "artist": "Kunal Ganjawala", "durationSec": 280 }
+  },
+  {
+    "id": "pair_58",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v231", "title": "Subhanallah", "artist": "Sreerama Chandra", "durationSec": 249 },
+    "songB": { "id": "v232", "title": "Subhanallah (Fanaa)", "artist": "Kailash Kher", "durationSec": 280 }
+  },
+  {
+    "id": "pair_59",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v233", "title": "Shayad", "artist": "Arijit Singh", "durationSec": 248 },
+    "songB": { "id": "v234", "title": "Shayad (Reprise)", "artist": "Arijit Singh", "durationSec": 178 }
+  },
+  {
+    "id": "pair_60",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v235", "title": "Raataan Lambiyan", "artist": "Jubin Nautiyal", "durationSec": 230 },
+    "songB": { "id": "v236", "title": "Raataan Lambiyan (Remix)", "artist": "DJ Notorious, Jubin Nautiyal", "durationSec": 210 }
+  },
+  {
+    "id": "pair_61",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v237", "title": "Kun Faya Kun", "artist": "A.R. Rahman", "durationSec": 472 },
+    "songB": { "id": "v238", "title": "Kun Faya Kun (Mashup)", "artist": "DJ Lijo", "durationSec": 290 }
+  },
+  {
+    "id": "pair_62",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v239", "title": "Mitwa", "artist": "Shafqat Amanat Ali", "durationSec": 382 },
+    "songB": { "id": "v240", "title": "Mitwa (Lagaan)", "artist": "Udit Narayan, Alka Yagnik", "durationSec": 405 }
+  },
+  {
+    "id": "pair_63",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v241", "title": "Malhari", "artist": "Vishal Dadlani", "durationSec": 245 },
+    "songB": { "id": "v242", "title": "Malhari (Remix)", "artist": "DJ Shiva, Vishal Dadlani", "durationSec": 215 }
+  },
+  {
+    "id": "pair_64",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v243", "title": "Deewani Mastani", "artist": "Shreya Ghoshal", "durationSec": 340 },
+    "songB": { "id": "v244", "title": "Deewani Mastani (Instrumental)", "artist": "Sanjay Leela Bhansali", "durationSec": 340 }
+  },
+  {
+    "id": "pair_65",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v245", "title": "Zaalima", "artist": "Arijit Singh, Harshdeep Kaur", "durationSec": 299 },
+    "songB": { "id": "v246", "title": "Zaalima (Slowed Reverb)", "artist": "Arijit Singh", "durationSec": 360 }
+  },
+  {
+    "id": "pair_66",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v247", "title": "Hawayein", "artist": "Arijit Singh", "durationSec": 290 },
+    "songB": { "id": "v248", "title": "Hawayein (Remastered 2024)", "artist": "Pritam, Arijit Singh", "durationSec": 290 }
+  },
+  {
+    "id": "pair_67",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v249", "title": "Gerua", "artist": "Arijit Singh, Antara Mitra", "durationSec": 345 },
+    "songB": { "id": "v250", "title": "Gerua (Acoustic Unplugged)", "artist": "Pritam, Arijit Singh", "durationSec": 270 }
+  },
+  {
+    "id": "pair_68",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v251", "title": "Chaiyya Chaiyya", "artist": "Sukhwinder Singh", "durationSec": 395 },
+    "songB": { "id": "v252", "title": "Chaiyya Chaiyya (DJ Remix)", "artist": "Sukhwinder Singh", "durationSec": 310 }
+  },
+  {
+    "id": "pair_69",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v253", "title": "Ghungroo", "artist": "Arijit Singh, Shilpa Rao", "durationSec": 302 },
+    "songB": { "id": "v254", "title": "Ghungroo (Remix)", "artist": "DJ Notorious", "durationSec": 245 }
+  },
+  {
+    "id": "pair_70",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v255", "title": "Phir Bhi Tumko Chahunga", "artist": "Arijit Singh", "durationSec": 351 },
+    "songB": { "id": "v256", "title": "Phir Bhi Tumko Chaahungi (Female Version)", "artist": "Shraddha Kapoor", "durationSec": 234 }
+  },
+  {
+    "id": "pair_71",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v257", "title": "Soch Na Sake", "artist": "Arijit Singh, Tulsi Kumar", "durationSec": 281 },
+    "songB": { "id": "v258", "title": "Soch Na Sake (Solo Version)", "artist": "Arijit Singh", "durationSec": 260 }
+  },
+  {
+    "id": "pair_72",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v259", "title": "Kaun Tujhe", "artist": "Palak Muchhal", "durationSec": 241 },
+    "songB": { "id": "v260", "title": "Kaun Tujhe (Armaan Malik Version)", "artist": "Armaan Malik", "durationSec": 245 }
+  },
+  {
+    "id": "pair_73",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v261", "title": "Muskurane (Romantic)", "artist": "Arijit Singh", "durationSec": 334 },
+    "songB": { "id": "v262", "title": "Muskurane (Unplugged)", "artist": "Mohammad Irfan", "durationSec": 280 }
+  },
+  {
+    "id": "pair_74",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v263", "title": "Main Rang Sharbaton Ka", "artist": "Atif Aslam", "durationSec": 263 },
+    "songB": { "id": "v264", "title": "Main Rang Sharbaton Ka (Reprise)", "artist": "Arijit Singh", "durationSec": 278 }
+  },
+  {
+    "id": "pair_75",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v265", "title": "Ilahi", "artist": "Arijit Singh", "durationSec": 229 },
+    "songB": { "id": "v266", "title": "Ilahi (Passion Mix)", "artist": "Mohit Chauhan", "durationSec": 213 }
+  },
+  {
+    "id": "pair_76",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v267", "title": "Badtameez Dil", "artist": "Benny Dayal", "durationSec": 252 },
+    "songB": { "id": "v268", "title": "Badtameez Dil (Club Remix)", "artist": "Benny Dayal", "durationSec": 220 }
+  },
+  {
+    "id": "pair_77",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v269", "title": "Dilliwaali Girlfriend", "artist": "Arijit Singh, Sunidhi Chauhan", "durationSec": 260 },
+    "songB": { "id": "v270", "title": "Dilliwaali Girlfriend (Remix)", "artist": "DJ Chetas", "durationSec": 218 }
+  },
+  {
+    "id": "pair_78",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v271", "title": "Tum Se Hi", "artist": "Mohit Chauhan", "durationSec": 321 },
+    "songB": { "id": "v272", "title": "Tum Se Hi (Remix)", "artist": "DJ Suketu", "durationSec": 255 }
+  },
+  {
+    "id": "pair_79",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v273", "title": "Mauja Hi Mauja", "artist": "Mika Singh", "durationSec": 244 },
+    "songB": { "id": "v274", "title": "Mauja Hi Mauja (Club Mix)", "artist": "Mika Singh", "durationSec": 240 }
+  },
+  {
+    "id": "pair_80",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v275", "title": "Nagada Sang Dhol", "artist": "Shreya Ghoshal", "durationSec": 273 },
+    "songB": { "id": "v276", "title": "Nagada Sang Dhol (DJ Remix)", "artist": "Shreya Ghoshal", "durationSec": 228 }
+  },
+  {
+    "id": "pair_81",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v277", "title": "Nashe Si Chadh Gayi", "artist": "Arijit Singh", "durationSec": 238 },
+    "songB": { "id": "v278", "title": "Nashe Si Chadh Gayi (Remix)", "artist": "DJ Shilpi Sharma", "durationSec": 215 }
+  },
+  {
+    "id": "pair_82",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v279", "title": "Aankhon Ki Gustakhiyan", "artist": "Kumar Sanu, Alka Yagnik", "durationSec": 300 },
+    "songB": { "id": "v280", "title": "Aankhon Ki Gustakhiyan (Lofi Flip)", "artist": "Kumar Sanu", "durationSec": 240 }
+  },
+  {
+    "id": "pair_83",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v281", "title": "Tujhe Dekha Toh Yeh Jaana Sanam", "artist": "Kumar Sanu, Lata Mangeshkar", "durationSec": 304 },
+    "songB": { "id": "v282", "title": "Tujhe Dekha Toh Yeh Jaana Sanam (Jhankar Beat)", "artist": "Kumar Sanu", "durationSec": 304 }
+  },
+  {
+    "id": "pair_84",
+    "expected": "DIFFERENT",
+    "songA": { "id": "v283", "title": "Hawayein", "artist": "Arijit Singh", "durationSec": 290 },
+    "songB": { "id": "v284", "title": "Kesariya", "artist": "Arijit Singh", "durationSec": 268 }
+  }
+]

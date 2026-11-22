@@ -65,6 +65,9 @@ data class LibraryData(
     val selfHealingEnabled: Boolean = true,
     val includePrereleases: Boolean = false,
     val autoUpdateCheck: Boolean = true,
+    val skipNearDuplicatesInShuffle: Boolean = true,
+    val playedGroupIds: List<String> = emptyList(),
+    val listenEvents: List<ListenEvent> = emptyList(),
 ) {
     companion object {
         const val CURRENT_VERSION = 2
@@ -530,6 +533,25 @@ class Library(dir: File) {
     fun setIncludePrereleases(include: Boolean) = update { it.copy(includePrereleases = include) }
 
     fun setAutoUpdateCheck(enabled: Boolean) = update { it.copy(autoUpdateCheck = enabled) }
+
+    fun setSkipNearDuplicatesInShuffle(enabled: Boolean) = update { it.copy(skipNearDuplicatesInShuffle = enabled) }
+
+    fun recordListenEvent(event: ListenEvent) = update { current ->
+        val now = now()
+        val retentionCutoff = now - (180L * 24 * 60 * 60 * 1000L) // 180 days
+        val prunedEvents = (current.listenEvents.filter { it.startedAt >= retentionCutoff } + event)
+            .takeLast(20_000)
+
+        val updatedGroupIds = (listOf(event.songGroupId) + current.playedGroupIds.filter { it != event.songGroupId })
+            .take(200)
+
+        current.copy(
+            listenEvents = prunedEvents,
+            playedGroupIds = updatedGroupIds,
+        )
+    }
+
+    fun clearListenEvents() = update { it.copy(listenEvents = emptyList(), playedGroupIds = emptyList()) }
 
     fun setPlaylistSongs(playlistId: String, songs: List<Song>) = updatePlaylist(playlistId) { p ->
         val entries = songs.mapIndexed { i, s ->
