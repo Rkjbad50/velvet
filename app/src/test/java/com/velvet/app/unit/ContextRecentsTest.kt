@@ -184,7 +184,7 @@ class ContextRecentsTest {
         val library = Library(dir)
 
         val plId = library.createPlaylist("Original Playlist")
-        library.addSongToPlaylist(plId, Song("s1", "Song 1", "Artist 1", 180, thumb = "http://thumb1"))
+        library.addToPlaylist(plId, Song("s1", "Song 1", "Artist 1", 180, thumb = "http://thumb1"))
 
         // Playlist is played, recording into contextRecents
         library.addContextRecent(
