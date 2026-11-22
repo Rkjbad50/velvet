@@ -106,8 +106,8 @@ fun normalizeTitle(title: String): String {
         .replace("lyrical song", "")
         .replace("audio song", "")
         .replace("lyric video", "")
-    // 6. Strip punctuation and collapse spaces
-    return cleaned.replace(Regex("""[^a-z0-9\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
+    // 6. Strip punctuation and collapse spaces (preserves all Unicode letters across languages)
+    return cleaned.replace(Regex("""[^\p{L}0-9\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
 }
 
 /**
@@ -122,7 +122,7 @@ fun normalizePrimaryArtist(artist: String): String {
         .replace(" - topic", "")
         .replace("- topic", "")
         .replace("vevo", "")
-    return cleaned.replace(Regex("""[^a-z0-9\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
+    return cleaned.replace(Regex("""[^\p{L}0-9\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
 }
 
 /**
@@ -163,12 +163,20 @@ private val SOUTH_INDIC_TERMS = setOf(
     "keeravani", "pala pala", "saamikittay", "chinna chinna", "nila kaaigiradhu", "kollywood", "tollywood",
 )
 
-fun isSouthIndic(song: Song): Boolean {
-    val lowerTitle = song.title.lowercase(Locale.ROOT)
-    val lowerArtist = song.artist.lowercase(Locale.ROOT)
-    return SOUTH_INDIC_TERMS.any { term ->
-        lowerTitle.contains(term) || lowerArtist.contains(term)
+private fun containsTerm(text: String, terms: Set<String>): Boolean {
+    val lower = text.lowercase(Locale.ROOT)
+    val words = lower.split(Regex("""[\s\p{Punct}]+""")).filter { it.isNotBlank() }.toSet()
+    return terms.any { term ->
+        if (term.contains(" ")) {
+            lower.contains(term)
+        } else {
+            words.contains(term)
+        }
     }
+}
+
+fun isSouthIndic(song: Song): Boolean {
+    return containsTerm(song.title, SOUTH_INDIC_TERMS) || containsTerm(song.artist, SOUTH_INDIC_TERMS)
 }
 
 private val DEVOTIONAL_TERMS = setOf(
@@ -218,10 +226,10 @@ fun detectCluster(song: Song): MusicCluster {
     val lowerTitle = song.title.lowercase(Locale.ROOT)
     val normArtist = normalizePrimaryArtist(song.artist)
 
-    if (DEVOTIONAL_TERMS.any { lowerTitle.contains(it) } || DEVOTIONAL_ARTISTS.any { normArtist.contains(it) }) {
+    if (containsTerm(song.title, DEVOTIONAL_TERMS) || containsTerm(normArtist, DEVOTIONAL_TERMS) || DEVOTIONAL_ARTISTS.any { normArtist.contains(it) }) {
         return MusicCluster.DEVOTIONAL
     }
-    if (SUFI_GHAZAL_TERMS.any { lowerTitle.contains(it) || normArtist.contains(it) }) {
+    if (containsTerm(song.title, SUFI_GHAZAL_TERMS) || containsTerm(normArtist, SUFI_GHAZAL_TERMS)) {
         return MusicCluster.SUFI_GHAZAL
     }
     if (hasGurmukhi(song.title) || lowerTitle.contains("punjabi") || PUNJABI_ARTISTS.any { normArtist.contains(it) }) {
@@ -614,7 +622,7 @@ class AutoplayPipeline(
             candidate to score
         }
 
-        val filtered = scoredList.filter { it.second > -100 }
+        val filtered = scoredList.filter { it.second >= 0 }
         val toSort = if (filtered.isNotEmpty()) filtered else scoredList
         return toSort.sortedByDescending { it.second }.map { it.first }
     }
