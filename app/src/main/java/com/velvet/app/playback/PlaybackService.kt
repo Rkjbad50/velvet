@@ -37,6 +37,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.velvet.app.R
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.StreamResolver
+import com.velvet.app.diagnostics.DiagnosticsLogger
 import com.velvet.app.diagnostics.LastErrorTracker
 import com.velvet.app.data.isDuplicateOf
 import com.velvet.app.data.isValidVideoId
@@ -75,6 +76,8 @@ class PlaybackService : MediaSessionService() {
     private var failuresInARow = 0
     private var announcedSessionId = C.AUDIO_SESSION_ID_UNSET
     private val healingLadder = PlaybackHealingLadder()
+    private var transientRetryJob: Job? = null
+    private var playbackGeneration: Long = 0L
 
     /** Bumped whenever the queue is replaced. */
     private var queueGeneration = 0
@@ -151,6 +154,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         persistCurrentState()
+        transientRetryJob?.cancel()
+        transientRetryJob = null
         scope.cancel()
         AudioFx.release()
         SleepTimer.cancel()
@@ -336,10 +341,14 @@ class PlaybackService : MediaSessionService() {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             mediaItem ?: return
+            playbackGeneration++
+            transientRetryJob?.cancel()
+            transientRetryJob = null
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
                 queueGeneration++
             }
             if (mediaItem.mediaId != retriedId) retriedId = null
+            failuresInARow = 0
             VelvetApp.library.addRecent(mediaItem.toSong())
             VelvetApp.sessionHistory.record(mediaItem.toSong())
             trimPlayedHistory()
@@ -370,6 +379,10 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady) {
+                transientRetryJob?.cancel()
+                transientRetryJob = null
+            }
             if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) SleepTimer.onSongEndPause()
         }
 
@@ -381,6 +394,13 @@ class PlaybackService : MediaSessionService() {
         healingLadder.selfHealingEnabled = VelvetApp.library.data.value.selfHealingEnabled
         failuresInARow++
         LastErrorTracker.record(error, videoId = id)
+
+        DiagnosticsLogger.w(
+            "PlaybackService",
+            "onPlayerError: videoId=$id, errorCode=${error.errorCodeName}, " +
+                "playbackState=${exo.playbackState}, playWhenReady=${exo.playWhenReady}, " +
+                "cause=${error.cause?.javaClass?.simpleName}: ${error.cause?.message?.take(100)}"
+        )
 
         if (!healingLadder.selfHealingEnabled) {
             if (isTemporaryOutage(error)) {
@@ -422,10 +442,25 @@ class PlaybackService : MediaSessionService() {
                 }
             }
             is HealingDecision.RetryTransient -> {
-                scope.launch {
+                transientRetryJob?.cancel()
+                val retryGeneration = playbackGeneration
+                val failedId = id
+                transientRetryJob = scope.launch {
                     delay(decision.backoffMs)
-                    exo.prepare()
-                    exo.play()
+                    withContext(Dispatchers.Main) {
+                        if (!isActive) return@withContext
+                        if (!exo.playWhenReady) {
+                            DiagnosticsLogger.i("SelfHealing", "Transient retry aborted: playback was paused by user")
+                            return@withContext
+                        }
+                        if (playbackGeneration != retryGeneration || exo.currentMediaItem?.mediaId != failedId) {
+                            DiagnosticsLogger.i("SelfHealing", "Transient retry aborted: media item changed during backoff")
+                            return@withContext
+                        }
+                        DiagnosticsLogger.i("SelfHealing", "Executing transient retry ${decision.attempt} for $failedId")
+                        exo.prepare()
+                        exo.play()
+                    }
                 }
             }
             is HealingDecision.InvalidateAndReResolve -> {

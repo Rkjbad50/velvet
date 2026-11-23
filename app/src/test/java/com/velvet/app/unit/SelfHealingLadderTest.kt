@@ -263,4 +263,32 @@ class SelfHealingLadderTest {
         val d2 = ladder.handleFailure("vid2", PlaybackErrorCategory.EXPIRED_OR_FORBIDDEN)
         assertEquals(HealingDecision.NoAction, d2)
     }
+
+    @Test
+    fun testClassifyError_mapsNetworkAndHttpExceptionsCorrectly() {
+        val timeoutEx = java.net.SocketTimeoutException("Read timed out")
+        assertEquals(PlaybackErrorCategory.TRANSIENT_IO, PlaybackHealingLadder.classifyError(timeoutEx))
+
+        val connectEx = java.net.ConnectException("Connection refused")
+        assertEquals(PlaybackErrorCategory.TRANSIENT_IO, PlaybackHealingLadder.classifyError(connectEx))
+
+        val forbiddenEx = RuntimeException("HTTP 403 Forbidden")
+        assertEquals(PlaybackErrorCategory.EXPIRED_OR_FORBIDDEN, PlaybackHealingLadder.classifyError(forbiddenEx))
+
+        val expiredEx = RuntimeException("Stream URL has expired (410)")
+        assertEquals(PlaybackErrorCategory.EXPIRED_OR_FORBIDDEN, PlaybackHealingLadder.classifyError(expiredEx))
+    }
+
+    @Test
+    fun testTransientRetry_isStrictlyBoundedToTwoAttempts() {
+        val videoId = "vidBounded"
+        val d1 = ladder.handleFailure(videoId, PlaybackErrorCategory.TRANSIENT_IO)
+        assertTrue("First failure must be RetryTransient attempt 1", d1 is HealingDecision.RetryTransient && d1.attempt == 1)
+
+        val d2 = ladder.handleFailure(videoId, PlaybackErrorCategory.TRANSIENT_IO)
+        assertTrue("Second failure must be RetryTransient attempt 2", d2 is HealingDecision.RetryTransient && d2.attempt == 2)
+
+        val d3 = ladder.handleFailure(videoId, PlaybackErrorCategory.TRANSIENT_IO)
+        assertTrue("Third failure must escalate to InvalidateAndReResolve, never infinite retry", d3 is HealingDecision.InvalidateAndReResolve)
+    }
 }
