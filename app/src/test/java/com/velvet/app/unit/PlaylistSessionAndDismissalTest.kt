@@ -104,10 +104,12 @@ class PlaylistSessionAndDismissalTest {
     @Test
     fun testAudioClassification_classifiesAccurately() {
         val topicSong = Song(id = "t1", title = "Kesariya", artist = "Arijit Singh - Topic", durationSec = 268)
-        assertEquals(SongIdentity.AudioClassification.ORIGINAL_STUDIO_AUDIO, SongIdentity.classifySong(topicSong))
+        assertEquals(SongIdentity.AudioClassification.ORIGINAL_TOPIC_AUDIO, SongIdentity.classifySong(topicSong))
+        assertTrue(SongIdentity.classifySong(topicSong).isOriginalStudioAudio)
 
         val officialAudio = Song(id = "t2", title = "Kesariya (Official Audio)", artist = "Sony Music India", durationSec = 268)
-        assertEquals(SongIdentity.AudioClassification.ORIGINAL_STUDIO_AUDIO, SongIdentity.classifySong(officialAudio))
+        assertEquals(SongIdentity.AudioClassification.RECORD_LABEL_STUDIO_AUDIO, SongIdentity.classifySong(officialAudio))
+        assertTrue(SongIdentity.classifySong(officialAudio).isOriginalStudioAudio)
 
         val musicVideo = Song(id = "v1", title = "Kesariya - Official Music Video | Brahmāstra", artist = "Sony Music India", durationSec = 280)
         assertEquals(SongIdentity.AudioClassification.OFFICIAL_MUSIC_VIDEO, SongIdentity.classifySong(musicVideo))

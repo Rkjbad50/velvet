@@ -416,7 +416,8 @@ object SongIdentity {
     }
 
     enum class AudioClassification(val tier: Int) {
-        ORIGINAL_STUDIO_AUDIO(500),
+        ORIGINAL_TOPIC_AUDIO(600),
+        RECORD_LABEL_STUDIO_AUDIO(500),
         OFFICIAL_MUSIC_VIDEO(200),
         LYRICAL_VIDEO(100),
         FILM_DIALOGUE_VERSION(50),
@@ -424,6 +425,9 @@ object SongIdentity {
         REMIX_OR_ALTERNATE_VERSION(30),
         COVER_OR_UGC(20),
         UNKNOWN(10);
+
+        val isOriginalStudioAudio: Boolean
+            get() = this == ORIGINAL_TOPIC_AUDIO || this == RECORD_LABEL_STUDIO_AUDIO
     }
 
     fun classifySong(song: Song): AudioClassification {
@@ -458,13 +462,14 @@ object SongIdentity {
             return AudioClassification.COVER_OR_UGC
         }
 
-        // Check for Original Studio Audio (Topic, preferredMusicSource, or official audio upload)
+        // Check for Original Topic Audio (Topic, preferredMusicSource)
         if (song.preferredMusicSource || artistLow.endsWith("- topic") || artistLow.endsWith(" - topic")) {
-            return AudioClassification.ORIGINAL_STUDIO_AUDIO
+            return AudioClassification.ORIGINAL_TOPIC_AUDIO
         }
 
+        // Official Record Label Studio Audio
         if (titleLow.contains("official audio") || titleLow.contains("original audio") || titleLow.contains("original soundtrack") || titleLow.contains("audio song") || titleLow.contains("full audio")) {
-            return AudioClassification.ORIGINAL_STUDIO_AUDIO
+            return AudioClassification.RECORD_LABEL_STUDIO_AUDIO
         }
 
         // Official Music Video
@@ -474,7 +479,7 @@ object SongIdentity {
 
         // If channel is a known record label and not marked as video, treat as studio audio candidate
         if (RECORD_LABELS.any { artistLow.contains(it) } && !titleLow.contains("video")) {
-            return AudioClassification.ORIGINAL_STUDIO_AUDIO
+            return AudioClassification.RECORD_LABEL_STUDIO_AUDIO
         }
 
         return AudioClassification.UNKNOWN

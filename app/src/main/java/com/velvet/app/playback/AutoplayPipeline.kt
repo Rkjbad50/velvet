@@ -1069,14 +1069,17 @@ class AutoplayPipeline(
 
     /**
      * Dedupe winner selection order:
-     * 1. Original Studio Audio (ATV / Label Audio) > OMV > Lyrical > UGC
-     * 2. Earliest release year (fetched lazily for groups > 1)
-     * 3. Metadata completeness & stable deterministic tie-break
+     * 1. ATV (Topic Audio) beats OMV / Label Audio
+     * 2. Original Studio Audio > OMV > Lyrical > UGC
+     * 3. Earliest release year (fetched lazily for groups > 1)
+     * 4. Source order (stable tie-break)
      */
     private suspend fun selectWinner(group: List<Song>): Song {
-        val bestTier = group.maxOfOrNull { SongIdentity.classifySong(it).tier } ?: 10
-        val topTierCandidates = group.filter { SongIdentity.classifySong(it).tier == bestTier }
-        val candidatesToCompare = if (topTierCandidates.isNotEmpty()) topTierCandidates else group
+        val atvs = group.filter { isAtv(it) }
+        val candidatesToCompare = if (atvs.isNotEmpty()) atvs else {
+            val bestTier = group.maxOfOrNull { SongIdentity.classifySong(it).tier } ?: 10
+            group.filter { SongIdentity.classifySong(it).tier == bestTier }
+        }
 
         if (candidatesToCompare.size == 1) return candidatesToCompare.first()
 
@@ -1103,9 +1106,7 @@ class AutoplayPipeline(
                 ya != null && yb != null -> ya.compareTo(yb) // Earliest year first
                 ya != null -> -1
                 yb != null -> 1
-                else -> {
-                    compareValuesBy(b, a, { it.durationSec > 0 }, { it.album != null }, { it.id })
-                }
+                else -> 0 // Keep source order
             }
         }
         return sorted.first()
