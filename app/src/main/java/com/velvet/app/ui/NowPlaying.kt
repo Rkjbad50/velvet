@@ -62,7 +62,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.graphics.RectangleShape
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
