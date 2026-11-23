@@ -26,6 +26,15 @@
 
 ---
 
+## 🌟 What's New in v2.7.4
+
+- 📑 **Queue Bottom Sheet True Ground Anchoring**:
+  - **100% Flush Ground Connection**: Sheet surface extends all the way to the physical bottom screen boundary across gesture navigation and 3-button navigation, completely concealing Now Playing bottom cards (`[ULT Bass] [Queue] [Sleep Timer]`).
+  - **Strict 90% Screen Height Upper Bound**: Preserves top 10% translucent tap-to-dismiss space, ensuring the phone status bar and Now Playing artwork remain cleanly visible without any clipping or collision (matching reference design).
+  - **Fluid Top Drag-to-Dismiss Handle**: Top handle actively tracks downward drag gestures for instant, smooth sheet dismissal alongside native edge nested-scrolling.
+
+---
+
 ## 🌟 What's New in v2.7.3
 
 - 📑 **Queue Bottom Sheet Anchoring & Fluid Expansion**:

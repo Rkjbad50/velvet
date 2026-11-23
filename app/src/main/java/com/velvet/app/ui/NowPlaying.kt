@@ -39,6 +39,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -95,6 +96,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -1795,7 +1797,6 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
     val topInsetSpace = (screenHeight * 0.10f).coerceAtLeast(54.dp)
-    val sheetHeight = screenHeight - topInsetSpace
 
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
@@ -1978,40 +1979,75 @@ private fun QueueSheet(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         dragHandle = null,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = velvetColors.surface,
+        shape = RectangleShape,
+        containerColor = Color.Transparent,
         tonalElevation = 0.dp,
         scrimColor = if (velvetColors.surface.luminance() < 0.5f) Color(0xB3000000) else Color(0x66000000),
         contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
         modifier = Modifier
             .fillMaxWidth()
-            .height(sheetHeight),
+            .fillMaxHeight(),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding(),
+            modifier = Modifier.fillMaxSize(),
         ) {
-                // Top Sheet Drag Handle
-                Box(
+            // Top 10% translucent space: tap to dismiss; reveals Now Playing artwork & phone status bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(topInsetSpace)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss,
+                    ),
+            )
+
+            // Main Queue Surface: anchored flush to physical bottom with rounded top corners
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                color = velvetColors.surface,
+                tonalElevation = 0.dp,
+            ) {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 6.dp),
-                    contentAlignment = Alignment.Center,
+                        .fillMaxSize()
+                        .navigationBarsPadding(),
                 ) {
+                    // Top Sheet Drag Handle
                     Box(
                         modifier = Modifier
-                            .width(36.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(velvetColors.muted.copy(alpha = 0.45f)),
-                    )
-                }
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 6.dp)
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures { change, dragAmount ->
+                                    if (dragAmount > 0) {
+                                        change.consume()
+                                        coroutineScope.launch {
+                                            sheetState.hide()
+                                            onDismiss()
+                                        }
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(velvetColors.muted.copy(alpha = 0.45f)),
+                        )
+                    }
 
-                Row(
-                    Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                    Row(
+                        Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                     Column(Modifier.weight(1f)) {
                         Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
                         Text(
@@ -2143,6 +2179,8 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             }
         }
     }
+}
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
