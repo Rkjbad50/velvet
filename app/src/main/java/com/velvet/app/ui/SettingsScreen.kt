@@ -47,6 +47,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -1055,7 +1057,7 @@ private fun <T> ThemedRadioSelectionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.card,
+        containerColor = velvetColors.surface,
         shape = RoundedCornerShape(24.dp),
         tonalElevation = 6.dp,
         modifier = Modifier.border(1.dp, velvetColors.rule, RoundedCornerShape(24.dp)),

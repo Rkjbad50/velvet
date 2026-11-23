@@ -1892,14 +1892,6 @@ private fun QueueSheet(onDismiss: () -> Unit) {
         containerColor = velvetColors.surface,
         tonalElevation = 0.dp,
         scrimColor = Color(0xB3000000),
-        dragHandle = {
-            androidx.compose.material3.BottomSheetDefaults.DragHandle(
-                color = velvetColors.rule,
-                width = 38.dp,
-                height = 4.dp,
-            )
-        },
-        windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = sheetMaxHeight),
@@ -2148,6 +2140,7 @@ private fun LazyItemScope.QueueRow(
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 var isLongPress = false
                                 var isHorizontal = false
+                                var isVerticalScroll = false
                                 val longPressTimeout = viewConfiguration.longPressTimeoutMillis
                                 val touchSlop = viewConfiguration.touchSlop
 
@@ -2163,8 +2156,8 @@ private fun LazyItemScope.QueueRow(
                                                 break
                                             }
                                             if (kotlin.math.abs(dy) > touchSlop) {
-                                                // vertical scroll passed to lazy column
-                                                return@awaitEachGesture
+                                                isVerticalScroll = true
+                                                break
                                             }
                                         }
                                     }
@@ -2172,7 +2165,9 @@ private fun LazyItemScope.QueueRow(
                                     isLongPress = true
                                 }
 
-                                if (isLongPress) {
+                                if (isVerticalScroll) {
+                                    // vertical scroll passed through to lazy column
+                                } else if (isLongPress) {
                                     isLongPressActive = true
                                     onDragStart()
                                     while (true) {
