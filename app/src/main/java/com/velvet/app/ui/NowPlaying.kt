@@ -51,15 +51,21 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.graphics.RectangleShape
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -1789,7 +1795,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
-    val sheetMaxHeight = screenHeight * 0.90f
+    val topInsetSpace = (screenHeight * 0.10f).coerceAtLeast(54.dp)
 
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
@@ -1808,15 +1814,27 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     var dragStartVersion by remember { mutableLongStateOf(-1L) }
     var previewUserQueue by remember { mutableStateOf<List<QueueItem>?>(null) }
     var previewUpNext by remember { mutableStateOf<List<QueueItem>?>(null) }
+    var autoScrollJob by remember { mutableStateOf<Job?>(null) }
 
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
-    val itemHeightPx = with(density) { 58.dp.toPx() }
+
+    val getItemHeightPx: () -> Float = {
+        val measured = listState.layoutInfo.visibleItemsInfo
+            .firstOrNull { it.key == draggingQid }
+            ?.size
+            ?: listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                it.key != "header_now_playing" && it.key != "header_up_next" && it.key != "header_next_in_queue"
+            }?.size
+        measured?.toFloat() ?: with(density) { 62.dp.toPx() }
+    }
 
     // Safe discard if queue mutated underneath during drag
     LaunchedEffect(PlayerConnection.queueManager.queueVersion) {
         if (draggingQid != null && PlayerConnection.queueManager.queueVersion != dragStartVersion) {
+            autoScrollJob?.cancel()
+            autoScrollJob = null
             draggingQid = null
             dragStartIndex = -1
             dragCurrentIndex = -1
@@ -1854,7 +1872,8 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             totalDragOffsetY += deltaY
             val qid = draggingQid
             val baseList = if (draggingIsUserQueue) userQueue else upNext
-            val slotShift = (totalDragOffsetY / itemHeightPx).roundToInt()
+            val rowHeightPx = getItemHeightPx().coerceAtLeast(10f)
+            val slotShift = (totalDragOffsetY / rowHeightPx).roundToInt()
             val targetIndex = (dragStartIndex + slotShift).coerceIn(0, baseList.size - 1)
 
             if (targetIndex != dragCurrentIndex) {
@@ -1875,15 +1894,36 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                 }
             }
 
-            if (totalDragOffsetY < -itemHeightPx && listState.firstVisibleItemIndex > 0) {
-                coroutineScope.launch { listState.scrollBy(-18f) }
-            } else if (totalDragOffsetY > itemHeightPx && listState.canScrollForward) {
-                coroutineScope.launch { listState.scrollBy(18f) }
+            // Managed auto-scroll: single cancellable coroutine loop
+            val edgeThreshold = rowHeightPx * 0.8f
+            if (totalDragOffsetY < -edgeThreshold && listState.firstVisibleItemIndex > 0) {
+                if (autoScrollJob == null || autoScrollJob?.isActive != true) {
+                    autoScrollJob = coroutineScope.launch {
+                        while (isActive && draggingQid != null && totalDragOffsetY < -edgeThreshold && listState.firstVisibleItemIndex > 0) {
+                            listState.scrollBy(-14f)
+                            delay(16)
+                        }
+                    }
+                }
+            } else if (totalDragOffsetY > edgeThreshold && listState.canScrollForward) {
+                if (autoScrollJob == null || autoScrollJob?.isActive != true) {
+                    autoScrollJob = coroutineScope.launch {
+                        while (isActive && draggingQid != null && totalDragOffsetY > edgeThreshold && listState.canScrollForward) {
+                            listState.scrollBy(14f)
+                            delay(16)
+                        }
+                    }
+                }
+            } else {
+                autoScrollJob?.cancel()
+                autoScrollJob = null
             }
         }
     }
 
     val onDragEnd: () -> Unit = {
+        autoScrollJob?.cancel()
+        autoScrollJob = null
         val qid = draggingQid
         val targetIndex = dragCurrentIndex
         val startVer = dragStartVersion
@@ -1899,6 +1939,8 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     }
 
     val onDragCancel: () -> Unit = {
+        autoScrollJob?.cancel()
+        autoScrollJob = null
         draggingQid = null
         dragStartIndex = -1
         dragCurrentIndex = -1
@@ -1913,146 +1955,186 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = velvetColors.surface,
+        dragHandle = null,
+        shape = RectangleShape,
+        containerColor = Color.Transparent,
         tonalElevation = 0.dp,
         scrimColor = if (velvetColors.surface.luminance() < 0.5f) Color(0xB3000000) else Color(0x66000000),
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = sheetMaxHeight),
+            .fillMaxHeight(),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = sheetMaxHeight),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Row(
-                Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
-                    Text(
-                        if (isQueueLocked) "Queue locked" else "Swipe right to play next, left to remove",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
-                    )
-                }
-                IconButton(onClick = {
-                    PlayerConnection.isQueueLocked = !PlayerConnection.isQueueLocked
-                    android.widget.Toast.makeText(
-                        context,
-                        if (PlayerConnection.isQueueLocked) "Queue Locked" else "Queue Unlocked",
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
-                }) {
-                    Icon(
-                        if (isQueueLocked) AppIcons.Lock else AppIcons.LockOpen,
-                        contentDescription = if (isQueueLocked) "Unlock Queue" else "Lock Queue",
-                        tint = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
-                    )
-                }
-            }
-            LazyColumn(
-                state = listState,
+            // Top 10% translucent space: tap to dismiss; reveals Now Playing artwork & phone status bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(topInsetSpace)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss,
+                    ),
+            )
+
+            // Main Queue Surface: anchored flush to physical bottom with rounded top corners
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(bottom = 16.dp),
+                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .background(velvetColors.surface)
+                    .navigationBarsPadding(),
             ) {
-                if (currentItem != null) {
-                    item(key = "header_now_playing") {
+                // Top Sheet Drag Handle
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(36.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(velvetColors.muted.copy(alpha = 0.45f)),
+                    )
+                }
+
+                Row(
+                    Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
                         Text(
-                            "NOW PLAYING",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = velvetColors.accentText,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 22.dp, top = 4.dp, bottom = 4.dp),
+                            if (isQueueLocked) "Queue locked" else "Swipe right to play next, left to remove",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
                         )
                     }
-                    item(key = currentItem.qid) {
-                        QueueRow(
-                            item = currentItem,
-                            isCurrent = true,
-                            isQueueLocked = isQueueLocked,
-                            context = context,
-                            openMenu = openMenu,
+                    IconButton(onClick = {
+                        PlayerConnection.isQueueLocked = !PlayerConnection.isQueueLocked
+                        android.widget.Toast.makeText(
+                            context,
+                            if (PlayerConnection.isQueueLocked) "Queue Locked" else "Queue Unlocked",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }) {
+                        Icon(
+                            if (isQueueLocked) AppIcons.Lock else AppIcons.LockOpen,
+                            contentDescription = if (isQueueLocked) "Unlock Queue" else "Lock Queue",
+                            tint = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
                         )
                     }
                 }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(bottom = 16.dp),
+                ) {
+                    if (currentItem != null) {
+                        item(key = "header_now_playing") {
+                            Text(
+                                "NOW PLAYING",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = velvetColors.accentText,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(start = 22.dp, top = 4.dp, bottom = 4.dp),
+                            )
+                        }
+                        item(key = currentItem.qid) {
+                            QueueRow(
+                                item = currentItem,
+                                isCurrent = true,
+                                isQueueLocked = isQueueLocked,
+                                context = context,
+                                openMenu = openMenu,
+                            )
+                        }
+                    }
 
-                if (displayUserQueue.isNotEmpty()) {
-                    item(key = "header_next_in_queue") {
-                        Text(
-                            "NEXT IN QUEUE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = velvetColors.accentText,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
-                        )
+                    if (displayUserQueue.isNotEmpty()) {
+                        item(key = "header_next_in_queue") {
+                            Text(
+                                "NEXT IN QUEUE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = velvetColors.accentText,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
+                            )
+                        }
+                        itemsIndexed(displayUserQueue, key = { _, item -> item.qid }) { index, item ->
+                            val isDraggingThis = draggingQid == item.qid
+                            val rowHeight = getItemHeightPx()
+                            val visualOffset = if (isDraggingThis) {
+                                totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * rowHeight
+                            } else 0f
+                            QueueRow(
+                                item = item,
+                                isCurrent = false,
+                                isQueueLocked = isQueueLocked,
+                                context = context,
+                                openMenu = openMenu,
+                                isDragging = isDraggingThis,
+                                dragOffsetY = visualOffset,
+                                canMoveUp = index > 0,
+                                canMoveDown = index < displayUserQueue.size - 1,
+                                onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
+                                onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                                onDragStart = { onDragStart(item.qid, true) },
+                                onDragDelta = onDragDelta,
+                                onDragEnd = onDragEnd,
+                                onDragCancel = onDragCancel,
+                            )
+                        }
                     }
-                    itemsIndexed(displayUserQueue, key = { _, item -> item.qid }) { index, item ->
-                        val isDraggingThis = draggingQid == item.qid
-                        val visualOffset = if (isDraggingThis) {
-                            totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * itemHeightPx
-                        } else 0f
-                        QueueRow(
-                            item = item,
-                            isCurrent = false,
-                            isQueueLocked = isQueueLocked,
-                            context = context,
-                            openMenu = openMenu,
-                            isDragging = isDraggingThis,
-                            dragOffsetY = visualOffset,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < displayUserQueue.size - 1,
-                            onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
-                            onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
-                            onDragStart = { onDragStart(item.qid, true) },
-                            onDragDelta = onDragDelta,
-                            onDragEnd = onDragEnd,
-                            onDragCancel = onDragCancel,
-                        )
-                    }
-                }
 
-                if (displayUpNext.isNotEmpty()) {
-                    val sourceLabel = when {
-                        PlayerConnection.isRadioActive -> "RADIO"
-                        !PlayerConnection.currentPlaylistId.isNullOrBlank() -> "PLAYLIST"
-                        else -> "AUTOPLAY"
-                    }
-                    item(key = "header_up_next") {
-                        Text(
-                            "NEXT FROM $sourceLabel",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = velvetColors.muted,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
-                        )
-                    }
-                    itemsIndexed(displayUpNext, key = { _, item -> item.qid }) { index, item ->
-                        val isDraggingThis = draggingQid == item.qid
-                        val visualOffset = if (isDraggingThis) {
-                            totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * itemHeightPx
-                        } else 0f
-                        QueueRow(
-                            item = item,
-                            isCurrent = false,
-                            isQueueLocked = isQueueLocked,
-                            context = context,
-                            openMenu = openMenu,
-                            isDragging = isDraggingThis,
-                            dragOffsetY = visualOffset,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < displayUpNext.size - 1,
-                            onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
-                            onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
-                            onDragStart = { onDragStart(item.qid, false) },
-                            onDragDelta = onDragDelta,
-                            onDragEnd = onDragEnd,
-                            onDragCancel = onDragCancel,
-                        )
+                    if (displayUpNext.isNotEmpty()) {
+                        val sourceLabel = when {
+                            PlayerConnection.isRadioActive -> "RADIO"
+                            !PlayerConnection.currentPlaylistId.isNullOrBlank() -> "PLAYLIST"
+                            else -> "AUTOPLAY"
+                        }
+                        item(key = "header_up_next") {
+                            Text(
+                                "NEXT FROM $sourceLabel",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = velvetColors.muted,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
+                            )
+                        }
+                        itemsIndexed(displayUpNext, key = { _, item -> item.qid }) { index, item ->
+                            val isDraggingThis = draggingQid == item.qid
+                            val rowHeight = getItemHeightPx()
+                            val visualOffset = if (isDraggingThis) {
+                                totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * rowHeight
+                            } else 0f
+                            QueueRow(
+                                item = item,
+                                isCurrent = false,
+                                isQueueLocked = isQueueLocked,
+                                context = context,
+                                openMenu = openMenu,
+                                isDragging = isDraggingThis,
+                                dragOffsetY = visualOffset,
+                                canMoveUp = index > 0,
+                                canMoveDown = index < displayUpNext.size - 1,
+                                onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
+                                onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                                onDragStart = { onDragStart(item.qid, false) },
+                                onDragDelta = onDragDelta,
+                                onDragEnd = onDragEnd,
+                                onDragCancel = onDragCancel,
+                            )
+                        }
                     }
                 }
             }
@@ -2084,7 +2166,6 @@ private fun LazyItemScope.QueueRow(
     val density = LocalDensity.current
     val swipeThresholdPx = with(density) { 85.dp.toPx() }
     val animOffsetX = remember(item.qid) { Animatable(0f) }
-    var isLongPressActive by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -2163,51 +2244,25 @@ private fun LazyItemScope.QueueRow(
                         Modifier.pointerInput(item.qid) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                var isLongPress = false
                                 var isHorizontal = false
-                                var isVerticalScroll = false
-                                val longPressTimeout = viewConfiguration.longPressTimeoutMillis
                                 val touchSlop = viewConfiguration.touchSlop
 
-                                try {
-                                    withTimeout(longPressTimeout) {
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                            val dx = change.position.x - down.position.x
-                                            val dy = change.position.y - down.position.y
-                                            if (kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
-                                                isHorizontal = true
-                                                break
-                                            }
-                                            if (kotlin.math.abs(dy) > touchSlop) {
-                                                isVerticalScroll = true
-                                                break
-                                            }
-                                        }
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    val dx = change.position.x - down.position.x
+                                    val dy = change.position.y - down.position.y
+                                    if (kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                                        isHorizontal = true
+                                        break
                                     }
-                                } catch (_: TimeoutCancellationException) {
-                                    isLongPress = true
+                                    if (kotlin.math.abs(dy) > touchSlop) {
+                                        // Vertical scroll: pass through directly to parent LazyColumn
+                                        break
+                                    }
                                 }
 
-                                if (isVerticalScroll) {
-                                    // vertical scroll passed through to lazy column
-                                } else if (isLongPress) {
-                                    isLongPressActive = true
-                                    onDragStart()
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                        if (!change.pressed) {
-                                            isLongPressActive = false
-                                            onDragEnd()
-                                            break
-                                        }
-                                        change.consume()
-                                        val dy = change.position.y - change.previousPosition.y
-                                        onDragDelta(dy)
-                                    }
-                                } else if (isHorizontal) {
+                                if (isHorizontal) {
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -2267,7 +2322,7 @@ private fun LazyItemScope.QueueRow(
                 .clickable(
                     enabled = !isCurrent,
                     onClick = {
-                        if (!isDragging && !isLongPressActive) {
+                        if (!isDragging) {
                             PlayerConnection.jumpToQid(item.qid)
                         }
                     },
