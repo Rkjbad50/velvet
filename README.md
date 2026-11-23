@@ -7,13 +7,13 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/Rkjbad50/velvet?color=A855F7&label=Release&logo=github)](https://github.com/Rkjbad50/velvet/releases/latest)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Rkjbad50/velvet/build.yml?branch=main&label=CI%20Build&logo=githubactions)](https://github.com/Rkjbad50/velvet/actions)
-[![Android](https://img.shields.io/badge/Android-8.0%2B%20%28SDK%2026%E2%80%9335%29-3DDC84?logo=android)](https://github.com/Rkjbad50/velvet)
+[![Android](https://img.shields.io/badge/Android-12.0%2B%20%28SDK%2031%E2%80%9336%29-3DDC84?logo=android)](https://github.com/Rkjbad50/velvet)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-EF4444)](LICENSE)
 [![Google Play Protect](https://img.shields.io/badge/Play%20Protect-Verified-10B981?logo=googleplay)](https://github.com/Rkjbad50/velvet)
 [![Developer: Rkjbad50](https://img.shields.io/badge/Developer-Rkjbad50-8B5CF6)](https://github.com/Rkjbad50)
 
 <p align="center">
-  <a href="#-whats-new-in-v271">What's New</a> •
+  <a href="#-whats-new-in-v272">What's New</a> •
   <a href="#-key-features">Key Features</a> •
   <a href="#-installation">Installation</a> •
   <a href="#%EF%B8%8F-architecture--tech-stack">Architecture</a> •
@@ -23,6 +23,38 @@
 </p>
 
 </div>
+
+---
+
+## 🌟 What's New in v2.7.2
+
+- ⏯️ **Rebuilt Playlist Play / Pause / Shuffle Transport Controls**:
+  - Re-architected session state tracking from the ground up: cleanly distinguishes playlist ownership (`currentPlaylistId`), playback state (`isPlaying`, `isPaused`), and queue order.
+  - **Sequential Play Fix (Bug 1)**: Resolved issue where tapping Play paused playback, but a second tap failed or restarted from track 0. Play now flawlessly resumes paused playlist sessions at the exact millisecond and song.
+  - **Shuffle Resume Fix (Bug 2)**: Resolved issue where pausing a shuffled session and pressing Play restarted from track 0 of the original playlist. The active shuffled track and upcoming randomized queue are preserved 100% across pause/resume cycles.
+  - Centralized, authoritative transport logic unified across Local Playlists, Liked Songs, Downloads, and Albums.
+
+- 🌊 **4 Distinct Modern Pulse Visualizer Styles**:
+  - Choose between 4 distinct, production-ready, beat-synchronized styles in **Settings > Appearance**:
+    1. **Fluid Wave** (Default): Silky traveling harmonic sine wave with ambient radial bloom and luminous micro-filaments.
+    2. **Beat Equalizer**: Symmetrical studio spectrum frequency bars with rounded caps, responsive beat bounce, and dynamic amplitude glow.
+    3. **Neon Ripple**: Flowing multi-strand neon filaments intertwining dynamically with pulsing ripple nodes.
+    4. **Minimal Crest**: Razor-sharp modern acoustic needle/crest profile with glowing central peak and tapered baseline.
+  - Beat-synchronization dynamically animates during playback and smoothly freezes/settles when paused.
+
+- 🧠 **Autoplay Engine V3 & Song Identity V2**:
+  - **Session Dismissal Memory (`DismissedTrackRegistry`)**: Tracks explicitly swiped or removed from the queue are remembered for the session. Autoplay and background refills are strictly barred from re-inserting dismissed tracks or duplicate uploads of the same recording.
+  - **Original Studio Audio Quality Gate**: Strict classification (`AudioClassification`) prioritizing verified artist Topic uploads and official record label studio audio over lyrical videos, dialogue film scenes, and AI 4K/8K upscaled re-uploads.
+  - **Race-Safe Refill**: Implemented generation token checks (`queueVersion`) to discard stale background recommendations when queue mutations occur.
+
+- ⚙️ **Modernized Software Update Experience & Settings Clean-up**:
+  - Removed "Include pre-releases" toggle from About settings to ensure users always receive stable releases.
+  - Redesigned Update Section with live version status badge, animated check indicator, and clear update review actions.
+
+- 📱 **Android 15+ Target SDK 36**:
+  - Upgraded to `targetSdk = 36` and `compileSdk = 36`.
+  - Configured modern baseline `minSdk = 31` (Android 12+).
+  - 100% passes Google Play Protect checks.
 
 ---
 

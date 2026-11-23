@@ -62,6 +62,7 @@ data class LibraryData(
     val musicLanguages: List<String> = listOf("Hindi", "English"),
     val seekbarStyle: String = "MINIMAL",
     val showPulseWave: Boolean = true,
+    val pulseVisualizerStyle: String = "FLUID_WAVE",
     val developerOptionsUnlocked: Boolean = false,
     val selfHealingEnabled: Boolean = true,
     val includePrereleases: Boolean = false,
@@ -528,6 +529,8 @@ class Library(dir: File) {
     fun setSeekbarStyle(style: String) = update { it.copy(seekbarStyle = style) }
 
     fun setShowPulseWave(enabled: Boolean) = update { it.copy(showPulseWave = enabled) }
+
+    fun setPulseVisualizerStyle(style: String) = update { it.copy(pulseVisualizerStyle = style) }
 
     fun setDeveloperOptions(unlocked: Boolean) = update { it.copy(developerOptionsUnlocked = unlocked) }
 

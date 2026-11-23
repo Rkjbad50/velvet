@@ -84,6 +84,88 @@ object PlayerConnection {
     val isUserPlaylistActive: Boolean
         get() = currentPlaylistId != null && VelvetApp.library.data.value.playlists.any { it.id == currentPlaylistId }
 
+    /**
+     * Returns true if the session belonging to [playlistId] is currently active in the queue.
+     */
+    fun isPlaylistSessionActive(playlistId: String?): Boolean {
+        if (playlistId.isNullOrBlank()) return false
+        return currentPlaylistId == playlistId && (current != null || queueManager.sourceList.isNotEmpty())
+    }
+
+    /**
+     * Returns true if the session belonging to [playlistId] is actively playing audio.
+     */
+    fun isPlaylistSessionPlaying(playlistId: String?): Boolean {
+        return isPlaylistSessionActive(playlistId) && isPlaying
+    }
+
+    /**
+     * Returns true if the session belonging to [playlistId] is currently paused.
+     */
+    fun isPlaylistSessionPaused(playlistId: String?): Boolean {
+        return isPlaylistSessionActive(playlistId) && !isPlaying && current != null
+    }
+
+    /**
+     * Authoritative session-aware Play/Pause transport control for collection/playlist headers.
+     * - Case B: Same playlist actively playing -> Pause playback without touching queue or position.
+     * - Case C: Same playlist is paused -> Resume existing session exactly where paused without restarting!
+     * - Case A/D/E: Different playlist, ended session, or new playback -> Start fresh sequential session.
+     */
+    fun playOrResumePlaylist(
+        playlistId: String,
+        songs: List<Song>,
+        context: PlaybackContext? = null,
+    ) {
+        if (songs.isEmpty()) return
+
+        if (isPlaylistSessionPlaying(playlistId)) {
+            togglePlay()
+        } else if (isPlaylistSessionPaused(playlistId)) {
+            val currentSong = current
+            if (currentSong != null && songs.any { it.id == currentSong.id }) {
+                togglePlay()
+            } else {
+                play(songs, startIndex = 0, shuffled = false, playlistId = playlistId, context = context)
+            }
+        } else {
+            play(songs, startIndex = 0, shuffled = false, playlistId = playlistId, context = context)
+        }
+    }
+
+    /**
+     * Authoritative session-aware Shuffle Play control for collection/playlist headers.
+     * - If same playlist is already active: ensures shuffle mode is enabled without resetting current track,
+     *   and resumes playback if currently paused.
+     * - Otherwise starts a new shuffled playback session starting from a randomized track.
+     */
+    fun shufflePlayOrToggle(
+        playlistId: String,
+        songs: List<Song>,
+        context: PlaybackContext? = null,
+    ) {
+        if (songs.isEmpty()) return
+
+        if (isPlaylistSessionActive(playlistId)) {
+            val currentSong = current
+            if (currentSong != null && songs.any { it.id == currentSong.id }) {
+                if (queueManager.shuffleMode == ShuffleMode.OFF) {
+                    val allowSmart = isUserPlaylistActive
+                    queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = allowSmart)
+                    syncQueueState()
+                    syncToExoPlayer()
+                }
+                if (!isPlaying) {
+                    togglePlay()
+                }
+                return
+            }
+        }
+
+        val startIndex = (0 until songs.size).random()
+        play(songs, startIndex = startIndex, shuffled = true, playlistId = playlistId, context = context)
+    }
+
     /** Pure single source of truth queue state. */
     var queueState by mutableStateOf(queueManager.state)
         private set
@@ -373,6 +455,7 @@ object PlayerConnection {
         val isUserPlaylist = playlistId != null && VelvetApp.library.data.value.playlists.any { it.id == playlistId }
         val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
 
+        com.velvet.app.playback.DismissedTrackRegistry.clear()
         queueManager.start(songs, startIndex, shuffled)
         // Strictly disallow Smart Shuffle when playing outside a user-created playlist
         if (!isUserPlaylist && queueManager.shuffleMode == ShuffleMode.SMART) {
@@ -518,6 +601,10 @@ object PlayerConnection {
     /** Remove a queue item by qid. */
     fun removeItem(qid: String) {
         if (isQueueLocked) return
+        val itemToDismiss = queueManager.upNext.find { it.qid == qid } ?: queueManager.userQueue.find { it.qid == qid }
+        if (itemToDismiss != null) {
+            com.velvet.app.playback.DismissedTrackRegistry.recordDismissal(itemToDismiss)
+        }
         val removed = queueManager.removeItem(qid)
         if (removed) {
             syncQueueState()
@@ -607,6 +694,7 @@ object PlayerConnection {
         if (queueManager.upNext.size >= 6 && !autoPlayNext) return
         if (isExtendingAutoplay) return
 
+        val requestQueueVersion = queueManager.queueVersion
         isExtendingAutoplay = true
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -628,15 +716,16 @@ object PlayerConnection {
                 val related = VelvetApp.autoplayPipeline.next(seedProfile, snapshot, n = 10)
 
                 withContext(Dispatchers.Main) {
-                    if (related.isNotEmpty()) {
+                    val filteredRelated = related.filterNot { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) }
+                    if (filteredRelated.isNotEmpty()) {
                         if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
-                            val first = related.first()
-                            val rest = related.drop(1)
+                            val first = filteredRelated.first()
+                            val rest = filteredRelated.drop(1)
                             queueManager.start(listOf(first) + rest, 0, false)
                             syncQueueState()
                             syncToExoPlayer()
                         } else {
-                            queueManager.appendAutoplay(related)
+                            queueManager.appendAutoplay(filteredRelated)
                             syncQueueState()
                             syncToExoPlayer()
                         }

@@ -162,7 +162,8 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
         artworkUrl = info.thumb,
     )
 
-    val isPlayingAlbum = PlayerConnection.isPlaying && songs.any { it.id == PlayerConnection.current?.id }
+    val albumSessionId = "album:${info.id}"
+    val isPlayingAlbum = PlayerConnection.isPlaylistSessionPlaying(albumSessionId)
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -174,10 +175,9 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
                 playEnabled = songs.isNotEmpty(),
                 isPlaying = isPlayingAlbum,
                 onPlay = {
-                    if (isPlayingAlbum) PlayerConnection.togglePlay()
-                    else PlayerConnection.play(songs, context = playbackContext)
+                    PlayerConnection.playOrResumePlaylist(albumSessionId, songs, playbackContext)
                 },
-                onShuffle = { shuffle(songs, context = playbackContext) },
+                onShuffle = { PlayerConnection.shufflePlayOrToggle(albumSessionId, songs, playbackContext) },
                 onSubtitleClick = songs.firstOrNull()?.artistUrl?.takeIf { isAlbum }?.let { url ->
                     { nav.open(Route.Artist(ArtistRef(url, info.subtitle))) }
                 },
@@ -199,7 +199,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
             else -> itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
                 SongRow(
                     song,
-                    onClick = { PlayerConnection.play(songs, i, context = playbackContext) },
+                    onClick = { PlayerConnection.play(songs, i, playlistId = albumSessionId, context = playbackContext) },
                     trackNumber = if (isAlbum) i + 1 else null,
                     showArt = !isAlbum,
                 )
@@ -214,7 +214,8 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
 fun LikedScreen(onBack: () -> Unit) {
     val data by VelvetApp.library.data.collectAsStateWithLifecycle()
     val songs = data.liked
-    val isPlayingLiked = PlayerConnection.isPlaying && songs.any { it.id == PlayerConnection.current?.id }
+    val likedSessionId = "__liked__"
+    val isPlayingLiked = PlayerConnection.isPlaylistSessionPlaying(likedSessionId)
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -226,16 +227,15 @@ fun LikedScreen(onBack: () -> Unit) {
                 playEnabled = songs.isNotEmpty(),
                 isPlaying = isPlayingLiked,
                 onPlay = {
-                    if (isPlayingLiked) PlayerConnection.togglePlay()
-                    else PlayerConnection.play(songs)
+                    PlayerConnection.playOrResumePlaylist(likedSessionId, songs)
                 },
-                onShuffle = { shuffle(songs) },
+                onShuffle = { PlayerConnection.shufflePlayOrToggle(likedSessionId, songs) },
                 actions = { DownloadAllButton(songs) },
             )
         }
         if (songs.isEmpty()) item { EmptyHint("Songs you like will appear here. Tap ♡ on any song.") }
         itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
-            SongRow(song, onClick = { PlayerConnection.play(songs, i) })
+            SongRow(song, onClick = { PlayerConnection.play(songs, i, playlistId = likedSessionId) })
         }
     }
 }
@@ -443,7 +443,8 @@ fun DownloadsScreen(onBack: () -> Unit) {
     val data by VelvetApp.library.data.collectAsStateWithLifecycle()
     val progress by VelvetApp.downloads.progress.collectAsStateWithLifecycle()
     val songs = data.downloads
-    val isPlayingDownloads = PlayerConnection.isPlaying && songs.any { it.id == PlayerConnection.current?.id }
+    val downloadsSessionId = "__downloads__"
+    val isPlayingDownloads = PlayerConnection.isPlaylistSessionPlaying(downloadsSessionId)
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -455,10 +456,9 @@ fun DownloadsScreen(onBack: () -> Unit) {
                 playEnabled = songs.isNotEmpty(),
                 isPlaying = isPlayingDownloads,
                 onPlay = {
-                    if (isPlayingDownloads) PlayerConnection.togglePlay()
-                    else PlayerConnection.play(songs)
+                    PlayerConnection.playOrResumePlaylist(downloadsSessionId, songs)
                 },
-                onShuffle = { shuffle(songs) },
+                onShuffle = { PlayerConnection.shufflePlayOrToggle(downloadsSessionId, songs) },
             )
         }
         if (progress.isNotEmpty()) {
@@ -475,7 +475,7 @@ fun DownloadsScreen(onBack: () -> Unit) {
             item { EmptyHint("Download songs, albums or playlists to play them without internet.") }
         }
         itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
-            SongRow(song, onClick = { PlayerConnection.play(songs, i) })
+            SongRow(song, onClick = { PlayerConnection.play(songs, i, playlistId = downloadsSessionId) })
         }
     }
 }
@@ -538,7 +538,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
         subtitle = songCountStr,
         artworkUrl = coverUrl,
     )
-    val isCurrentPlaylistPlaying = PlayerConnection.isPlaying && activeSongs.any { it.id == PlayerConnection.current?.id }
+    val isCurrentPlaylistPlaying = PlayerConnection.isPlaylistSessionPlaying(id)
 
     Box(Modifier.fillMaxSize()) {
         BackPage(onBack) {
@@ -571,13 +571,9 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     playEnabled = activeSongs.isNotEmpty(),
                     isPlaying = isCurrentPlaylistPlaying,
                     onPlay = {
-                        if (isCurrentPlaylistPlaying) {
-                            PlayerConnection.togglePlay()
-                        } else if (activeSongs.isNotEmpty()) {
-                            PlayerConnection.play(activeSongs, playlistId = id, context = playbackContext)
-                        }
+                        PlayerConnection.playOrResumePlaylist(id, activeSongs, playbackContext)
                     },
-                    onShuffle = { shuffle(activeSongs, playlistId = id, context = playbackContext) },
+                    onShuffle = { PlayerConnection.shufflePlayOrToggle(id, activeSongs, playbackContext) },
                     topActions = {
                         PanelIconButton(
                             if (showSearch) Icons.Default.Close else Icons.Default.Search,

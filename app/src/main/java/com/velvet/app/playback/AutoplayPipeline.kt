@@ -166,6 +166,8 @@ data class AutoplayConfig(
             "remix", "slowed", "reverb", "sped up", "speed up", "nightcore",
             "lofi", "lo-fi", "cover", "live", "karaoke", "8d", "16d",
             "bass boosted", "instrumental", "mashup", "reprise", "jukebox", "ringtone",
+            "dialogue", "dialogues", "movie scene", "film scene", "dialogue promo", "clip",
+            "4k 60fps", "8k ultra", "ai enhanced",
         )
     }
 }
@@ -798,6 +800,10 @@ class AutoplayPipeline(
                 removedDedupe++
                 continue
             }
+            if (DismissedTrackRegistry.isDismissed(candidate) || DismissedTrackRegistry.isDismissed(candidate.id, key, groupId)) {
+                removedDedupe++
+                continue
+            }
             if (candidate.id in queueIds || key in queueKeys || queueSnapshot.any { areSameRecording(it, candidate) || SongIdentity.isStrictMatch(it, candidate) }) {
                 removedDedupe++
                 continue
@@ -1026,14 +1032,28 @@ class AutoplayPipeline(
 
     /**
      * Hard filter rejects blocked keywords unless seed title also contains them,
-     * and enforces duration bounds [90s, 600s].
+     * rejects user-dismissed tracks, dialogue clips, and enforces duration bounds [90s, 600s].
      */
     fun isHardFiltered(candidate: Song, seedTitle: String): Boolean {
         if (candidate.durationSec in 1 until config.minDurationSec || candidate.durationSec > config.maxDurationSec) {
             return true
         }
+        if (DismissedTrackRegistry.isDismissed(candidate)) {
+            return true
+        }
+
+        val classification = SongIdentity.classifySong(candidate)
         val lowerCandidate = candidate.title.lowercase(Locale.ROOT)
         val lowerSeed = seedTitle.lowercase(Locale.ROOT)
+
+        // Film scenes and dialogue clips are strictly rejected unless seed was explicitly dialogue
+        if (classification == SongIdentity.AudioClassification.FILM_DIALOGUE_VERSION && !lowerSeed.contains("dialogue")) {
+            return true
+        }
+        // AI enhanced re-uploads are strictly rejected unless requested
+        if (classification == SongIdentity.AudioClassification.ENHANCED_REUPLOAD && !lowerSeed.contains("4k")) {
+            return true
+        }
 
         for (kw in config.blockedKeywords) {
             val pattern = Regex("""\b${Regex.escape(kw)}\b""", RegexOption.IGNORE_CASE)
@@ -1049,13 +1069,14 @@ class AutoplayPipeline(
 
     /**
      * Dedupe winner selection order:
-     * 1. ATV beats OMV
+     * 1. Original Studio Audio (ATV / Label Audio) > OMV > Lyrical > UGC
      * 2. Earliest release year (fetched lazily for groups > 1)
-     * 3. First in source order (tie-break)
+     * 3. Metadata completeness & stable deterministic tie-break
      */
     private suspend fun selectWinner(group: List<Song>): Song {
-        val atvs = group.filter { isAtv(it) }
-        val candidatesToCompare = if (atvs.isNotEmpty()) atvs else group
+        val bestTier = group.maxOfOrNull { SongIdentity.classifySong(it).tier } ?: 10
+        val topTierCandidates = group.filter { SongIdentity.classifySong(it).tier == bestTier }
+        val candidatesToCompare = if (topTierCandidates.isNotEmpty()) topTierCandidates else group
 
         if (candidatesToCompare.size == 1) return candidatesToCompare.first()
 
@@ -1082,7 +1103,9 @@ class AutoplayPipeline(
                 ya != null && yb != null -> ya.compareTo(yb) // Earliest year first
                 ya != null -> -1
                 yb != null -> 1
-                else -> 0 // Keep source order
+                else -> {
+                    compareValuesBy(b, a, { it.durationSec > 0 }, { it.album != null }, { it.id })
+                }
             }
         }
         return sorted.first()

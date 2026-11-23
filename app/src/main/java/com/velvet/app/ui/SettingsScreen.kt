@@ -33,6 +33,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -118,13 +119,13 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(data.includePrereleases) {
+    LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val info = ReleaseCheck.checkUpdate(
                 http = VelvetApp.http,
                 installedVersionCode = BuildConfig.VERSION_CODE,
                 currentVersionName = BuildConfig.VERSION_NAME,
-                includePrereleases = data.includePrereleases,
+                includePrereleases = false,
             )
             withContext(Dispatchers.Main) {
                 updateInfo = info
@@ -298,6 +299,54 @@ fun SettingsScreen(onBack: () -> Unit) {
                 onChange = library::setShowPulseWave,
             )
 
+            if (data.showPulseWave) {
+                var visualizerDropdownOpen by remember { mutableStateOf(false) }
+                val visualizerOptions = listOf(
+                    "FLUID_WAVE" to "Fluid Wave (Silky harmonic flow)",
+                    "BEAT_BARS" to "Beat Equalizer (Symmetric studio bars)",
+                    "NEON_RIPPLE" to "Neon Ripple (Flowing pulse filaments)",
+                    "MINIMAL_CREST" to "Minimal Crest (Acoustic needle profile)",
+                )
+                val currentVisualizerLabel = visualizerOptions.find { it.first == data.pulseVisualizerStyle }?.second?.substringBefore(" (")
+                    ?: "Fluid Wave"
+
+                ActionRow(
+                    title = "Visualizer style",
+                    subtitle = "Select motion dynamics and waveform design",
+                    readout = currentVisualizerLabel,
+                ) {
+                    visualizerDropdownOpen = true
+                }
+
+                DropdownMenu(
+                    expanded = visualizerDropdownOpen,
+                    onDismissRequest = { visualizerDropdownOpen = false },
+                    modifier = Modifier.background(velvetColors.surface),
+                ) {
+                    visualizerOptions.forEach { (key, label) ->
+                        val isSelected = (data.pulseVisualizerStyle == key)
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    ),
+                                    color = if (isSelected) velvetColors.accentText else velvetColors.text,
+                                )
+                            },
+                            trailingIcon = if (isSelected) {
+                                { Icon(Icons.Default.Check, null, tint = velvetColors.accentText, modifier = Modifier.size(18.dp)) }
+                            } else null,
+                            onClick = {
+                                library.setPulseVisualizerStyle(key)
+                                visualizerDropdownOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = velvetColors.rule)
 
             // Multiple choice music listening languages
@@ -395,15 +444,30 @@ fun SettingsScreen(onBack: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "New Version Available! ✨",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Update Available",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = "v${updateInfo?.latestVersion}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                text = "Version ${updateInfo?.latestVersion} is ready to install. Tap to review.",
+                                text = "A newer stable build is available. Tap to review changelog and install.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                             )
@@ -425,6 +489,149 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            // Redesigned Software Update Card
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = velvetColors.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !checkingVersion) {
+                            checkingVersion = true
+                            scope.launch {
+                                try {
+                                    val info = withContext(Dispatchers.IO) {
+                                        ReleaseCheck.checkUpdate(
+                                            http = VelvetApp.http,
+                                            installedVersionCode = BuildConfig.VERSION_CODE,
+                                            currentVersionName = BuildConfig.VERSION_NAME,
+                                            includePrereleases = false,
+                                            forceRefresh = true,
+                                        )
+                                    }
+                                    updateInfo = info
+                                    if (info.hasAppUpdate) {
+                                        updateDialogInfo = info
+                                        showUpdateDialog = true
+                                    } else {
+                                        showToast("You're on the latest version ($version)", Toast.LENGTH_SHORT)
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {
+                                    showToast("Couldn't check for updates. Try again.", Toast.LENGTH_SHORT)
+                                } finally {
+                                    checkingVersion = false
+                                }
+                            }
+                        }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Check for updates",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = velvetColors.text,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                color = if (updateInfo?.hasAppUpdate == true) velvetColors.accent else velvetColors.raised,
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = version,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (updateInfo?.hasAppUpdate == true) velvetColors.onAccent else velvetColors.muted,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = when {
+                                checkingVersion -> "Checking GitHub for newer releases…"
+                                updateInfo?.hasAppUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to review"
+                                updateInfo?.isRateLimited == true -> "GitHub rate limit reached (cached info shown)"
+                                updateInfo?.isOffline == true -> "Offline: Check your internet connection"
+                                updateInfo != null -> "Up to date • Latest stable release"
+                                else -> "Tap to verify latest stable release"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (updateInfo?.hasAppUpdate == true) velvetColors.accentText else velvetColors.muted,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    if (checkingVersion) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = velvetColors.accentText,
+                        )
+                    } else if (updateInfo?.hasAppUpdate == true) {
+                        FilledTonalButton(
+                            onClick = {
+                                updateDialogInfo = updateInfo
+                                showUpdateDialog = true
+                            },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = velvetColors.accent,
+                                contentColor = velvetColors.onAccent,
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Review")
+                        }
+                    } else {
+                        FilledTonalButton(
+                            onClick = {
+                                checkingVersion = true
+                                scope.launch {
+                                    try {
+                                        val info = withContext(Dispatchers.IO) {
+                                            ReleaseCheck.checkUpdate(
+                                                http = VelvetApp.http,
+                                                installedVersionCode = BuildConfig.VERSION_CODE,
+                                                currentVersionName = BuildConfig.VERSION_NAME,
+                                                includePrereleases = false,
+                                                forceRefresh = true,
+                                            )
+                                        }
+                                        updateInfo = info
+                                        if (info.hasAppUpdate) {
+                                            updateDialogInfo = info
+                                            showUpdateDialog = true
+                                        } else {
+                                            showToast("You're on the latest version ($version)", Toast.LENGTH_SHORT)
+                                        }
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        showToast("Couldn't check for updates. Try again.", Toast.LENGTH_SHORT)
+                                    } finally {
+                                        checkingVersion = false
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = velvetColors.raised,
+                                contentColor = velvetColors.text,
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Check")
+                        }
+                    }
+                }
+            }
+
             ToggleRow(
                 "Check for updates automatically",
                 "Checks once every 24 hours on Wi-Fi and notifies silently",
@@ -436,15 +643,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 } else {
                     com.velvet.app.data.UpdateCheckJobService.cancel(context)
                 }
-            }
-
-            ToggleRow(
-                "Include pre-releases",
-                "Check for alpha, beta, and release candidate builds",
-                data.includePrereleases,
-            ) { include ->
-                library.setIncludePrereleases(include)
-                ReleaseCheck.clearCache()
             }
 
             ActionRow("Developer", "Narayan") {
@@ -469,50 +667,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                     is VersionTapEvent.AlreadyEnabled -> {
                         showToast("Developer options are already enabled", Toast.LENGTH_SHORT)
-                    }
-                }
-            }
-
-            ActionRow(
-                title = "Check for updates",
-                subtitle = when {
-                    checkingVersion -> "Checking GitHub…"
-                    updateInfo?.hasAppUpdate == true -> "New update v${updateInfo?.latestVersion} available! Tap to review"
-                    updateInfo?.isRateLimited == true -> "GitHub API rate limit reached (cached info shown)"
-                    updateInfo?.isOffline == true -> "Offline: Check your internet connection"
-                    updateInfo != null -> "Up to date"
-                    else -> "Check for a newer release"
-                },
-                readout = if (updateInfo?.hasAppUpdate == true) "v${updateInfo?.latestVersion}" else null,
-                enabled = !checkingVersion,
-            ) {
-                if (!checkingVersion) {
-                    checkingVersion = true
-                    scope.launch {
-                        try {
-                            val info = withContext(Dispatchers.IO) {
-                                ReleaseCheck.checkUpdate(
-                                    http = VelvetApp.http,
-                                    installedVersionCode = BuildConfig.VERSION_CODE,
-                                    currentVersionName = BuildConfig.VERSION_NAME,
-                                    includePrereleases = data.includePrereleases,
-                                    forceRefresh = true,
-                                )
-                            }
-                            updateInfo = info
-                            if (info.hasAppUpdate) {
-                                updateDialogInfo = info
-                                showUpdateDialog = true
-                            } else {
-                                showToast("You're on the latest version", Toast.LENGTH_SHORT)
-                            }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Exception) {
-                            showToast("Couldn't check for updates. Try again.", Toast.LENGTH_SHORT)
-                        } finally {
-                            checkingVersion = false
-                        }
                     }
                 }
             }

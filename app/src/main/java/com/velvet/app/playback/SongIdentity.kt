@@ -415,10 +415,75 @@ object SongIdentity {
         return "group:${parsed.comparisonKey}|${song.artist.lowercase(Locale.ROOT).take(15)}"
     }
 
+    enum class AudioClassification(val tier: Int) {
+        ORIGINAL_STUDIO_AUDIO(500),
+        OFFICIAL_MUSIC_VIDEO(200),
+        LYRICAL_VIDEO(100),
+        FILM_DIALOGUE_VERSION(50),
+        ENHANCED_REUPLOAD(40),
+        REMIX_OR_ALTERNATE_VERSION(30),
+        COVER_OR_UGC(20),
+        UNKNOWN(10);
+    }
+
+    fun classifySong(song: Song): AudioClassification {
+        val titleLow = song.title.lowercase(Locale.ROOT)
+        val artistLow = song.artist.lowercase(Locale.ROOT)
+
+        // Check for Dialogue / Scene uploads
+        if (titleLow.contains("dialogue") || titleLow.contains("scene") || titleLow.contains("film scene") || titleLow.contains("movie clip")) {
+            return AudioClassification.FILM_DIALOGUE_VERSION
+        }
+
+        // Check for Lyrics / Lyrical videos
+        if (titleLow.contains("lyric video") || titleLow.contains("lyrical video") || titleLow.contains("lyrics video") || titleLow.contains("full lyrics") || titleLow.contains("lyrical song")) {
+            return AudioClassification.LYRICAL_VIDEO
+        }
+
+        // Check for Enhanced Re-uploads (4K, 8K, 60fps AI upscaled re-uploads)
+        if (titleLow.contains("4k 60fps") || titleLow.contains("8k ultra") || titleLow.contains("ai enhanced") || (titleLow.contains("4k") && titleLow.contains("remastered video"))) {
+            return AudioClassification.ENHANCED_REUPLOAD
+        }
+
+        // Check for Remix / Slowed / Reverb / Sped Up / Nightcore
+        if (VERSION_TAG_REGEX.containsMatchIn(titleLow)) {
+            val hasRemixOrAltered = listOf("remix", "slowed", "reverb", "lofi", "lo-fi", "sped up", "nightcore", "mashup").any { titleLow.contains(it) }
+            if (hasRemixOrAltered) {
+                return AudioClassification.REMIX_OR_ALTERNATE_VERSION
+            }
+        }
+
+        // Check for Covers / Fan Edits
+        if (titleLow.contains("cover by") || titleLow.contains("acoustic cover") || titleLow.contains("guitar cover") || titleLow.contains("fan edit")) {
+            return AudioClassification.COVER_OR_UGC
+        }
+
+        // Check for Original Studio Audio (Topic, preferredMusicSource, or official audio upload)
+        if (song.preferredMusicSource || artistLow.endsWith("- topic") || artistLow.endsWith(" - topic")) {
+            return AudioClassification.ORIGINAL_STUDIO_AUDIO
+        }
+
+        if (titleLow.contains("official audio") || titleLow.contains("original audio") || titleLow.contains("original soundtrack") || titleLow.contains("audio song") || titleLow.contains("full audio")) {
+            return AudioClassification.ORIGINAL_STUDIO_AUDIO
+        }
+
+        // Official Music Video
+        if (titleLow.contains("official music video") || titleLow.contains("official video") || titleLow.contains("music video")) {
+            return AudioClassification.OFFICIAL_MUSIC_VIDEO
+        }
+
+        // If channel is a known record label and not marked as video, treat as studio audio candidate
+        if (RECORD_LABELS.any { artistLow.contains(it) } && !titleLow.contains("video")) {
+            return AudioClassification.ORIGINAL_STUDIO_AUDIO
+        }
+
+        return AudioClassification.UNKNOWN
+    }
+
     /**
      * Selects the highest-quality representative upload inside a duplicate group:
      * 1. If user already played or liked a member, keep that videoId so history stays consistent.
-     * 2. Official audio (ATV / ends with '- Topic' / preferredMusicSource) > Official video (OMV) > UGC/Lyrical.
+     * 2. Official studio audio (Topic audio / preferredMusicSource / official audio) > Official video (OMV) > UGC/Lyrical.
      * 3. Metadata completeness and duration reliability.
      */
     fun selectRepresentative(group: List<Song>, playedOrLikedIds: Set<String> = emptySet()): Song {
@@ -430,14 +495,8 @@ object SongIdentity {
 
         // 2. Score by upload quality tier
         return group.maxWithOrNull(
-            compareBy<Song> { song ->
-                when {
-                    song.preferredMusicSource || song.artist.endsWith("- Topic", ignoreCase = true) -> 300 // ATV
-                    song.title.contains("Official Music Video", ignoreCase = true) || song.title.contains("Official Video", ignoreCase = true) -> 200 // OMV
-                    song.title.contains("Lyrical", ignoreCase = true) || song.title.contains("Lyrics", ignoreCase = true) -> 100 // Lyrical
-                    else -> 50 // UGC
-                }
-            }.thenBy { it.durationSec > 0 }
+            compareBy<Song> { classifySong(it).tier }
+                .thenBy { it.durationSec > 0 }
                 .thenBy { it.album != null }
                 .thenBy { it.artistUrl != null }
                 .thenByDescending { it.id }, // Stable deterministic tie-breaker

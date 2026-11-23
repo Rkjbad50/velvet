@@ -48,7 +48,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            TAG="v2.7.1"
+            TAG="v2.7.2"
           fi
           VERSION="${TAG#v}"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
@@ -71,14 +71,29 @@ jobs:
 
           **SHA-256:** \`$SHA256\`
 
-          #### 🌟 Highlights & What's New in v2.7.1:
-          - 🔍 **In-Playlist Track Search**: Search and filter tracks in your saved playlists in real-time by song title or artist without disrupting custom order, drag-and-drop reordering, delete, duplicate, or undo toast.
-          - 🌊 **Fluid Minimal Wavy Pulse Visualizer**: Redesigned from scratch with an aesthetic, fluid traveling harmonic wave with soft radiant ambient center bloom and toned-down theme accent color.
-          - ⚡ **Real-Time Streaming Resolution Badge**: Instantaneous and accurate bitrate display (e.g. \`OPUS 160K\`, \`OPUS 50K\`, \`OFFLINE\`) with fast 150ms polling, interactive quality switching, and mathematically anchored to true screen center with absolute zero horizontal jitter.
-          - ❤️ **Notification Mini Player Like Button**: Interactive Like button directly in the system media notification panel (\`ic_heart_filled\` / \`ic_heart_outline\`) that toggles like state without opening the app and updates visually in real-time.
-          - ⏭️ **Notification Controls Reliability**: MediaSession ensures Next and Previous buttons are permanently visible and functional even on first standalone track playback.
-          - 💫 **Tactile App-Wide Button Responsiveness**: Tactile spring-scale press animations (\`0.88f\` bounce) and subtle crisp haptics across all buttons, plus playlist Play/Pause/Shuffle buttons with dynamic active playback state indicators.
-          - 🔒 **Google Play Protect Passed**: Built with Target SDK 35, 100% telemetry-free, secure RSA-2048 signing.
+          #### 🌟 Highlights & What's New in v2.7.2:
+          - ⏯️ **Rebuilt Playlist Play / Pause / Shuffle Transport Controls**:
+            - Fixed sequential Play issue where tapping Play paused, but a second tap failed or restarted from track 0.
+            - Fixed Shuffle Play issue where pausing and tapping Play restarted from track 0 instead of resuming the paused shuffled song and preserving the future shuffled queue.
+            - Centralized, session-aware state management across all collection headers (Local Playlists, Liked Songs, Downloads, Albums).
+          - 🌊 **4 Refined Pulse Wave Visualizer Styles**:
+            - Choose from 4 aesthetically modern, beat-synchronized styles in Settings:
+              1. **Fluid Wave** (Silky traveling harmonic wave with soft ambient glow)
+              2. **Beat Equalizer** (Symmetrical studio spectrum bars with responsive bounce and aura)
+              3. **Neon Ripple** (Flowing multi-strand neon filaments with pulsing ripple nodes)
+              4. **Minimal Crest** (Sleek minimalist acoustic needle profile with glowing peak)
+            - Fully responsive beat-synchronization that animates during playback and smoothly freezes on pause.
+          - 🧠 **Autoplay Engine V3 & Song Identity V2**:
+            - **Session Dismissal Memory (`DismissedTrackRegistry`)**: Explicitly removed/swiped queue tracks are remembered and strictly barred from being re-inserted by Autoplay or background refill in the active session.
+            - **Original Studio Audio Quality Gate**: Strict classification engine (`AudioClassification`) prioritizing official Topic and record label studio audio releases over lyrical uploads, dialogue film clips, and AI upscaled re-uploads.
+            - **Race-Condition & Token Safety**: Dropped stale asynchronous background refill results using queue generation tokens.
+          - ⚙️ **Modernized Software Update Card & Settings Clean-up**:
+            - Removed "Include pre-releases" toggle from About settings.
+            - Redesigned Update Section with live version status badge, animated check indicator, and clean update actions.
+          - 📱 **Android 15+ Target SDK 36**:
+            - Upgraded \`targetSdk = 36\` and \`compileSdk = 36\`.
+            - Set minimum SDK to Android 12 (API 31) for modern Android runtime optimization.
+          - 🔒 **Google Play Protect Passed**: 100% telemetry-free, zero tracking, signed release.
 
           Direct download: **velvet.apk** below.
           EOF

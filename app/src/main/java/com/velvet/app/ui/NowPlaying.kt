@@ -657,6 +657,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     AudioWaveformVisualizer(
                         isPlaying = isPlaying,
                         accent = accent,
+                        style = settings.pulseVisualizerStyle,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp),
@@ -811,6 +812,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 private fun AudioWaveformVisualizer(
     isPlaying: Boolean,
     accent: Color,
+    style: String = "FLUID_WAVE",
     modifier: Modifier = Modifier,
 ) {
     // Cadence ~120 BPM fluid acoustic wave ripple (2400ms cycle)
@@ -841,13 +843,13 @@ private fun AudioWaveformVisualizer(
         // Soft warm luminous ambient glow behind center waves
         Box(
             modifier = Modifier
-                .width(220.dp)
+                .width(240.dp)
                 .height(38.dp)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            accent.copy(alpha = 0.32f),
-                            accent.copy(alpha = 0.08f),
+                            accent.copy(alpha = 0.30f),
+                            accent.copy(alpha = 0.06f),
                             Color.Transparent,
                         ),
                         radius = 280f,
@@ -860,130 +862,309 @@ private fun AudioWaveformVisualizer(
             val height = size.height
             val midY = height / 2f
 
-            val primaryFillPath = Path()
-            val primaryStrokePath = Path()
-            val secondaryFillPath = Path()
-            val secondaryStrokePath = Path()
+            when (style) {
+                "BEAT_BARS" -> {
+                    // Modern Studio Symmetrical Equalizer Spectrum Bars (PowerAmp aesthetic)
+                    val barCount = 38
+                    val spacing = 3.dp.toPx()
+                    val totalSpacing = (barCount - 1) * spacing
+                    val barWidth = ((width * 0.88f - totalSpacing) / barCount).coerceIn(2.5f, 6f)
+                    val startX = (width - (barCount * barWidth + totalSpacing)) / 2f
 
-            val stepPx = 4f
-            val count = (width / stepPx).toInt() + 1
+                    val bounce = if (isPlaying) {
+                        0.60f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
+                    } else {
+                        0.35f
+                    }
 
-            // Dynamic beat bounce expands wave amplitude on the beat
-            val bounce = if (isPlaying) {
-                0.55f + 0.45f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
-            } else {
-                0.35f
-            }
-            val maxAmp = (height * 0.42f) * bounce
+                    for (i in 0 until barCount) {
+                        val bx = startX + i * (barWidth + spacing)
+                        val u = (((bx + barWidth / 2f) - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                        val envelope = (kotlin.math.exp(-2.6 * u * u) * (1.0 - 0.7 * u * u)).toFloat().coerceAtLeast(0.08f)
 
-            primaryFillPath.moveTo(0f, midY)
-            secondaryFillPath.moveTo(0f, midY)
+                        val freqPhase1 = beatCycle * 1.6 + i * 0.42
+                        val freqPhase2 = beatCycle * 0.85 + i * 0.28
+                        val rawFreq = (kotlin.math.sin(freqPhase1) * 0.55 + kotlin.math.cos(freqPhase2) * 0.45).toFloat()
+                        val activity = (0.25f + 0.75f * ((rawFreq + 1f) / 2f)).coerceIn(0.15f, 1f)
 
-            for (i in 0..count) {
-                val x = (i * stepPx).coerceAtMost(width)
-                // Normalized coordinate: u in [-1, 1]
-                val u = ((x - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
-                // Symmetrical Gaussian envelope tapering smoothly to 0 at edges
-                val envelope = (kotlin.math.exp(-3.2 * u * u) * (1.0 - u * u)).toFloat().coerceAtLeast(0f)
+                        val barHeight = ((height * 0.78f) * envelope * bounce * activity).coerceIn(4f, height * 0.90f)
+                        val top = midY - barHeight / 2f
 
-                // Traveling harmonic wave phases
-                val phase1 = (3.5 * Math.PI * (x / width) - beatCycle * 1.2).toDouble()
-                val phase2 = (5.2 * Math.PI * (x / width) + beatCycle * 0.9 + 1.2).toDouble()
-                val phase3 = (2.4 * Math.PI * (x / width) - beatCycle * 0.6 + 2.4).toDouble()
-
-                // Primary fluid wave elevation
-                val wave1 = (kotlin.math.sin(phase1) * 0.72 + kotlin.math.cos(phase2) * 0.28).toFloat()
-                val y1 = midY - maxAmp * envelope * wave1
-
-                // Secondary counter harmonic wave elevation
-                val wave2 = (kotlin.math.sin(phase2) * 0.60 - kotlin.math.cos(phase3) * 0.40).toFloat()
-                val y2 = midY + (maxAmp * 0.75f) * envelope * wave2
-
-                if (i == 0) {
-                    primaryStrokePath.moveTo(x, y1)
-                    secondaryStrokePath.moveTo(x, y2)
-                } else {
-                    primaryStrokePath.lineTo(x, y1)
-                    secondaryStrokePath.lineTo(x, y2)
+                        drawRoundRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    tonedAccent,
+                                    tonedAccent.copy(alpha = 0.55f),
+                                    tonedAccent,
+                                ),
+                                startY = top,
+                                endY = top + barHeight,
+                            ),
+                            topLeft = Offset(bx, top),
+                            size = Size(barWidth, barHeight),
+                            cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                        )
+                    }
                 }
-                primaryFillPath.lineTo(x, y1)
-                secondaryFillPath.lineTo(x, y2)
-            }
 
-            primaryFillPath.lineTo(width, midY)
-            primaryFillPath.close()
+                "NEON_RIPPLE" -> {
+                    // Flowing Multi-strand Neon Filaments with Pulsing Nodal Ripples
+                    val pathA = Path()
+                    val pathB = Path()
+                    val pathC = Path()
 
-            secondaryFillPath.lineTo(width, midY)
-            secondaryFillPath.close()
+                    val bounce = if (isPlaying) {
+                        0.60f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
+                    } else {
+                        0.35f
+                    }
+                    val maxAmp = (height * 0.40f) * bounce
+                    val stepPx = 3f
+                    val count = (width / stepPx).toInt() + 1
 
-            // Translucent glowing gradients under wave crests
-            drawPath(
-                path = primaryFillPath,
-                brush = Brush.verticalGradient(
-                    colors = listOf(tonedAccent.copy(alpha = 0.22f), tonedAccent.copy(alpha = 0.02f)),
-                    startY = 0f,
-                    endY = midY,
-                ),
-            )
-            drawPath(
-                path = secondaryFillPath,
-                brush = Brush.verticalGradient(
-                    colors = listOf(tonedAccent.copy(alpha = 0.02f), tonedAccent.copy(alpha = 0.16f)),
-                    startY = midY,
-                    endY = height,
-                ),
-            )
+                    for (i in 0..count) {
+                        val x = (i * stepPx).coerceAtMost(width)
+                        val u = ((x - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                        val envelope = (kotlin.math.exp(-2.8 * u * u) * (1.0 - u * u)).toFloat().coerceAtLeast(0f)
 
-            // Flowing continuous luminous wave strokes
-            drawPath(
-                path = secondaryStrokePath,
-                brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        tonedAccent.copy(alpha = 0.05f),
-                        tonedAccent.copy(alpha = 0.60f),
-                        tonedAccent.copy(alpha = 0.05f),
-                    ),
-                ),
-                style = Stroke(
-                    width = 1.6.dp.toPx(),
-                    cap = StrokeCap.Round,
-                    join = StrokeJoin.Round,
-                ),
-            )
-            drawPath(
-                path = primaryStrokePath,
-                brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        tonedAccent.copy(alpha = 0.10f),
-                        tonedAccent,
-                        tonedAccent.copy(alpha = 0.10f),
-                    ),
-                ),
-                style = Stroke(
-                    width = 2.4.dp.toPx(),
-                    cap = StrokeCap.Round,
-                    join = StrokeJoin.Round,
-                ),
-            )
+                        val phaseA = (3.8 * Math.PI * (x / width) - beatCycle * 1.3).toDouble()
+                        val phaseB = (2.4 * Math.PI * (x / width) + beatCycle * 0.85).toDouble()
+                        val phaseC = (5.5 * Math.PI * (x / width) - beatCycle * 1.9).toDouble()
 
-            // Aesthetic luminous micro-filaments spaced along the wave
-            val filamentStep = 14.dp.toPx()
-            val filamentCount = (width / filamentStep).toInt()
-            for (j in 1 until filamentCount) {
-                val fx = j * filamentStep
-                val fu = ((fx - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
-                val fenvelope = (kotlin.math.exp(-3.2 * fu * fu) * (1.0 - fu * fu)).toFloat().coerceAtLeast(0f)
-                val fphase1 = (3.5 * Math.PI * (fx / width) - beatCycle * 1.2).toDouble()
-                val fwave1 = (kotlin.math.sin(fphase1) * 0.72).toFloat()
-                val fy1 = midY - maxAmp * fenvelope * fwave1
+                        val yA = midY - maxAmp * envelope * kotlin.math.sin(phaseA).toFloat()
+                        val yB = midY + (maxAmp * 0.85f) * envelope * kotlin.math.cos(phaseB).toFloat()
+                        val yC = midY - (maxAmp * 0.60f) * envelope * (kotlin.math.sin(phaseC) * 0.7f).toFloat()
 
-                if (fenvelope > 0.05f) {
-                    val dotAlpha = (fenvelope * 0.85f).coerceIn(0f, 1f)
-                    drawCircle(
-                        color = tonedAccent.copy(alpha = dotAlpha),
-                        radius = 1.6.dp.toPx(),
-                        center = Offset(fx, fy1),
+                        if (i == 0) {
+                            pathA.moveTo(x, yA)
+                            pathB.moveTo(x, yB)
+                            pathC.moveTo(x, yC)
+                        } else {
+                            pathA.lineTo(x, yA)
+                            pathB.lineTo(x, yB)
+                            pathC.lineTo(x, yC)
+                        }
+                    }
+
+                    // Filament A (Primary Neon)
+                    drawPath(
+                        path = pathA,
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                tonedAccent.copy(alpha = 0.05f),
+                                tonedAccent,
+                                tonedAccent.copy(alpha = 0.05f),
+                            ),
+                        ),
+                        style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
                     )
+
+                    // Filament B (Sub Harmonic)
+                    drawPath(
+                        path = pathB,
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                tonedAccent.copy(alpha = 0.02f),
+                                tonedAccent.copy(alpha = 0.65f),
+                                tonedAccent.copy(alpha = 0.02f),
+                            ),
+                        ),
+                        style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
+
+                    // Filament C (Center Wave)
+                    drawPath(
+                        path = pathC,
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                tonedAccent.copy(alpha = 0.02f),
+                                tonedAccent.copy(alpha = 0.45f),
+                                tonedAccent.copy(alpha = 0.02f),
+                            ),
+                        ),
+                        style = Stroke(width = 1.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
+
+                    // Sparkling Ripple Nodes
+                    val nodeCount = 9
+                    for (k in 1..nodeCount) {
+                        val nx = (width * k) / (nodeCount + 1)
+                        val nu = ((nx - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                        val nEnv = (kotlin.math.exp(-2.5 * nu * nu)).toFloat()
+                        val nPhase = (3.8 * Math.PI * (nx / width) - beatCycle * 1.3).toDouble()
+                        val ny = midY - maxAmp * nEnv * kotlin.math.sin(nPhase).toFloat()
+                        val nodePulse = if (isPlaying) (0.5f + 0.5f * kotlin.math.sin(beatCycle * 2.0 + k).toFloat()) else 0.5f
+                        drawCircle(
+                            color = tonedAccent.copy(alpha = (nEnv * 0.9f).coerceIn(0f, 1f)),
+                            radius = (1.5f + 1.5f * nodePulse).dp.toPx(),
+                            center = Offset(nx, ny),
+                        )
+                    }
+                }
+
+                "MINIMAL_CREST" -> {
+                    // Sleek Precision Acoustic Needle / Crest Profile
+                    val crestPath = Path()
+                    val bounce = if (isPlaying) {
+                        0.60f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
+                    } else {
+                        0.35f
+                    }
+                    val maxAmp = (height * 0.44f) * bounce
+                    val stepPx = 2.5f
+                    val count = (width / stepPx).toInt() + 1
+
+                    crestPath.moveTo(0f, midY)
+                    for (i in 0..count) {
+                        val x = (i * stepPx).coerceAtMost(width)
+                        val u = ((x - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                        val envelope = (kotlin.math.exp(-4.2 * u * u) * (1.0 - u * u)).toFloat().coerceAtLeast(0f)
+                        val phase = (4.0 * Math.PI * (x / width) - beatCycle * 1.5).toDouble()
+                        val wave = (kotlin.math.sin(phase) * 0.85 + kotlin.math.cos(phase * 2.1) * 0.15).toFloat()
+                        val y = midY - maxAmp * envelope * wave
+                        crestPath.lineTo(x, y)
+                    }
+
+                    // Tapered razor-sharp acoustic line
+                    drawPath(
+                        path = crestPath,
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                tonedAccent.copy(alpha = 0.20f),
+                                tonedAccent,
+                                tonedAccent.copy(alpha = 0.20f),
+                                Color.Transparent,
+                            ),
+                        ),
+                        style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
+
+                    // Luminous center pulse point
+                    val centerPulse = if (isPlaying) (0.7f + 0.3f * kotlin.math.abs(kotlin.math.sin(beatCycle * 1.5)).toFloat()) else 0.6f
+                    drawCircle(
+                        color = tonedAccent.copy(alpha = 0.95f),
+                        radius = (3.2.dp.toPx()) * centerPulse,
+                        center = Offset(width / 2f, midY),
+                    )
+                    drawCircle(
+                        color = tonedAccent.copy(alpha = 0.25f),
+                        radius = (8.dp.toPx()) * centerPulse,
+                        center = Offset(width / 2f, midY),
+                    )
+                }
+
+                else -> {
+                    // "FLUID_WAVE" (Default Silky Traveling Harmonic Wave)
+                    val primaryFillPath = Path()
+                    val primaryStrokePath = Path()
+                    val secondaryFillPath = Path()
+                    val secondaryStrokePath = Path()
+
+                    val stepPx = 4f
+                    val count = (width / stepPx).toInt() + 1
+
+                    val bounce = if (isPlaying) {
+                        0.55f + 0.45f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
+                    } else {
+                        0.35f
+                    }
+                    val maxAmp = (height * 0.42f) * bounce
+
+                    primaryFillPath.moveTo(0f, midY)
+                    secondaryFillPath.moveTo(0f, midY)
+
+                    for (i in 0..count) {
+                        val x = (i * stepPx).coerceAtMost(width)
+                        val u = ((x - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                        val envelope = (kotlin.math.exp(-3.2 * u * u) * (1.0 - u * u)).toFloat().coerceAtLeast(0f)
+
+                        val phase1 = (3.5 * Math.PI * (x / width) - beatCycle * 1.2).toDouble()
+                        val phase2 = (5.2 * Math.PI * (x / width) + beatCycle * 0.9 + 1.2).toDouble()
+                        val phase3 = (2.4 * Math.PI * (x / width) - beatCycle * 0.6 + 2.4).toDouble()
+
+                        val wave1 = (kotlin.math.sin(phase1) * 0.72 + kotlin.math.cos(phase2) * 0.28).toFloat()
+                        val y1 = midY - maxAmp * envelope * wave1
+
+                        val wave2 = (kotlin.math.sin(phase2) * 0.60 - kotlin.math.cos(phase3) * 0.40).toFloat()
+                        val y2 = midY + (maxAmp * 0.75f) * envelope * wave2
+
+                        if (i == 0) {
+                            primaryStrokePath.moveTo(x, y1)
+                            secondaryStrokePath.moveTo(x, y2)
+                        } else {
+                            primaryStrokePath.lineTo(x, y1)
+                            secondaryStrokePath.lineTo(x, y2)
+                        }
+                        primaryFillPath.lineTo(x, y1)
+                        secondaryFillPath.lineTo(x, y2)
+                    }
+
+                    primaryFillPath.lineTo(width, midY)
+                    primaryFillPath.close()
+
+                    secondaryFillPath.lineTo(width, midY)
+                    secondaryFillPath.close()
+
+                    drawPath(
+                        path = primaryFillPath,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(tonedAccent.copy(alpha = 0.22f), tonedAccent.copy(alpha = 0.02f)),
+                            startY = 0f,
+                            endY = midY,
+                        ),
+                    )
+                    drawPath(
+                        path = secondaryFillPath,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(tonedAccent.copy(alpha = 0.02f), tonedAccent.copy(alpha = 0.16f)),
+                            startY = midY,
+                            endY = height,
+                        ),
+                    )
+
+                    drawPath(
+                        path = secondaryStrokePath,
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                tonedAccent.copy(alpha = 0.05f),
+                                tonedAccent.copy(alpha = 0.60f),
+                                tonedAccent.copy(alpha = 0.05f),
+                            ),
+                        ),
+                        style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
+                    drawPath(
+                        path = primaryStrokePath,
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                tonedAccent.copy(alpha = 0.10f),
+                                tonedAccent,
+                                tonedAccent.copy(alpha = 0.10f),
+                            ),
+                        ),
+                        style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
+
+                    val filamentStep = 14.dp.toPx()
+                    val filamentCount = (width / filamentStep).toInt()
+                    for (j in 1 until filamentCount) {
+                        val fx = j * filamentStep
+                        val fu = ((fx - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
+                        val fenvelope = (kotlin.math.exp(-3.2 * fu * fu) * (1.0 - fu * fu)).toFloat().coerceAtLeast(0f)
+                        val fphase1 = (3.5 * Math.PI * (fx / width) - beatCycle * 1.2).toDouble()
+                        val fwave1 = (kotlin.math.sin(fphase1) * 0.72).toFloat()
+                        val fy1 = midY - maxAmp * fenvelope * fwave1
+
+                        if (fenvelope > 0.05f) {
+                            val dotAlpha = (fenvelope * 0.85f).coerceIn(0f, 1f)
+                            drawCircle(
+                                color = tonedAccent.copy(alpha = dotAlpha),
+                                radius = 1.6.dp.toPx(),
+                                center = Offset(fx, fy1),
+                            )
+                        }
+                    }
                 }
             }
         }
