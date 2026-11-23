@@ -1192,6 +1192,7 @@ private fun AudioWaveformVisualizer(
             }
         }
     }
+}
 
 @Composable
 private fun ModernControlDock(accent: Color) {
