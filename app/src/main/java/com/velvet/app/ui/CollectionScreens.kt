@@ -164,6 +164,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
 
     val albumSessionId = "album:${album.url}"
     val isPlayingAlbum = PlayerConnection.isPlaylistSessionPlaying(albumSessionId)
+    val isShuffledAlbum = PlayerConnection.isPlaylistSessionActive(albumSessionId) && PlayerConnection.shuffle
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -174,6 +175,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
                 art = { Artwork(info.thumb, 230.dp, corner = 34.dp, placeholder = AppIcons.Album) },
                 playEnabled = songs.isNotEmpty(),
                 isPlaying = isPlayingAlbum,
+                isShuffled = isShuffledAlbum,
                 onPlay = {
                     PlayerConnection.playOrResumePlaylist(albumSessionId, songs, playbackContext)
                 },
@@ -216,6 +218,7 @@ fun LikedScreen(onBack: () -> Unit) {
     val songs = data.liked
     val likedSessionId = "__liked__"
     val isPlayingLiked = PlayerConnection.isPlaylistSessionPlaying(likedSessionId)
+    val isShuffledLiked = PlayerConnection.isPlaylistSessionActive(likedSessionId) && PlayerConnection.shuffle
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -226,6 +229,7 @@ fun LikedScreen(onBack: () -> Unit) {
                 art = { LikedCover(230.dp, corner = 34.dp) },
                 playEnabled = songs.isNotEmpty(),
                 isPlaying = isPlayingLiked,
+                isShuffled = isShuffledLiked,
                 onPlay = {
                     PlayerConnection.playOrResumePlaylist(likedSessionId, songs)
                 },
@@ -445,6 +449,7 @@ fun DownloadsScreen(onBack: () -> Unit) {
     val songs = data.downloads
     val downloadsSessionId = "__downloads__"
     val isPlayingDownloads = PlayerConnection.isPlaylistSessionPlaying(downloadsSessionId)
+    val isShuffledDownloads = PlayerConnection.isPlaylistSessionActive(downloadsSessionId) && PlayerConnection.shuffle
     BackPage(onBack) {
         item {
             CollectionHeader(
@@ -455,6 +460,7 @@ fun DownloadsScreen(onBack: () -> Unit) {
                 art = { DownloadsCover(230.dp, corner = 34.dp) },
                 playEnabled = songs.isNotEmpty(),
                 isPlaying = isPlayingDownloads,
+                isShuffled = isShuffledDownloads,
                 onPlay = {
                     PlayerConnection.playOrResumePlaylist(downloadsSessionId, songs)
                 },
@@ -539,6 +545,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
         artworkUrl = coverUrl,
     )
     val isCurrentPlaylistPlaying = PlayerConnection.isPlaylistSessionPlaying(id)
+    val isCurrentPlaylistShuffled = PlayerConnection.isPlaylistSessionActive(id) && PlayerConnection.shuffle
 
     Box(Modifier.fillMaxSize()) {
         BackPage(onBack) {
@@ -570,6 +577,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                     artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
                     playEnabled = activeSongs.isNotEmpty(),
                     isPlaying = isCurrentPlaylistPlaying,
+                    isShuffled = isCurrentPlaylistShuffled,
                     onPlay = {
                         PlayerConnection.playOrResumePlaylist(id, activeSongs, playbackContext)
                     },

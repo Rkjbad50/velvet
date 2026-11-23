@@ -12,6 +12,7 @@ import com.velvet.app.data.UpdatePayload
 import com.velvet.app.diagnostics.DiagnosticsLogger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -256,5 +257,15 @@ class ReleaseCheckTest {
         )
         assertTrue(state is AppUpdateState.UpdateAvailable)
         assertEquals("http://download/velvet.apk", (state as AppUpdateState.UpdateAvailable).downloadUrl)
+    }
+
+    @Test
+    fun inFlightUpdateDoesNotReportFalseAbortOnResume() {
+        AppUpdater.pendingInstallVersionCode = 20702
+        AppUpdater.lastInstallStatus = null
+
+        assertNull("In-flight installation has no terminal status", AppUpdater.lastInstallStatus)
+        assertEquals("Pending code must be retained until terminal result or version change",
+            20702, AppUpdater.pendingInstallVersionCode)
     }
 }

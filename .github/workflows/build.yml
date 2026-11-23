@@ -73,23 +73,31 @@ jobs:
 
           #### 🌟 Highlights & What's New in v2.7.2:
           - ⏯️ **Rebuilt Playlist Play / Pause / Shuffle Transport Controls**:
-            - Fixed sequential Play issue where tapping Play paused, but a second tap failed or restarted from track 0.
-            - Fixed Shuffle Play issue where pausing and tapping Play restarted from track 0 instead of resuming the paused shuffled song and preserving the future shuffled queue.
+            - **Running Playlist Reshuffle**: Tapping the Shuffle button while a playlist is actively playing now dynamically reshuffles upcoming tracks with a fresh Fisher-Yates permutation and displays a live toast ("Reshuffled queue 🔀") without interrupting playback.
+            - **Active Shuffle State Indication**: The playlist header Shuffle button now highlights in the theme accent color when shuffle is active.
+            - **Sequential Play / Resume Fix**: Resuming paused playlists preserves exact track, playback position, and remaining queue order without restarting from track 0.
             - Centralized, session-aware state management across all collection headers (Local Playlists, Liked Songs, Downloads, Albums).
-          - 🌊 **4 Refined Pulse Wave Visualizer Styles**:
-            - Choose from 4 aesthetically modern, beat-synchronized styles in Settings:
-              1. **Fluid Wave** (Silky traveling harmonic wave with soft ambient glow)
-              2. **Beat Equalizer** (Symmetrical studio spectrum bars with responsive bounce and aura)
-              3. **Neon Ripple** (Flowing multi-strand neon filaments with pulsing ripple nodes)
-              4. **Minimal Crest** (Sleek minimalist acoustic needle profile with glowing peak)
-            - Fully responsive beat-synchronization that animates during playback and smoothly freezes on pause.
+          - 🪟 **High-Contrast Themed Settings Modal Popups**:
+            - Completely removed fragile Compose DropdownMenus across Settings.
+            - Replaced with high-contrast, theme-adaptive modal selection dialogs for Font style, Seekbar style, and Visualizer style, featuring custom card surfaces, radio buttons, and descriptions.
+          - 🌊 **4 Distinct Modern Pulse Wave Visualizer Styles**:
+            - **Fluid Wave**: Silky traveling harmonic continuous ribbon wave with ambient gradient volume.
+            - **Beat Equalizer**: Symmetric studio equalizer spectrum bars with PowerAmp-style beat bounce and aura.
+            - **Neon Ripple**: Completely redesigned concentric expanding radial acoustic ripples with radiating sound particle sparks and a central pulsing beacon.
+            - **Minimal Crest**: Razor-sharp cybernetic acoustic needle and oscilloscope crest profile with luminous peak.
+          - 📋 **Rebuilt Queue Long-Press Drag & Reorder**:
+            - Unified gesture architecture that eliminates pointer slop conflicts between horizontal swipes (Play Next / Remove) and vertical reorder drag.
+            - Added dedicated drag handle icons (`DragHandle`) on track rows for instantaneous reordering.
+            - Smooth live drag tracking formula ensuring zero visual jitter during list item reordering.
+          - 📐 **Queue Bottom Sheet 90% Screen Height Limit**:
+            - Limited expanded Queue sheet height strictly to 90% of screen height, ensuring the top 10% reveals the layered background page underneath without covering the phone's system status bar.
+          - 🛠️ **In-App Updater False Error Prompt Fix**:
+            - Suppressed false aborted/failed update toasts when Velvet resumes while the Android system PackageInstaller is in-flight.
+          - 🎨 **Settings About Card Layout Fix**:
+            - Fixed \`v2.7.2\` version badge text from breaking or wrapping onto two lines on narrow screens.
           - 🧠 **Autoplay Engine V3 & Song Identity V2**:
-            - **Session Dismissal Memory (`DismissedTrackRegistry`)**: Explicitly removed/swiped queue tracks are remembered and strictly barred from being re-inserted by Autoplay or background refill in the active session.
+            - **Session Dismissal Memory (`DismissedTrackRegistry`)**: Explicitly removed queue tracks are barred from re-insertions by Autoplay in the active session.
             - **Original Studio Audio Quality Gate**: Strict classification engine (`AudioClassification`) prioritizing official Topic and record label studio audio releases over lyrical uploads, dialogue film clips, and AI upscaled re-uploads.
-            - **Race-Condition & Token Safety**: Dropped stale asynchronous background refill results using queue generation tokens.
-          - ⚙️ **Modernized Software Update Card & Settings Clean-up**:
-            - Removed "Include pre-releases" toggle from About settings.
-            - Redesigned Update Section with live version status badge, animated check indicator, and clean update actions.
           - 📱 **Android 15+ Target SDK 36**:
             - Upgraded \`targetSdk = 36\` and \`compileSdk = 36\`.
             - Set minimum SDK to Android 12 (API 31) for modern Android runtime optimization.

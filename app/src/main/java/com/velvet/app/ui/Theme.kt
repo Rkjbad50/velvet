@@ -252,6 +252,7 @@ fun VelvetTheme(content: @Composable () -> Unit) {
 
 /** Material icons not in material-icons-core (the extended set adds ~10 MB to the APK). */
 object AppIcons {
+    val DragHandle = icon("M20 9H4v2h16V9zm0 4H4v2h16v-2z")
     val Play = icon("M8 5v14l11-7z")
     val Pause = icon("M6 19h4V5H6v14zm8-14v14h4V5h-4z")
     val SkipNext = icon("M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z")

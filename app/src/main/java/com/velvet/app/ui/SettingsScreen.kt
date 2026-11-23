@@ -34,12 +34,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -191,103 +191,65 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = velvetColors.rule)
 
-            // Compact Font Chooser Dropdown
-            var fontDropdownOpen by remember { mutableStateOf(false) }
+            // Font Chooser Modal Dialog (high-contrast themed popup)
+            var fontDialogOpen by remember { mutableStateOf(false) }
             val fontOptions = listOf(
-                "SYSTEM" to "System font (default)",
-                "SPACE_GROTESK" to "Space Grotesk",
-                "SOURCE_SERIF" to "Source Serif (Editorial serif)",
-                "MONOSPACE" to "Monospace",
-                "COOL_JAZZ" to "Cool Jazz",
-                "CHOCO_COOKY" to "Choco Cooky",
-                "ROSEMARY" to "Rosemary",
+                Triple("SYSTEM", "System font (default)", "Default system typography"),
+                Triple("SPACE_GROTESK", "Space Grotesk", "Modern geometric display sans-serif"),
+                Triple("SOURCE_SERIF", "Source Serif", "Editorial literary serif aesthetic"),
+                Triple("MONOSPACE", "Monospace", "Clean fixed-width code aesthetic"),
+                Triple("COOL_JAZZ", "Cool Jazz", "Expressive handwritten casual style"),
+                Triple("CHOCO_COOKY", "Choco Cooky", "Playful rounded friendly typeface"),
+                Triple("ROSEMARY", "Rosemary", "Graceful rhythmic script"),
             )
             val currentFontLabel = fontOptions.firstOrNull { it.first.equals(data.fontPreference, ignoreCase = true) }?.second ?: "System font (default)"
 
-            Box(Modifier.fillMaxWidth()) {
-                ActionRow(
-                    title = "Font style",
-                    subtitle = currentFontLabel,
-                    readout = "Select",
-                ) {
-                    fontDropdownOpen = true
-                }
+            ActionRow(
+                title = "Font style",
+                subtitle = currentFontLabel,
+                readout = "Select",
+            ) {
+                fontDialogOpen = true
+            }
 
-                DropdownMenu(
-                    expanded = fontDropdownOpen,
-                    onDismissRequest = { fontDropdownOpen = false },
-                    modifier = Modifier.background(velvetColors.raised),
-                ) {
-                    fontOptions.forEach { (key, label) ->
-                        val isSelected = data.fontPreference.equals(key, ignoreCase = true)
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    label,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    ),
-                                    color = if (isSelected) velvetColors.accentText else velvetColors.text,
-                                )
-                            },
-                            trailingIcon = if (isSelected) {
-                                { Icon(Icons.Default.Check, null, tint = velvetColors.accentText, modifier = Modifier.size(18.dp)) }
-                            } else null,
-                            onClick = {
-                                library.setFontPreference(key)
-                                fontDropdownOpen = false
-                            },
-                        )
-                    }
-                }
+            if (fontDialogOpen) {
+                ThemedRadioSelectionDialog(
+                    title = "Font style",
+                    subtitle = "Select app-wide typography",
+                    options = fontOptions,
+                    selected = data.fontPreference,
+                    onSelect = { library.setFontPreference(it) },
+                    onDismiss = { fontDialogOpen = false },
+                )
             }
 
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = velvetColors.rule)
 
-            // Seekbar Style selector (Minimal, Wide, DotMatrix)
-            var seekbarDropdownOpen by remember { mutableStateOf(false) }
+            // Seekbar Style selector (Minimal, Wide, DotMatrix) via Themed Modal Dialog
+            var seekbarDialogOpen by remember { mutableStateOf(false) }
             val seekbarOptions = listOf(
-                "MINIMAL" to "Minimal",
-                "WIDE" to "Wide",
-                "DOT_MATRIX" to "DotMatrix",
+                Triple("MINIMAL", "Minimal", "Ultra-clean thin timeline bar"),
+                Triple("WIDE", "Wide", "Modern expressive pill seekbar"),
+                Triple("DOT_MATRIX", "DotMatrix", "Futuristic digital dot matrix timeline"),
             )
             val currentSeekbarLabel = seekbarOptions.find { it.first == data.seekbarStyle }?.second ?: "Minimal"
 
-            Box(Modifier.fillMaxWidth()) {
-                ActionRow(
-                    title = "Seekbar style",
-                    subtitle = currentSeekbarLabel,
-                ) {
-                    seekbarDropdownOpen = true
-                }
+            ActionRow(
+                title = "Seekbar style",
+                subtitle = currentSeekbarLabel,
+            ) {
+                seekbarDialogOpen = true
+            }
 
-                DropdownMenu(
-                    expanded = seekbarDropdownOpen,
-                    onDismissRequest = { seekbarDropdownOpen = false },
-                    modifier = Modifier.background(velvetColors.surface),
-                ) {
-                    seekbarOptions.forEach { (key, label) ->
-                        val isSelected = (data.seekbarStyle == key)
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    label,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    ),
-                                    color = if (isSelected) velvetColors.accentText else velvetColors.text,
-                                )
-                            },
-                            trailingIcon = if (isSelected) {
-                                { Icon(Icons.Default.Check, null, tint = velvetColors.accentText, modifier = Modifier.size(18.dp)) }
-                            } else null,
-                            onClick = {
-                                library.setSeekbarStyle(key)
-                                seekbarDropdownOpen = false
-                            },
-                        )
-                    }
-                }
+            if (seekbarDialogOpen) {
+                ThemedRadioSelectionDialog(
+                    title = "Seekbar style",
+                    subtitle = "Choose Now Playing progress bar style",
+                    options = seekbarOptions,
+                    selected = data.seekbarStyle,
+                    onSelect = { library.setSeekbarStyle(it) },
+                    onDismiss = { seekbarDialogOpen = false },
+                )
             }
 
             HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = velvetColors.rule)
@@ -300,50 +262,32 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
 
             if (data.showPulseWave) {
-                var visualizerDropdownOpen by remember { mutableStateOf(false) }
+                var visualizerDialogOpen by remember { mutableStateOf(false) }
                 val visualizerOptions = listOf(
-                    "FLUID_WAVE" to "Fluid Wave (Silky harmonic flow)",
-                    "BEAT_BARS" to "Beat Equalizer (Symmetric studio bars)",
-                    "NEON_RIPPLE" to "Neon Ripple (Flowing pulse filaments)",
-                    "MINIMAL_CREST" to "Minimal Crest (Acoustic needle profile)",
+                    Triple("FLUID_WAVE", "Fluid Wave", "Silky continuous harmonic flow"),
+                    Triple("BEAT_BARS", "Beat Equalizer", "Symmetric studio spectrum bars"),
+                    Triple("NEON_RIPPLE", "Neon Ripple", "Concentric radial acoustic ripples & particles"),
+                    Triple("MINIMAL_CREST", "Minimal Crest", "Acoustic needle & oscilloscope profile"),
                 )
-                val currentVisualizerLabel = visualizerOptions.find { it.first == data.pulseVisualizerStyle }?.second?.substringBefore(" (")
-                    ?: "Fluid Wave"
+                val currentVisualizerLabel = visualizerOptions.find { it.first == data.pulseVisualizerStyle }?.second ?: "Fluid Wave"
 
                 ActionRow(
                     title = "Visualizer style",
                     subtitle = "Select motion dynamics and waveform design",
                     readout = currentVisualizerLabel,
                 ) {
-                    visualizerDropdownOpen = true
+                    visualizerDialogOpen = true
                 }
 
-                DropdownMenu(
-                    expanded = visualizerDropdownOpen,
-                    onDismissRequest = { visualizerDropdownOpen = false },
-                    modifier = Modifier.background(velvetColors.surface),
-                ) {
-                    visualizerOptions.forEach { (key, label) ->
-                        val isSelected = (data.pulseVisualizerStyle == key)
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    label,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    ),
-                                    color = if (isSelected) velvetColors.accentText else velvetColors.text,
-                                )
-                            },
-                            trailingIcon = if (isSelected) {
-                                { Icon(Icons.Default.Check, null, tint = velvetColors.accentText, modifier = Modifier.size(18.dp)) }
-                            } else null,
-                            onClick = {
-                                library.setPulseVisualizerStyle(key)
-                                visualizerDropdownOpen = false
-                            },
-                        )
-                    }
+                if (visualizerDialogOpen) {
+                    ThemedRadioSelectionDialog(
+                        title = "Visualizer style",
+                        subtitle = "Select motion dynamics and acoustic waveform design",
+                        options = visualizerOptions,
+                        selected = data.pulseVisualizerStyle,
+                        onSelect = { library.setPulseVisualizerStyle(it) },
+                        onDismiss = { visualizerDialogOpen = false },
+                    )
                 }
             }
 
@@ -533,24 +477,30 @@ fun SettingsScreen(onBack: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             Text(
                                 text = "Check for updates",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = velvetColors.text,
                                 fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            Spacer(Modifier.width(8.dp))
                             Surface(
                                 color = if (updateInfo?.hasAppUpdate == true) velvetColors.accent else velvetColors.raised,
-                                shape = RoundedCornerShape(4.dp)
+                                shape = RoundedCornerShape(6.dp),
                             ) {
                                 Text(
                                     text = version,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                                     color = if (updateInfo?.hasAppUpdate == true) velvetColors.onAccent else velvetColors.muted,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
-                                    fontWeight = FontWeight.Medium
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
                                 )
                             }
                         }
@@ -1089,6 +1039,106 @@ private fun MusicLanguagesDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("Cancel", color = velvetColors.muted)
+            }
+        },
+    )
+}
+
+@Composable
+private fun <T> ThemedRadioSelectionDialog(
+    title: String,
+    subtitle: String? = null,
+    options: List<Triple<T, String, String?>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = velvetColors.card,
+        shape = RoundedCornerShape(24.dp),
+        tonalElevation = 6.dp,
+        modifier = Modifier.border(1.dp, velvetColors.rule, RoundedCornerShape(24.dp)),
+        title = {
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = velvetColors.text,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = velvetColors.muted,
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                options.forEach { (value, label, desc) ->
+                    val isSelected = (value == selected)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isSelected) velvetColors.accent.copy(alpha = 0.12f) else velvetColors.surface)
+                            .border(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) velvetColors.accent.copy(alpha = 0.6f) else velvetColors.rule,
+                                shape = RoundedCornerShape(14.dp),
+                            )
+                            .clickable {
+                                onSelect(value)
+                                onDismiss()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                ),
+                                color = if (isSelected) velvetColors.accentText else velvetColors.text,
+                            )
+                            if (!desc.isNullOrBlank()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = desc,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isSelected) velvetColors.accentText.copy(alpha = 0.85f) else velvetColors.muted,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                onSelect(value)
+                                onDismiss()
+                            },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = velvetColors.accent,
+                                unselectedColor = velvetColors.muted,
+                            ),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = velvetColors.accentText, fontWeight = FontWeight.SemiBold)
             }
         },
     )

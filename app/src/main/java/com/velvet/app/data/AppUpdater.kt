@@ -129,10 +129,23 @@ object AppUpdater {
 
     fun checkInstallResult(context: Context, onReport: (String) -> Unit) {
         val pendingCode = pendingInstallVersionCode ?: return
-        pendingInstallVersionCode = null
         val currentCode = getCurrentVersionCode(context)
-        val outcome = evaluateInstallOutcome(currentCode, pendingCode, lastInstallStatus)
-        if (!outcome.didApply) {
+        if (currentCode >= pendingCode) {
+            // Update applied successfully! Clean up pending state.
+            pendingInstallVersionCode = null
+            lastInstallStatus = null
+            return
+        }
+        val status = lastInstallStatus
+        if (status == null) {
+            // Android PackageInstaller prompt is still active or package installation is in-flight.
+            // Do NOT prematurely report failure on activity resume!
+            return
+        }
+        // A definitive terminal failure status was recorded by InstallStatusReceiver
+        pendingInstallVersionCode = null
+        val outcome = evaluateInstallOutcome(currentCode, pendingCode, status)
+        if (!outcome.didApply && status.statusCode != PackageInstaller.STATUS_SUCCESS) {
             DiagnosticsLogger.w("PackageInstaller", "Update did not apply: ${outcome.statusName} - ${outcome.message}")
             onReport(outcome.reportText)
         }

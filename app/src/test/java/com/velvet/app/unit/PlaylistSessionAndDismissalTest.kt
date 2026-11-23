@@ -78,6 +78,26 @@ class PlaylistSessionAndDismissalTest {
     }
 
     @Test
+    fun testPlaylistSession_runningShuffle_reShuffle_reshufflesQueueWithoutInterruptingCurrent() {
+        val songs = makePlaylist(20)
+        val manager = PlayerQueueManager()
+
+        // 1. User starts shuffled playlist
+        manager.start(songs, startIndex = 5, shuffled = true)
+        val currentSong = manager.current
+        assertEquals("song_5", currentSong?.id)
+        val firstShuffledOrder = manager.upNext.map { it.song.id }
+
+        // 2. Tapping shuffle while running triggers re-shuffle
+        manager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = false)
+        assertEquals("Current song must not change when reshuffling running playlist", "song_5", manager.current?.id)
+        val secondShuffledOrder = manager.upNext.map { it.song.id }
+        assertEquals(19, secondShuffledOrder.size)
+        // With size 19, enableShuffle guarantees order differs from previous
+        assertNotEquals("Reshuffling must generate a fresh shuffle permutation", firstShuffledOrder, secondShuffledOrder)
+    }
+
+    @Test
     fun testDismissedTrackRegistry_recordsAndPreventsReintroduction() {
         val song1 = Song(id = "vid_123", title = "Tum Hi Ho (Official Audio)", artist = "Arijit Singh - Topic", durationSec = 262)
         val song2SameRecordingDifferentUpload = Song(id = "vid_999", title = "Tum Hi Ho | Aashiqui 2", artist = "Arijit Singh", durationSec = 264)

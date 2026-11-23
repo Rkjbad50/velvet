@@ -33,10 +33,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -908,98 +913,87 @@ private fun AudioWaveformVisualizer(
                 }
 
                 "NEON_RIPPLE" -> {
-                    // Flowing Multi-strand Neon Filaments with Pulsing Nodal Ripples
-                    val pathA = Path()
-                    val pathB = Path()
-                    val pathC = Path()
-
+                    // Concentric Expanding Radial Acoustic Ripples & Pulsing Sound Particle Sparks
+                    val centerX = width / 2f
+                    val centerY = midY
                     val bounce = if (isPlaying) {
                         0.60f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
                     } else {
                         0.35f
                     }
-                    val maxAmp = (height * 0.40f) * bounce
-                    val stepPx = 3f
-                    val count = (width / stepPx).toInt() + 1
 
-                    for (i in 0..count) {
-                        val x = (i * stepPx).coerceAtMost(width)
-                        val u = ((x - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
-                        val envelope = (kotlin.math.exp(-2.8 * u * u) * (1.0 - u * u)).toFloat().coerceAtLeast(0f)
-
-                        val phaseA = (3.8 * Math.PI * (x / width) - beatCycle * 1.3).toDouble()
-                        val phaseB = (2.4 * Math.PI * (x / width) + beatCycle * 0.85).toDouble()
-                        val phaseC = (5.5 * Math.PI * (x / width) - beatCycle * 1.9).toDouble()
-
-                        val yA = midY - maxAmp * envelope * kotlin.math.sin(phaseA).toFloat()
-                        val yB = midY + (maxAmp * 0.85f) * envelope * kotlin.math.cos(phaseB).toFloat()
-                        val yC = midY - (maxAmp * 0.60f) * envelope * (kotlin.math.sin(phaseC) * 0.7f).toFloat()
-
-                        if (i == 0) {
-                            pathA.moveTo(x, yA)
-                            pathB.moveTo(x, yB)
-                            pathC.moveTo(x, yC)
+                    // 5 Concentric expanding elliptical sonic ripples radiating outward from center
+                    val ringCount = 5
+                    for (r in 0 until ringCount) {
+                        val ringProgress = if (isPlaying) {
+                            ((beatCycle / (4 * Math.PI.toFloat()) * 2f + r * (1f / ringCount)) % 1f)
                         } else {
-                            pathA.lineTo(x, yA)
-                            pathB.lineTo(x, yB)
-                            pathC.lineTo(x, yC)
+                            (r + 1f) / (ringCount + 1f)
                         }
-                    }
+                        val ringW = (width * 0.42f) * ringProgress
+                        val ringH = (height * 0.40f) * ringProgress * bounce
+                        val ringAlpha = ((1f - ringProgress) * 0.85f * bounce).coerceIn(0.02f, 0.90f)
+                        val strokeW = (2.4f * (1f - ringProgress * 0.5f)).dp.toPx()
 
-                    // Filament A (Primary Neon)
-                    drawPath(
-                        path = pathA,
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                tonedAccent.copy(alpha = 0.05f),
-                                tonedAccent,
-                                tonedAccent.copy(alpha = 0.05f),
+                        drawOval(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    tonedAccent.copy(alpha = ringAlpha * 0.15f),
+                                    tonedAccent.copy(alpha = ringAlpha),
+                                    tonedAccent.copy(alpha = 0f),
+                                ),
+                                center = Offset(centerX, centerY),
+                                radius = (ringW + 8.dp.toPx()).coerceAtLeast(10f),
                             ),
-                        ),
-                        style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
-                    )
-
-                    // Filament B (Sub Harmonic)
-                    drawPath(
-                        path = pathB,
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                tonedAccent.copy(alpha = 0.02f),
-                                tonedAccent.copy(alpha = 0.65f),
-                                tonedAccent.copy(alpha = 0.02f),
-                            ),
-                        ),
-                        style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
-                    )
-
-                    // Filament C (Center Wave)
-                    drawPath(
-                        path = pathC,
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                tonedAccent.copy(alpha = 0.02f),
-                                tonedAccent.copy(alpha = 0.45f),
-                                tonedAccent.copy(alpha = 0.02f),
-                            ),
-                        ),
-                        style = Stroke(width = 1.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
-                    )
-
-                    // Sparkling Ripple Nodes
-                    val nodeCount = 9
-                    for (k in 1..nodeCount) {
-                        val nx = (width * k) / (nodeCount + 1)
-                        val nu = ((nx - width / 2f) / (width / 2f)).coerceIn(-1f, 1f)
-                        val nEnv = (kotlin.math.exp(-2.5 * nu * nu)).toFloat()
-                        val nPhase = (3.8 * Math.PI * (nx / width) - beatCycle * 1.3).toDouble()
-                        val ny = midY - maxAmp * nEnv * kotlin.math.sin(nPhase).toFloat()
-                        val nodePulse = if (isPlaying) (0.5f + 0.5f * kotlin.math.sin(beatCycle * 2.0 + k).toFloat()) else 0.5f
-                        drawCircle(
-                            color = tonedAccent.copy(alpha = (nEnv * 0.9f).coerceIn(0f, 1f)),
-                            radius = (1.5f + 1.5f * nodePulse).dp.toPx(),
-                            center = Offset(nx, ny),
+                            topLeft = Offset(centerX - ringW, centerY - ringH),
+                            size = Size(ringW * 2f, ringH * 2f),
+                            style = Stroke(width = strokeW),
                         )
                     }
+
+                    // Radiating audio acoustic nodes along bilateral horizontal sonic rays
+                    val particleCount = 14
+                    for (p in 0 until particleCount) {
+                        val side = if (p % 2 == 0) 1f else -1f
+                        val pIdx = p / 2
+                        val pNorm = (pIdx + 1f) / (particleCount / 2f + 1f)
+                        val px = centerX + side * (width * 0.44f * pNorm)
+                        val particlePulse = if (isPlaying) {
+                            0.45f + 0.55f * kotlin.math.abs(kotlin.math.sin(beatCycle * 1.5 + pIdx * 0.7)).toFloat()
+                        } else {
+                            0.4f
+                        }
+                        val pEnv = (1f - pNorm * 0.7f) * bounce
+                        val pAlpha = (pEnv * particlePulse).coerceIn(0.05f, 0.95f)
+                        val py = centerY + (kotlin.math.sin(beatCycle + pIdx).toFloat() * 2.5.dp.toPx() * bounce)
+
+                        drawCircle(
+                            color = tonedAccent.copy(alpha = pAlpha),
+                            radius = (1.5.dp.toPx() + 1.2.dp.toPx() * particlePulse),
+                            center = Offset(px, py),
+                        )
+                    }
+
+                    // Radiant central sonic core emitter
+                    val corePulse = if (isPlaying) {
+                        0.75f + 0.25f * kotlin.math.abs(kotlin.math.sin(beatCycle * 2.0)).toFloat()
+                    } else {
+                        0.60f
+                    }
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.95f),
+                                tonedAccent,
+                                tonedAccent.copy(alpha = 0.25f),
+                                Color.Transparent,
+                            ),
+                            center = Offset(centerX, centerY),
+                            radius = 12.dp.toPx() * corePulse,
+                        ),
+                        radius = 8.dp.toPx() * corePulse,
+                        center = Offset(centerX, centerY),
+                    )
                 }
 
                 "MINIMAL_CREST" -> {
@@ -1768,6 +1762,10 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
 @Composable
 private fun QueueSheet(onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    val sheetMaxHeight = screenHeight * 0.90f
+
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
     val userQueue = queueState.userQueue
@@ -1779,7 +1777,9 @@ private fun QueueSheet(onDismiss: () -> Unit) {
 
     var draggingQid by remember { mutableStateOf<String?>(null) }
     var draggingIsUserQueue by remember { mutableStateOf(false) }
-    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var dragStartIndex by remember { mutableIntStateOf(-1) }
+    var dragCurrentIndex by remember { mutableIntStateOf(-1) }
+    var totalDragOffsetY by remember { mutableFloatStateOf(0f) }
     var dragStartVersion by remember { mutableLongStateOf(-1L) }
     var previewUserQueue by remember { mutableStateOf<List<QueueItem>?>(null) }
     var previewUpNext by remember { mutableStateOf<List<QueueItem>?>(null) }
@@ -1793,7 +1793,9 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     LaunchedEffect(PlayerConnection.queueManager.queueVersion) {
         if (draggingQid != null && PlayerConnection.queueManager.queueVersion != dragStartVersion) {
             draggingQid = null
-            dragOffsetY = 0f
+            dragStartIndex = -1
+            dragCurrentIndex = -1
+            totalDragOffsetY = 0f
             previewUserQueue = null
             previewUpNext = null
         }
@@ -1804,12 +1806,18 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             draggingQid = qid
             draggingIsUserQueue = isUserQueue
-            dragOffsetY = 0f
+            totalDragOffsetY = 0f
             dragStartVersion = PlayerConnection.queueManager.queueVersion
             if (isUserQueue) {
+                val idx = userQueue.indexOfFirst { it.qid == qid }
+                dragStartIndex = idx
+                dragCurrentIndex = idx
                 previewUserQueue = userQueue.toList()
                 previewUpNext = null
             } else {
+                val idx = upNext.indexOfFirst { it.qid == qid }
+                dragStartIndex = idx
+                dragCurrentIndex = idx
                 previewUpNext = upNext.toList()
                 previewUserQueue = null
             }
@@ -1817,76 +1825,59 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     }
 
     val onDragDelta: (Float) -> Unit = { deltaY ->
-        if (draggingQid != null) {
-            dragOffsetY += deltaY
+        if (draggingQid != null && dragStartIndex >= 0) {
+            totalDragOffsetY += deltaY
             val qid = draggingQid
-            if (draggingIsUserQueue) {
-                val list = (previewUserQueue ?: userQueue).toMutableList()
-                val idx = list.indexOfFirst { it.qid == qid }
-                if (idx >= 0) {
-                    if (dragOffsetY > itemHeightPx && idx < list.size - 1) {
-                        val item = list.removeAt(idx)
-                        list.add(idx + 1, item)
-                        previewUserQueue = list
-                        dragOffsetY -= itemHeightPx
-                    } else if (dragOffsetY < -itemHeightPx && idx > 0) {
-                        val item = list.removeAt(idx)
-                        list.add(idx - 1, item)
-                        previewUserQueue = list
-                        dragOffsetY += itemHeightPx
+            val baseList = if (draggingIsUserQueue) userQueue else upNext
+            val slotShift = (totalDragOffsetY / itemHeightPx).roundToInt()
+            val targetIndex = (dragStartIndex + slotShift).coerceIn(0, baseList.size - 1)
+
+            if (targetIndex != dragCurrentIndex) {
+                dragCurrentIndex = targetIndex
+                val mutable = baseList.toMutableList()
+                val itemIdx = mutable.indexOfFirst { it.qid == qid }
+                if (itemIdx >= 0) {
+                    val item = mutable.removeAt(itemIdx)
+                    mutable.add(targetIndex, item)
+                    if (draggingIsUserQueue) {
+                        previewUserQueue = mutable.toList()
+                    } else {
+                        previewUpNext = mutable.toList()
                     }
-                }
-            } else {
-                val list = (previewUpNext ?: upNext).toMutableList()
-                val idx = list.indexOfFirst { it.qid == qid }
-                if (idx >= 0) {
-                    if (dragOffsetY > itemHeightPx && idx < list.size - 1) {
-                        val item = list.removeAt(idx)
-                        list.add(idx + 1, item)
-                        previewUpNext = list
-                        dragOffsetY -= itemHeightPx
-                    } else if (dragOffsetY < -itemHeightPx && idx > 0) {
-                        val item = list.removeAt(idx)
-                        list.add(idx - 1, item)
-                        previewUpNext = list
-                        dragOffsetY += itemHeightPx
-                    }
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
                 }
             }
-            if (dragOffsetY < -itemHeightPx && listState.firstVisibleItemIndex > 0) {
-                coroutineScope.launch { listState.scrollBy(-15f) }
-            } else if (dragOffsetY > itemHeightPx && listState.canScrollForward) {
-                coroutineScope.launch { listState.scrollBy(15f) }
+
+            if (totalDragOffsetY < -itemHeightPx && listState.firstVisibleItemIndex > 0) {
+                coroutineScope.launch { listState.scrollBy(-18f) }
+            } else if (totalDragOffsetY > itemHeightPx && listState.canScrollForward) {
+                coroutineScope.launch { listState.scrollBy(18f) }
             }
         }
     }
 
     val onDragEnd: () -> Unit = {
         val qid = draggingQid
-        val isUserQueue = draggingIsUserQueue
+        val targetIndex = dragCurrentIndex
         val startVer = dragStartVersion
-        if (qid != null && !isQueueLocked && PlayerConnection.queueManager.queueVersion == startVer) {
-            if (isUserQueue) {
-                val targetIndex = previewUserQueue?.indexOfFirst { it.qid == qid } ?: -1
-                if (targetIndex >= 0) {
-                    PlayerConnection.reorder(qid, targetIndex)
-                }
-            } else {
-                val targetIndex = previewUpNext?.indexOfFirst { it.qid == qid } ?: -1
-                if (targetIndex >= 0) {
-                    PlayerConnection.reorder(qid, targetIndex)
-                }
-            }
+        if (qid != null && targetIndex >= 0 && !isQueueLocked && PlayerConnection.queueManager.queueVersion == startVer) {
+            PlayerConnection.reorder(qid, targetIndex)
         }
         draggingQid = null
-        dragOffsetY = 0f
+        dragStartIndex = -1
+        dragCurrentIndex = -1
+        totalDragOffsetY = 0f
         previewUserQueue = null
         previewUpNext = null
     }
 
     val onDragCancel: () -> Unit = {
         draggingQid = null
-        dragOffsetY = 0f
+        dragStartIndex = -1
+        dragCurrentIndex = -1
+        totalDragOffsetY = 0f
         previewUserQueue = null
         previewUpNext = null
     }
@@ -1897,125 +1888,155 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         containerColor = velvetColors.surface,
         tonalElevation = 0.dp,
-        scrimColor = Color(0x99000000),
+        scrimColor = Color(0xB3000000),
+        dragHandle = {
+            androidx.compose.material3.BottomSheetDefaults.DragHandle(
+                color = velvetColors.rule,
+                width = 38.dp,
+                height = 4.dp,
+            )
+        },
+        windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = sheetMaxHeight),
     ) {
-        Row(
-            Modifier.padding(start = 22.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = sheetMaxHeight),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
-                Text(
-                    if (isQueueLocked) "Queue locked" else "Swipe right to play next, left to remove",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
-                )
-            }
-            IconButton(onClick = {
-                PlayerConnection.isQueueLocked = !PlayerConnection.isQueueLocked
-                android.widget.Toast.makeText(
-                    context,
-                    if (PlayerConnection.isQueueLocked) "Queue Locked" else "Queue Unlocked",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
-            }) {
-                Icon(
-                    if (isQueueLocked) AppIcons.Lock else AppIcons.LockOpen,
-                    contentDescription = if (isQueueLocked) "Unlock Queue" else "Lock Queue",
-                    tint = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
-                )
-            }
-        }
-        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(bottom = 16.dp)) {
-            if (currentItem != null) {
-                item(key = "header_now_playing") {
+            Row(
+                Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
                     Text(
-                        "NOW PLAYING",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = velvetColors.accentText,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 22.dp, top = 4.dp, bottom = 4.dp),
+                        if (isQueueLocked) "Queue locked" else "Swipe right to play next, left to remove",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
                     )
                 }
-                item(key = currentItem.qid) {
-                    QueueRow(
-                        item = currentItem,
-                        isCurrent = true,
-                        isQueueLocked = isQueueLocked,
-                        context = context,
-                        openMenu = openMenu,
+                IconButton(onClick = {
+                    PlayerConnection.isQueueLocked = !PlayerConnection.isQueueLocked
+                    android.widget.Toast.makeText(
+                        context,
+                        if (PlayerConnection.isQueueLocked) "Queue Locked" else "Queue Unlocked",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }) {
+                    Icon(
+                        if (isQueueLocked) AppIcons.Lock else AppIcons.LockOpen,
+                        contentDescription = if (isQueueLocked) "Unlock Queue" else "Lock Queue",
+                        tint = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
                     )
                 }
             }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(bottom = 16.dp),
+            ) {
+                if (currentItem != null) {
+                    item(key = "header_now_playing") {
+                        Text(
+                            "NOW PLAYING",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = velvetColors.accentText,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 22.dp, top = 4.dp, bottom = 4.dp),
+                        )
+                    }
+                    item(key = currentItem.qid) {
+                        QueueRow(
+                            item = currentItem,
+                            isCurrent = true,
+                            isQueueLocked = isQueueLocked,
+                            context = context,
+                            openMenu = openMenu,
+                        )
+                    }
+                }
 
-            if (displayUserQueue.isNotEmpty()) {
-                item(key = "header_next_in_queue") {
-                    Text(
-                        "NEXT IN QUEUE",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = velvetColors.accentText,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
-                    )
+                if (displayUserQueue.isNotEmpty()) {
+                    item(key = "header_next_in_queue") {
+                        Text(
+                            "NEXT IN QUEUE",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = velvetColors.accentText,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
+                        )
+                    }
+                    itemsIndexed(displayUserQueue, key = { _, item -> item.qid }) { index, item ->
+                        val isDraggingThis = draggingQid == item.qid
+                        val visualOffset = if (isDraggingThis) {
+                            totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * itemHeightPx
+                        } else 0f
+                        QueueRow(
+                            item = item,
+                            isCurrent = false,
+                            isQueueLocked = isQueueLocked,
+                            context = context,
+                            openMenu = openMenu,
+                            isDragging = isDraggingThis,
+                            dragOffsetY = visualOffset,
+                            canMoveUp = index > 0,
+                            canMoveDown = index < displayUserQueue.size - 1,
+                            onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
+                            onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                            onDragStart = { onDragStart(item.qid, true) },
+                            onDragDelta = onDragDelta,
+                            onDragEnd = onDragEnd,
+                            onDragCancel = onDragCancel,
+                        )
+                    }
                 }
-                itemsIndexed(displayUserQueue, key = { _, item -> item.qid }) { index, item ->
-                    val isDraggingThis = draggingQid == item.qid
-                    QueueRow(
-                        item = item,
-                        isCurrent = false,
-                        isQueueLocked = isQueueLocked,
-                        context = context,
-                        openMenu = openMenu,
-                        isDragging = isDraggingThis,
-                        dragOffsetY = if (isDraggingThis) dragOffsetY else 0f,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < displayUserQueue.size - 1,
-                        onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
-                        onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
-                        onDragStart = { onDragStart(item.qid, true) },
-                        onDragDelta = onDragDelta,
-                        onDragEnd = onDragEnd,
-                        onDragCancel = onDragCancel,
-                    )
-                }
-            }
 
-            if (displayUpNext.isNotEmpty()) {
-                val sourceLabel = when {
-                    PlayerConnection.isRadioActive -> "RADIO"
-                    !PlayerConnection.currentPlaylistId.isNullOrBlank() -> "PLAYLIST"
-                    else -> "AUTOPLAY"
-                }
-                item(key = "header_up_next") {
-                    Text(
-                        "NEXT FROM $sourceLabel",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = velvetColors.muted,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
-                    )
-                }
-                itemsIndexed(displayUpNext, key = { _, item -> item.qid }) { index, item ->
-                    val isDraggingThis = draggingQid == item.qid
-                    QueueRow(
-                        item = item,
-                        isCurrent = false,
-                        isQueueLocked = isQueueLocked,
-                        context = context,
-                        openMenu = openMenu,
-                        isDragging = isDraggingThis,
-                        dragOffsetY = if (isDraggingThis) dragOffsetY else 0f,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < displayUpNext.size - 1,
-                        onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
-                        onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
-                        onDragStart = { onDragStart(item.qid, false) },
-                        onDragDelta = onDragDelta,
-                        onDragEnd = onDragEnd,
-                        onDragCancel = onDragCancel,
-                    )
+                if (displayUpNext.isNotEmpty()) {
+                    val sourceLabel = when {
+                        PlayerConnection.isRadioActive -> "RADIO"
+                        !PlayerConnection.currentPlaylistId.isNullOrBlank() -> "PLAYLIST"
+                        else -> "AUTOPLAY"
+                    }
+                    item(key = "header_up_next") {
+                        Text(
+                            "NEXT FROM $sourceLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = velvetColors.muted,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 4.dp),
+                        )
+                    }
+                    itemsIndexed(displayUpNext, key = { _, item -> item.qid }) { index, item ->
+                        val isDraggingThis = draggingQid == item.qid
+                        val visualOffset = if (isDraggingThis) {
+                            totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * itemHeightPx
+                        } else 0f
+                        QueueRow(
+                            item = item,
+                            isCurrent = false,
+                            isQueueLocked = isQueueLocked,
+                            context = context,
+                            openMenu = openMenu,
+                            isDragging = isDraggingThis,
+                            dragOffsetY = visualOffset,
+                            canMoveUp = index > 0,
+                            canMoveDown = index < displayUpNext.size - 1,
+                            onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
+                            onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                            onDragStart = { onDragStart(item.qid, false) },
+                            onDragDelta = onDragDelta,
+                            onDragEnd = onDragEnd,
+                            onDragCancel = onDragCancel,
+                        )
+                    }
                 }
             }
         }
@@ -2121,75 +2142,91 @@ private fun LazyItemScope.QueueRow(
                 .fillMaxWidth()
                 .offset { androidx.compose.ui.unit.IntOffset(animOffsetX.value.roundToInt(), 0) }
                 .then(
-                    if (!isCurrent && !isQueueLocked && !isDragging) {
-                        Modifier.pointerInput(item.qid) {
-                            detectHorizontalDragGestures(
-                                onDragEnd = {
-                                    val offset = animOffsetX.value
-                                    if (offset > swipeThresholdPx) {
-                                        PlayerConnection.moveToTop(item.qid)
-                                        android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
-                                        coroutineScope.launch {
-                                            animOffsetX.animateTo(
-                                                0f,
-                                                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-                                            )
-                                        }
-                                    } else if (offset < -swipeThresholdPx) {
-                                        android.widget.Toast.makeText(context, "Removed from queue", android.widget.Toast.LENGTH_SHORT).show()
-                                        coroutineScope.launch {
-                                            animOffsetX.animateTo(-1500f, tween(durationMillis = 180))
-                                            PlayerConnection.removeItem(item.qid)
-                                        }
-                                    } else {
-                                        coroutineScope.launch {
-                                            animOffsetX.animateTo(
-                                                0f,
-                                                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-                                            )
-                                        }
-                                    }
-                                },
-                                onDragCancel = {
-                                    coroutineScope.launch {
-                                        animOffsetX.animateTo(
-                                            0f,
-                                            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-                                        )
-                                    }
-                                },
-                                onHorizontalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    coroutineScope.launch {
-                                        val target = (animOffsetX.value + dragAmount).coerceIn(-600f, 600f)
-                                        animOffsetX.snapTo(target)
-                                    }
-                                },
-                            )
-                        }
-                    } else Modifier
-                )
-                .then(
                     if (!isCurrent && !isQueueLocked) {
                         Modifier.pointerInput(item.qid) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var isLongPress = false
+                                var isHorizontal = false
+                                val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+                                val touchSlop = viewConfiguration.touchSlop
+
+                                try {
+                                    withTimeout(longPressTimeout) {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                            val dx = change.position.x - down.position.x
+                                            val dy = change.position.y - down.position.y
+                                            if (kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                                                isHorizontal = true
+                                                break
+                                            }
+                                            if (kotlin.math.abs(dy) > touchSlop) {
+                                                // vertical scroll passed to lazy column
+                                                return@awaitEachGesture
+                                            }
+                                        }
+                                    }
+                                } catch (_: TimeoutCancellationException) {
+                                    isLongPress = true
+                                }
+
+                                if (isLongPress) {
                                     isLongPressActive = true
                                     onDragStart()
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    onDragDelta(dragAmount.y)
-                                },
-                                onDragEnd = {
-                                    isLongPressActive = false
-                                    onDragEnd()
-                                },
-                                onDragCancel = {
-                                    isLongPressActive = false
-                                    onDragCancel()
-                                },
-                            )
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            isLongPressActive = false
+                                            onDragEnd()
+                                            break
+                                        }
+                                        change.consume()
+                                        val dy = change.position.y - change.previousPosition.y
+                                        onDragDelta(dy)
+                                    }
+                                } else if (isHorizontal) {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            val offset = animOffsetX.value
+                                            if (offset > swipeThresholdPx) {
+                                                PlayerConnection.moveToTop(item.qid)
+                                                android.widget.Toast.makeText(context, "Moved to top of queue", android.widget.Toast.LENGTH_SHORT).show()
+                                                coroutineScope.launch {
+                                                    animOffsetX.animateTo(
+                                                        0f,
+                                                        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                                    )
+                                                }
+                                            } else if (offset < -swipeThresholdPx) {
+                                                android.widget.Toast.makeText(context, "Removed from queue", android.widget.Toast.LENGTH_SHORT).show()
+                                                coroutineScope.launch {
+                                                    animOffsetX.animateTo(-1500f, tween(durationMillis = 180))
+                                                    PlayerConnection.removeItem(item.qid)
+                                                }
+                                            } else {
+                                                coroutineScope.launch {
+                                                    animOffsetX.animateTo(
+                                                        0f,
+                                                        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                                    )
+                                                }
+                                            }
+                                            break
+                                        }
+                                        change.consume()
+                                        val dx = change.position.x - change.previousPosition.x
+                                        coroutineScope.launch {
+                                            val target = (animOffsetX.value + dx).coerceIn(-600f, 600f)
+                                            animOffsetX.snapTo(target)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else Modifier
                 )
@@ -2326,6 +2363,29 @@ private fun LazyItemScope.QueueRow(
                         Icon(
                             Icons.Default.MoreVert,
                             contentDescription = "Track options",
+                            tint = velvetColors.muted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .pointerInput(item.qid) {
+                                detectDragGestures(
+                                    onDragStart = { onDragStart() },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        onDragDelta(dragAmount.y)
+                                    },
+                                    onDragEnd = { onDragEnd() },
+                                    onDragCancel = { onDragCancel() },
+                                )
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            AppIcons.DragHandle,
+                            contentDescription = "Hold and drag to reorder",
                             tint = velvetColors.muted,
                             modifier = Modifier.size(20.dp),
                         )

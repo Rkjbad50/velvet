@@ -135,8 +135,10 @@ object PlayerConnection {
 
     /**
      * Authoritative session-aware Shuffle Play control for collection/playlist headers.
-     * - If same playlist is already active: ensures shuffle mode is enabled without resetting current track,
-     *   and resumes playback if currently paused.
+     * - If same playlist is already active:
+     *   - If shuffle is OFF: enables shuffle mode without interrupting current track, and resumes if paused.
+     *   - If shuffle is ALREADY ON: generates a fresh randomized reshuffle of remaining eligible tracks
+     *     and displays visual confirmation ("Reshuffled queue 🔀"), resuming if paused.
      * - Otherwise starts a new shuffled playback session starting from a randomized track.
      */
     fun shufflePlayOrToggle(
@@ -149,11 +151,22 @@ object PlayerConnection {
         if (isPlaylistSessionActive(playlistId)) {
             val currentSong = current
             if (currentSong != null && songs.any { it.id == currentSong.id }) {
+                val allowSmart = isUserPlaylistActive
                 if (queueManager.shuffleMode == ShuffleMode.OFF) {
-                    val allowSmart = isUserPlaylistActive
                     queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = allowSmart)
                     syncQueueState()
                     syncToExoPlayer()
+                    (context?.let { null } ?: appContext)?.let {
+                        Toast.makeText(it, "Shuffle is on", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    // Running playlist already has shuffle on: tapping Shuffle reshuffles the upcoming queue
+                    queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = allowSmart)
+                    syncQueueState()
+                    syncToExoPlayer()
+                    (context?.let { null } ?: appContext)?.let {
+                        Toast.makeText(it, "Reshuffled queue 🔀", Toast.LENGTH_SHORT).show()
+                    }
                 }
                 if (!isPlaying) {
                     togglePlay()

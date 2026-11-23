@@ -802,6 +802,7 @@ fun CollectionHeader(
     art: @Composable () -> Unit,
     playEnabled: Boolean,
     isPlaying: Boolean = false,
+    isShuffled: Boolean = false,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     artworkBackdropSize: Dp = 300.dp,
@@ -877,7 +878,14 @@ fun CollectionHeader(
             ) {
                 actions()
                 Spacer(Modifier.weight(1f))
-                PanelIconButton(AppIcons.Shuffle, "Shuffle play", size = 48.dp, onClick = { if (playEnabled) onShuffle() })
+                PanelIconButton(
+                    icon = AppIcons.Shuffle,
+                    contentDescription = if (isShuffled) "Shuffle is on (tap to reshuffle)" else "Shuffle play",
+                    size = 48.dp,
+                    tint = if (isShuffled) velvetColors.accentText else velvetColors.text,
+                    fill = if (isShuffled) velvetColors.accent.copy(alpha = 0.20f) else velvetColors.surface,
+                    onClick = { if (playEnabled) onShuffle() },
+                )
                 PlayCircle(
                     enabled = playEnabled,
                     icon = if (isPlaying) AppIcons.Pause else AppIcons.Play,
