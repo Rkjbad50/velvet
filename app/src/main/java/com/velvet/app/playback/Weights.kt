@@ -17,9 +17,10 @@ object Weights {
     // Indian music listeners strongly expect cohesion with the seed's movie/soundtrack album.
     const val W2_SAME_MOVIE_OR_ALBUM = 35.0
 
-    // W3: Artist Similarity (+30)
-    // Shared or co-artist matching the seed profile (considering decay across recent 3-5 songs)
-    const val W3_ARTIST_SIMILARITY = 30.0
+    // W3: Artist Similarity
+    // In Music-First Autoplay V3: artist receives NO positive bonus in default similarity scoring.
+    // Artist identity is strictly used for spacing and repetition control.
+    const val W3_ARTIST_SIMILARITY = 0.0
 
     // W4: Era Proximity (+25)
     // Decade proximity (same decade = 1.0, adjacent decade = 0.5)

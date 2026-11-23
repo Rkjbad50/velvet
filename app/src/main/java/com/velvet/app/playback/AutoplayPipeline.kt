@@ -1383,11 +1383,17 @@ class AutoplayPipeline(
         randomSeed: Long? = null,
         noveltyInterval: Int = Weights.NOVELTY_SLOT_INTERVAL,
         epsilon: Double = Weights.EPSILON_GREEDY,
+        minArtistSpacing: Int = 4,
+        maxArtistInWindow: Int = 2,
+        windowSize: Int = 10,
     ): List<Song> {
         if (candidates.size <= 1) return candidates
         val pool = candidates.toMutableList()
         val spaced = mutableListOf<Song>()
-        var prevArtist = lastQueuedArtist
+        val recentArtists = ArrayDeque<String>()
+        if (!lastQueuedArtist.isNullOrBlank()) {
+            recentArtists.add(lastQueuedArtist)
+        }
         var prevMovie = lastQueuedMovie
         val rng = if (randomSeed != null) kotlin.random.Random(randomSeed) else kotlin.random.Random.Default
 
@@ -1402,31 +1408,53 @@ class AutoplayPipeline(
                     val key = canonicalKey(song.title, song.artist)
                     val gid = SongIdentity.canonicalGroupId(song)
                     val isNovel = song.id !in playedOrKnownKeys && key !in playedOrKnownKeys && gid !in playedOrKnownKeys
-                    val satisfiesArtistSpacing = normalizePrimaryArtist(song.artist) != prevArtist
+                    val candArtist = normalizePrimaryArtist(song.artist)
+                    val satisfiesArtistSpacing = candArtist !in recentArtists
                     isNovel && satisfiesArtistSpacing
                 }
             }
 
             // 2. Normal slot or novelty fallback
             if (chosenIndex < 0) {
-                // Find candidates that satisfy both artist and movie spacing
+                // Tier 1: Satisfies full artist spacing (>= 4 intervening tracks), window count (<= 2 in 10), and movie spacing
                 var eligibleIndices = pool.indices.filter { idx ->
                     val s = pool[idx]
-                    val artistOk = normalizePrimaryArtist(s.artist) != prevArtist
+                    val candArtist = normalizePrimaryArtist(s.artist)
                     val candMovie = SongIdentity.normalizeTitle(s.title).movie ?: s.album
+                    val artistSpacingOk = candArtist !in recentArtists
+                    val artistCountOk = spaced.takeLast(windowSize).count { normalizePrimaryArtist(it.artist) == candArtist } < maxArtistInWindow
                     val movieOk = prevMovie.isNullOrBlank() || candMovie.isNullOrBlank() ||
                         !candMovie.equals(prevMovie, ignoreCase = true)
-                    artistOk && movieOk
+                    artistSpacingOk && artistCountOk && movieOk
                 }
 
-                // If none, relax movie spacing (artist spacing only)
+                // Tier 2: Relax movie spacing, keep strict artist spacing
                 if (eligibleIndices.isEmpty()) {
                     eligibleIndices = pool.indices.filter { idx ->
-                        normalizePrimaryArtist(pool[idx].artist) != prevArtist
+                        val candArtist = normalizePrimaryArtist(pool[idx].artist)
+                        val artistSpacingOk = candArtist !in recentArtists
+                        val artistCountOk = spaced.takeLast(windowSize).count { normalizePrimaryArtist(it.artist) == candArtist } < maxArtistInWindow
+                        artistSpacingOk && artistCountOk
                     }
                 }
 
-                // If still none, relax artist spacing as well (all pool candidates)
+                // Tier 3: Relax artist spacing to at least 2 intervening tracks
+                if (eligibleIndices.isEmpty()) {
+                    val halfRecentArtists = recentArtists.takeLast(2).toSet()
+                    eligibleIndices = pool.indices.filter { idx ->
+                        normalizePrimaryArtist(pool[idx].artist) !in halfRecentArtists
+                    }
+                }
+
+                // Tier 4: Relax to at least non-consecutive
+                if (eligibleIndices.isEmpty() && recentArtists.isNotEmpty()) {
+                    val lastArtist = recentArtists.last()
+                    eligibleIndices = pool.indices.filter { idx ->
+                        normalizePrimaryArtist(pool[idx].artist) != lastArtist
+                    }
+                }
+
+                // Tier 5: Pool exhaustion relaxation
                 if (eligibleIndices.isEmpty()) {
                     eligibleIndices = pool.indices.toList()
                 }
@@ -1442,7 +1470,11 @@ class AutoplayPipeline(
 
             val chosen = pool.removeAt(chosenIndex)
             spaced.add(chosen)
-            prevArtist = normalizePrimaryArtist(chosen.artist)
+            val chosenArtist = normalizePrimaryArtist(chosen.artist)
+            recentArtists.add(chosenArtist)
+            while (recentArtists.size > minArtistSpacing) {
+                recentArtists.removeFirst()
+            }
             prevMovie = SongIdentity.normalizeTitle(chosen.title).movie ?: chosen.album
             pickIndex++
         }

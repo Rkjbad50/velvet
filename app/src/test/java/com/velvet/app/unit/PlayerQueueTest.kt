@@ -705,4 +705,98 @@ class PlayerQueueTest {
         assertEquals(com.velvet.app.playback.ShuffleMode.STANDARD, nextState.shuffleMode)
         assertEquals(com.velvet.app.playback.RepeatMode.ALL, nextState.repeatMode)
     }
+
+    @Test
+    fun testStandalonePlayback_toggleShuffle_doesNotWipeQueue_andPreservesUpcomingTracks() {
+        val standaloneSong = makeSong("standalone_1", "Standalone Seed Track")
+        val autoplaySongs = makeSongs(5)
+        val manager = PlayerQueueManager()
+
+        // 1. User starts a standalone single song (sourceList size = 1)
+        manager.start(listOf(standaloneSong), startIndex = 0, shuffled = false)
+        assertEquals(standaloneSong.id, manager.current?.id)
+        assertEquals(0, manager.upNext.size)
+
+        // 2. Autoplay discovers and appends 5 tracks
+        manager.appendAutoplay(autoplaySongs)
+        assertEquals(5, manager.upNext.size)
+        val initialDiscoveryOrder = manager.upNext.map { it.song.id }
+
+        // 3. Toggle Shuffle ON (Script A / Script B)
+        val isShuffled1 = manager.toggleShuffle()
+        assertTrue(isShuffled1)
+        assertEquals("Current song must remain pinned", standaloneSong.id, manager.current?.id)
+        assertEquals("upNext must NOT be wiped out when shuffle is enabled on standalone playback", 5, manager.upNext.size)
+        val shuffledOrder1 = manager.upNext.map { it.song.id }
+        assertEquals("All autoplay tracks must be retained", initialDiscoveryOrder.toSet(), shuffledOrder1.toSet())
+
+        // 4. Toggle Shuffle OFF
+        val isShuffled2 = manager.toggleShuffle()
+        assertFalse(isShuffled2)
+        assertEquals("Current song must remain pinned", standaloneSong.id, manager.current?.id)
+        assertEquals("upNext must NOT be wiped out when shuffle is disabled on standalone playback", 5, manager.upNext.size)
+        val linearRestoredOrder = manager.upNext.map { it.song.id }
+        assertEquals("Turning shuffle off must restore the original discovery order", initialDiscoveryOrder, linearRestoredOrder)
+
+        // 5. Rapid toggle 5 times (ON -> OFF -> ON -> OFF -> ON)
+        for (i in 1..5) {
+            val state = manager.toggleShuffle()
+            assertEquals("Current song must remain pinned on toggle $i", standaloneSong.id, manager.current?.id)
+            assertEquals("upNext size must remain 5 on toggle $i", 5, manager.upNext.size)
+            assertEquals(6, manager.visibleQueue.size)
+        }
+    }
+
+    @Test
+    fun testStandalonePlayback_toggleShuffleThenNext_advancesSmoothlyWithoutStopping() {
+        val standaloneSong = makeSong("standalone_seed", "Single Seed Song")
+        val autoplaySongs = makeSongs(4)
+        val manager = PlayerQueueManager()
+
+        // 1. Play standalone song and populate autoplay
+        manager.start(listOf(standaloneSong), startIndex = 0, shuffled = false)
+        manager.appendAutoplay(autoplaySongs)
+        assertEquals(4, manager.upNext.size)
+
+        // 2. Toggle ON -> OFF
+        manager.toggleShuffle() // ON
+        assertEquals(4, manager.upNext.size)
+        manager.toggleShuffle() // OFF
+        assertEquals(4, manager.upNext.size)
+
+        // 3. User presses Next (Script B: Toggle ON -> OFF -> Next)
+        val firstNext = manager.advance(manual = true)
+        assertNotNull("Next track must exist and not be null", firstNext)
+        assertEquals("Current must advance to first autoplay track", autoplaySongs[0].id, manager.current?.id)
+        assertEquals("History must contain the seed song", listOf(standaloneSong.id), manager.history.map { it.id })
+        assertEquals("Remaining upNext count must be 3", 3, manager.upNext.size)
+
+        // 4. Advance through remaining tracks
+        val secondNext = manager.advance(manual = true)
+        assertEquals(autoplaySongs[1].id, secondNext?.id)
+        assertEquals(2, manager.upNext.size)
+
+        val thirdNext = manager.advance(manual = true)
+        assertEquals(autoplaySongs[2].id, thirdNext?.id)
+        assertEquals(1, manager.upNext.size)
+
+        val fourthNext = manager.advance(manual = true)
+        assertEquals(autoplaySongs[3].id, fourthNext?.id)
+        assertEquals(0, manager.upNext.size)
+    }
+
+    @Test
+    fun testTwoTrackShuffle_alwaysReordersOnEveryShuffleToggle() {
+        val seed = makeSong("seed_track")
+        val pair = listOf(makeSong("pair_1"), makeSong("pair_2"))
+        val manager = PlayerQueueManager()
+
+        manager.start(listOf(seed), startIndex = 0, shuffled = false)
+        manager.appendAutoplay(pair)
+        assertEquals(listOf("pair_1", "pair_2"), manager.upNext.map { it.song.id })
+
+        // Toggle ON with exactly 2 upcoming tracks
+        manager.toggleShuffle()
+        assertEquals("Should guarantee an alternate order for 2 tracks", listOf("pair_2", "pair_1"), manager.upNext.map { it.song.id })
+    }
 }

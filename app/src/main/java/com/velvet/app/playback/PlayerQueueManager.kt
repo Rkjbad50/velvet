@@ -567,7 +567,9 @@ class QueueManager(initialState: QueueState = QueueState()) {
          * - Current song is NEVER interrupted (pinned and keeps playing).
          * - userQueue is untouched.
          * - upNext = Fisher-Yates(sourceList minus current minus history minus userQueue).
-         * - Re-tap (OFF->ON): If upNext.size > 2 and result equals previous order, re-roll up to 5 times.
+         * - In standalone/autoplay playback: complete sourceList is guaranteed to track all upcoming items,
+         *   preventing queue wipeout and ensuring upcoming songs are preserved and shuffled.
+         * - Re-tap (OFF->ON): If pool.size >= 2 and result equals previous order, re-roll up to 5 times.
          * - In SMART mode: after Fisher-Yates, spread same-artist tracks apart.
          */
         fun enableShuffle(
@@ -582,18 +584,38 @@ class QueueManager(initialState: QueueState = QueueState()) {
             val userQueueSongIds = state.userQueue.map { it.song.id }.toSet()
             val historySongIds = state.history.map { it.song.id }.toSet()
 
-            val rawPool = state.sourceList.filter {
+            // Backfill any items currently in upNext that are missing from sourceList (e.g. standalone/autoplay sessions)
+            val knownSourceIds = state.sourceList.map { it.song.id }.toSet()
+            val missingFromSource = state.upNext.filter { it.song.id !in knownSourceIds }
+            val completeSourceList = if (missingFromSource.isNotEmpty()) {
+                state.sourceList + missingFromSource
+            } else {
+                state.sourceList
+            }
+
+            val rawPool = completeSourceList.filter {
                 it.song.id != currentItem.song.id &&
                     it.song.id !in historySongIds &&
                     it.song.id !in userQueueSongIds
             }
 
+            // Fallback: If rawPool is empty but upNext has items, use upNext items to avoid queue wipeout
+            val candidatePool = if (rawPool.isEmpty() && state.upNext.isNotEmpty()) {
+                state.upNext.filter {
+                    it.song.id != currentItem.song.id &&
+                        it.song.id !in historySongIds &&
+                        it.song.id !in userQueueSongIds
+                }
+            } else {
+                rawPool
+            }
+
             // Treat duplicate group as one slot per shuffle cycle if skipNearDuplicates is enabled
-            val pool = if (skipNearDuplicates && rawPool.size > 1) {
-                val groupMap = SongIdentity.canonicalGroupId(rawPool.map { it.song })
+            val pool = if (skipNearDuplicates && candidatePool.size > 1) {
+                val groupMap = SongIdentity.canonicalGroupId(candidatePool.map { it.song })
                 val seenGroups = mutableSetOf<String>()
                 val filteredPool = mutableListOf<QueueItem>()
-                for (item in rawPool) {
+                for (item in candidatePool) {
                     val gid = groupMap[item.song.id] ?: item.song.id
                     if (seenGroups.add(gid)) {
                         filteredPool.add(item)
@@ -601,18 +623,21 @@ class QueueManager(initialState: QueueState = QueueState()) {
                 }
                 filteredPool
             } else {
-                rawPool
+                candidatePool
             }
 
             val previousIds = state.upNext.map { it.song.id }
             var reshuffled = fisherYatesShuffle(pool, rng)
 
-            // Guarantee the new order differs from previous when size > 2 (re-roll up to 5 times)
-            if (pool.size > 2) {
+            // Guarantee the new order differs from previous when size >= 2
+            if (pool.size >= 2) {
                 var attempts = 0
                 while (attempts < 5 && reshuffled.map { it.song.id } == previousIds) {
                     reshuffled = fisherYatesShuffle(pool, rng)
                     attempts++
+                }
+                if (reshuffled.map { it.song.id } == previousIds && pool.size == 2) {
+                    reshuffled = reshuffled.reversed()
                 }
             }
 
@@ -623,6 +648,7 @@ class QueueManager(initialState: QueueState = QueueState()) {
             }
 
             return state.copy(
+                sourceList = completeSourceList,
                 shuffleMode = targetMode,
                 upNext = finalUpNext.map { QueueItem(it.song) },
             )
@@ -633,21 +659,47 @@ class QueueManager(initialState: QueueState = QueueState()) {
          * - Current song keeps playing uninterrupted.
          * - userQueue is untouched.
          * - upNext = sourceList items positioned AFTER current's position in sourceList.
+         * - In standalone/autoplay playback: complete sourceList preserves discovery order,
+         *   preventing queue wipeout and ensuring upcoming songs are restored in chronological order.
          */
         fun disableShuffle(state: QueueState): QueueState {
             val currentItem = state.current ?: return state.copy(shuffleMode = ShuffleMode.OFF)
             val userQueueSongIds = state.userQueue.map { it.song.id }.toSet()
+            val historySongIds = state.history.map { it.song.id }.toSet()
 
-            val currentPos = state.sourceList.indexOfFirst { it.song.id == currentItem.song.id }
-            val remaining = if (currentPos >= 0) {
-                state.sourceList.drop(currentPos + 1).filter { it.song.id !in userQueueSongIds }
+            // Backfill any items currently in upNext that are missing from sourceList
+            val knownSourceIds = state.sourceList.map { it.song.id }.toSet()
+            val missingFromSource = state.upNext.filter { it.song.id !in knownSourceIds }
+            val completeSourceList = if (missingFromSource.isNotEmpty()) {
+                state.sourceList + missingFromSource
             } else {
-                state.sourceList.filter { it.song.id != currentItem.song.id && it.song.id !in userQueueSongIds }
+                state.sourceList
+            }
+
+            val currentPos = completeSourceList.indexOfFirst { it.song.id == currentItem.song.id }
+            val remaining = if (currentPos >= 0) {
+                completeSourceList.drop(currentPos + 1).filter {
+                    it.song.id !in userQueueSongIds && it.song.id !in historySongIds
+                }
+            } else {
+                completeSourceList.filter {
+                    it.song.id != currentItem.song.id &&
+                        it.song.id !in userQueueSongIds &&
+                        it.song.id !in historySongIds
+                }
+            }
+
+            // Defensive safeguard: never drop existing upNext into an empty list if sourceList was deficient
+            val finalUpNext = if (remaining.isEmpty() && state.upNext.isNotEmpty()) {
+                state.upNext
+            } else {
+                remaining.map { QueueItem(it.song) }
             }
 
             return state.copy(
+                sourceList = completeSourceList,
                 shuffleMode = ShuffleMode.OFF,
-                upNext = remaining.map { QueueItem(it.song) },
+                upNext = finalUpNext,
             )
         }
 
@@ -715,7 +767,9 @@ class QueueManager(initialState: QueueState = QueueState()) {
             if (fresh.isEmpty()) return state
 
             val newItems = fresh.map { QueueItem(it, isSmartRecommended = false) }
+            val updatedSourceList = state.sourceList + newItems
             return state.copy(
+                sourceList = updatedSourceList,
                 upNext = state.upNext + newItems,
             )
         }

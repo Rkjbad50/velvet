@@ -682,24 +682,26 @@ object PlayerConnection {
 
     fun next() {
         recordCurrentPlaybackEnd(endReason = null)
+        val lastPlayingSong = current ?: queueManager.current ?: queueManager.history.lastOrNull()
         val nextSong = queueManager.advance(manual = true)
         if (nextSong != null) {
             syncQueueState()
             syncToExoPlayer()
             checkAndExtendAutoplay()
         } else {
-            val cur = current
-            if (cur != null) {
-                checkAndExtendAutoplay(cur.id, autoPlayNext = true)
+            val seed = lastPlayingSong
+            if (seed != null) {
+                checkAndExtendAutoplay(seed.id, autoPlayNext = true)
             }
         }
     }
 
     fun checkAndExtendAutoplay(seedId: String? = null, autoPlayNext: Boolean = false) {
-        val currentSong = current ?: return
+        val currentSong = current ?: queueManager.history.lastOrNull() ?: return
         val targetSeed = if (seedId != null) {
             queueManager.upNext.find { it.song.id == seedId }?.song
                 ?: queueManager.userQueue.find { it.song.id == seedId }?.song
+                ?: queueManager.history.find { it.id == seedId }
                 ?: currentSong
         } else currentSong
         val isAutoplayEnabled = VelvetApp.library.data.value.autoplay || isRadioActive

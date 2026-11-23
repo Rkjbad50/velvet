@@ -740,6 +740,63 @@ class AutoplayPipelineTest {
         assertEquals(run1.map { it.id }, run2.map { it.id })
     }
 
+    @Test
+    fun testDiversity_strictArtistSpacing_prefersAlternativeArtistsOverSameArtist() {
+        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
+        val pritam1 = makeSong("p1", "Subha Hone Na De", "Pritam")
+        val pritam2 = makeSong("p2", "Tu Hi Meri Shab Hai", "Pritam")
+        val pritam3 = makeSong("p3", "Love Mera Hit Hit", "Pritam")
+        val arijit = makeSong("a1", "Tum Hi Ho", "Arijit Singh")
+        val atif = makeSong("at1", "Tera Hone Laga Hoon", "Atif Aslam")
+        val kk = makeSong("k1", "Zara Sa", "KK")
+        val mohit = makeSong("m1", "Tum Se Hi", "Mohit Chauhan")
+
+        val candidates = listOf(pritam1, pritam2, pritam3, arijit, atif, kk, mohit)
+
+        val spaced = pipeline.spaceCandidates(
+            candidates = candidates,
+            lastQueuedArtist = "Pritam",
+            noveltyInterval = 999, // disable novelty slot for pure spacing assertion
+            epsilon = 0.0,
+        )
+
+        // Since lastQueuedArtist was "Pritam", first spaced track must NOT be Pritam!
+        assertNotEquals("Pritam", spaced[0].artist)
+
+        // Check that within the first 4 tracks, there are no consecutive same-artist tracks
+        for (i in 0 until spaced.size - 1) {
+            assertNotEquals(
+                "Adjacent tracks must have different primary artists",
+                spaced[i].artist,
+                spaced[i + 1].artist,
+            )
+        }
+    }
+
+    @Test
+    fun testScoring_musicFirst_noPositiveBonusForArtistByDefault() {
+        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
+        val seed = makeSong("seed", "Seed Song", "Kumar Sanu")
+        val candidateSameArtist = makeSong("cand1", "Cand Song 1", "Kumar Sanu")
+        val candidateDiffArtist = makeSong("cand2", "Cand Song 2", "Udit Narayan")
+
+        val seedProfile = SeedProfile(current = seed)
+        val breakdowns = mutableMapOf<String, Map<String, Double>>()
+
+        pipeline.scoreCandidates(
+            candidates = listOf(candidateSameArtist, candidateDiffArtist),
+            seedProfile = seedProfile,
+            scoreBreakdownOut = breakdowns,
+        )
+
+        val w3Same = breakdowns["cand1"]?.get("w3_artistSimilarity") ?: 0.0
+        val w3Diff = breakdowns["cand2"]?.get("w3_artistSimilarity") ?: 0.0
+
+        // In Autoplay V3 music-first spec: Artist receives 0.0 bonus in default similarity score
+        assertEquals(0.0, w3Same, 0.001)
+        assertEquals(0.0, w3Diff, 0.001)
+    }
+
     // ── Offline Evaluation Harness (R5) ──────────────────────────────────────
 
     private val json = Json { ignoreUnknownKeys = true }

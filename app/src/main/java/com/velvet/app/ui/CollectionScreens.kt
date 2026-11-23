@@ -113,7 +113,7 @@ private fun songMeta(songs: List<Song>): String =
     listOf(songCountLabel(songs.size), totalDuration(songs)).filter { it.isNotBlank() }.joinToString(" • ")
 
 private fun shuffle(songs: List<Song>, playlistId: String? = null, context: PlaybackContext? = null) {
-    if (songs.isNotEmpty()) PlayerConnection.play(songs, songs.indices.random(), shuffled = true, playlistId = playlistId, context = context)
+    if (songs.isNotEmpty()) PlayerConnection.play(songs, 0, shuffled = true, playlistId = playlistId, context = context)
 }
 
 // ------------------------------------------------------------------ YouTube albums & playlists

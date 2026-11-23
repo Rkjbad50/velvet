@@ -402,14 +402,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                 remember { mutableFloatStateOf(1.0f) }
             }
 
-            val breathAlpha = (if (isDark) 0.36f else 0.22f) * breathPulse
-
-            // Background: Pure dark base
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFF0A0C0E))
-            )
+            val breathAlpha = (if (isDark) 0.36f else 0.20f) * breathPulse
 
             // Dynamic top-to-bottom cover art accent gradient with breathing motion
             Box(
@@ -417,13 +410,22 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(
-                                artColor.copy(alpha = (breathAlpha * 1.15f).coerceIn(0.12f, 0.55f)),
-                                artColor.copy(alpha = (breathAlpha * 0.65f).coerceIn(0.06f, 0.35f)),
-                                artColor.copy(alpha = (breathAlpha * 0.25f).coerceIn(0.02f, 0.15f)),
-                                Color.Transparent,
-                                Color.Transparent,
-                            ),
+                            colors = if (isDark) {
+                                listOf(
+                                    artColor.copy(alpha = (breathAlpha * 1.15f).coerceIn(0.12f, 0.55f)),
+                                    artColor.copy(alpha = (breathAlpha * 0.65f).coerceIn(0.06f, 0.35f)),
+                                    artColor.copy(alpha = (breathAlpha * 0.25f).coerceIn(0.02f, 0.15f)),
+                                    Color.Transparent,
+                                    Color.Transparent,
+                                )
+                            } else {
+                                listOf(
+                                    artColor.copy(alpha = (breathAlpha * 0.85f).coerceIn(0.06f, 0.26f)),
+                                    artColor.copy(alpha = (breathAlpha * 0.40f).coerceIn(0.03f, 0.14f)),
+                                    Color.Transparent,
+                                    Color.Transparent,
+                                )
+                            },
                             startY = 0f,
                             endY = 1600f,
                         )
@@ -438,8 +440,8 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     .background(
                         Brush.radialGradient(
                             colors = listOf(
-                                artColor.copy(alpha = (breathAlpha * 0.90f).coerceIn(0.10f, 0.45f)),
-                                artColor.copy(alpha = (breathAlpha * 0.35f).coerceIn(0.04f, 0.20f)),
+                                artColor.copy(alpha = (breathAlpha * 0.90f).coerceIn(0.08f, 0.45f)),
+                                artColor.copy(alpha = (breathAlpha * 0.35f).coerceIn(0.03f, 0.20f)),
                                 Color.Transparent,
                             ),
                             radius = 700f * breathPulse,
@@ -469,14 +471,15 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             .align(Alignment.CenterStart)
                             .size(42.dp)
                             .clip(CircleShape)
-                            .background(Color(0x24FFFFFF))
+                            .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
+                            .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
                             .clickable(onClick = onClose),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Default.KeyboardArrowDown,
                             contentDescription = "Close",
-                            tint = Color.White,
+                            tint = velvetColors.text,
                             modifier = Modifier.size(26.dp),
                         )
                     }
@@ -493,7 +496,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 16.sp,
                             ),
-                            color = Color.White,
+                            color = velvetColors.text,
                         )
                         Spacer(Modifier.height(3.dp))
                         Box(
@@ -515,37 +518,39 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             modifier = Modifier
                                 .size(42.dp)
                                 .clip(CircleShape)
-                                .background(Color(0x24FFFFFF))
-                                .clickable {
-                                    showLyrics = true
-                                    if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                AppIcons.Lyrics,
-                                contentDescription = "Lyrics",
-                                tint = if (showLyrics) accent else Color.White,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x24FFFFFF))
-                                .clickable { openMenu(SongMenuRequest(song, null)) },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.MoreVert,
-                                contentDescription = "More",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                                .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
+                                .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
+                            .clickable {
+                                showLyrics = true
+                                if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            AppIcons.Lyrics,
+                            contentDescription = "Lyrics",
+                            tint = if (showLyrics) accent else velvetColors.text,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
+                            .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
+                            .clickable { openMenu(SongMenuRequest(song, null)) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "More",
+                            tint = velvetColors.text,
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                 }
+            }
 
                 Spacer(Modifier.height(gap))
 
@@ -605,13 +610,23 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                         .matchParentSize()
                                         .background(
                                             Brush.verticalGradient(
-                                                colors = listOf(
-                                                    Color.Transparent,
-                                                    Color.Transparent,
-                                                    Color(0x330A0C0E),
-                                                    Color(0x880A0C0E),
-                                                    Color(0xDD0A0C0E),
-                                                )
+                                                colors = if (isDark) {
+                                                    listOf(
+                                                        Color.Transparent,
+                                                        Color.Transparent,
+                                                        Color(0x330A0C0E),
+                                                        Color(0x880A0C0E),
+                                                        Color(0xDD0A0C0E),
+                                                    )
+                                                } else {
+                                                    listOf(
+                                                        Color.Transparent,
+                                                        Color.Transparent,
+                                                        Color(0x10000000),
+                                                        Color(0x30000000),
+                                                        Color(0x55000000),
+                                                    )
+                                                }
                                             )
                                         )
                                 )
@@ -622,12 +637,21 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                         .matchParentSize()
                                         .background(
                                             Brush.radialGradient(
-                                                colors = listOf(
-                                                    Color.Transparent,
-                                                    Color.Transparent,
-                                                    Color(0x440A0C0E),
-                                                    Color(0x880A0C0E),
-                                                )
+                                                colors = if (isDark) {
+                                                    listOf(
+                                                        Color.Transparent,
+                                                        Color.Transparent,
+                                                        Color(0x440A0C0E),
+                                                        Color(0x880A0C0E),
+                                                    )
+                                                } else {
+                                                    listOf(
+                                                        Color.Transparent,
+                                                        Color.Transparent,
+                                                        Color(0x18000000),
+                                                        Color(0x40000000),
+                                                    )
+                                                }
                                             )
                                         )
                                 )
@@ -640,15 +664,15 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                     .padding(top = 10.dp, end = 6.dp)
                                     .size(42.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0x66000000))
-                                    .border(1.dp, Color(0x33FFFFFF), CircleShape)
+                                    .background(if (isDark) Color(0x66000000) else velvetColors.surface.copy(alpha = 0.92f))
+                                    .border(1.dp, if (isDark) Color(0x33FFFFFF) else velvetColors.glassBorder, CircleShape)
                                     .clickable { shareSong(context, song) },
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     Icons.Default.Share,
                                     contentDescription = "Share",
-                                    tint = Color.White,
+                                    tint = if (isDark) Color.White else velvetColors.text,
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
@@ -685,7 +709,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 22.sp,
                             ),
-                            color = Color.White,
+                            color = velvetColors.text,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -695,7 +719,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 15.sp,
                             ),
-                            color = Color(0xFFB0B0B0),
+                            color = velvetColors.muted,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = if (openArtist != null) Modifier.clickable(onClick = openArtist) else Modifier,
@@ -707,7 +731,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF14171A))
+                            .background(velvetColors.surface)
                             .border(1.5.dp, accent, CircleShape)
                             .clickable { VelvetApp.library.toggleLike(song) },
                         contentAlignment = Alignment.Center,
@@ -753,7 +777,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 12.sp,
                             ),
-                            color = Color(0xFF9E9E9E),
+                            color = velvetColors.muted,
                             modifier = Modifier.align(Alignment.CenterStart),
                         )
 
@@ -777,7 +801,7 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 12.sp,
                             ),
-                            color = Color(0xFF9E9E9E),
+                            color = velvetColors.muted,
                             modifier = Modifier.align(Alignment.CenterEnd),
                         )
                     }
@@ -1193,8 +1217,8 @@ private fun ModernControlDock(accent: Color) {
                 .scale(shuffleScale)
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF14171A))
-                .border(1.dp, Color(0x24FFFFFF), CircleShape)
+                .background(velvetColors.surface)
+                .border(1.dp, if (shuffleMode != ShuffleMode.OFF) accent else velvetColors.glassBorder, CircleShape)
                 .clickable(
                     interactionSource = shuffleInteractionSource,
                     indication = null,
@@ -1211,7 +1235,7 @@ private fun ModernControlDock(accent: Color) {
                     Icon(
                         AppIcons.Shuffle,
                         contentDescription = "Shuffle off",
-                        tint = Color(0xFF757575),
+                        tint = velvetColors.muted,
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -1273,7 +1297,7 @@ private fun ModernControlDock(accent: Color) {
             Icon(
                 AppIcons.SkipPrevious,
                 contentDescription = "Previous",
-                tint = Color.White,
+                tint = velvetColors.text,
                 modifier = Modifier.size(30.dp),
             )
         }
@@ -1360,7 +1384,7 @@ private fun ModernControlDock(accent: Color) {
             Icon(
                 AppIcons.SkipNext,
                 contentDescription = "Next",
-                tint = Color.White,
+                tint = velvetColors.text,
                 modifier = Modifier.size(30.dp),
             )
         }
@@ -1382,8 +1406,8 @@ private fun ModernControlDock(accent: Color) {
                 .scale(repeatScale)
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF14171A))
-                .border(1.dp, Color(0x24FFFFFF), CircleShape)
+                .background(velvetColors.surface)
+                .border(1.dp, if (repeatMode != Player.REPEAT_MODE_OFF) accent else velvetColors.glassBorder, CircleShape)
                 .clickable(
                     interactionSource = repeatInteractionSource,
                     indication = null,
@@ -1398,7 +1422,7 @@ private fun ModernControlDock(accent: Color) {
             Icon(
                 if (repeatMode == Player.REPEAT_MODE_ONE) AppIcons.RepeatOne else AppIcons.Repeat,
                 contentDescription = "Repeat",
-                tint = if (repeatMode == Player.REPEAT_MODE_OFF) Color(0xFF757575) else accent,
+                tint = if (repeatMode == Player.REPEAT_MODE_OFF) velvetColors.muted else accent,
                 modifier = Modifier.size(22.dp),
             )
         }
@@ -1416,6 +1440,7 @@ private fun PlayerBottomCards(
 ) {
     val sleepActive = sleep != SleepTimer.State.Off
     val haptic = LocalHapticFeedback.current
+    val isDark = velvetColors.surface.luminance() < 0.5f
 
     val ultraInteraction = remember { MutableInteractionSource() }
     val isUltraPressed by ultraInteraction.collectIsPressedAsState()
@@ -1458,12 +1483,12 @@ private fun PlayerBottomCards(
                 .then(
                     if (ultra) {
                         Modifier
-                            .background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.22f), accent.copy(alpha = 0.08f))))
+                            .background(Brush.verticalGradient(listOf(accent.copy(alpha = if (isDark) 0.22f else 0.14f), accent.copy(alpha = if (isDark) 0.08f else 0.04f))))
                             .border(1.5.dp, accent, RoundedCornerShape(16.dp))
                     } else {
                         Modifier
-                            .background(Color(0xFF14171A))
-                            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
+                            .background(velvetColors.surface)
+                            .border(1.dp, velvetColors.glassBorder, RoundedCornerShape(16.dp))
                     }
                 )
                 .clickable(
@@ -1485,7 +1510,7 @@ private fun PlayerBottomCards(
                 Icon(
                     AppIcons.VolumeUp,
                     contentDescription = "ULT Bass",
-                    tint = if (ultra) accent else Color(0xFF9E9E9E),
+                    tint = if (ultra) accent else velvetColors.muted,
                     modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.height(4.dp))
@@ -1495,7 +1520,7 @@ private fun PlayerBottomCards(
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                     ),
-                    color = if (ultra) Color.White else Color(0xFFB0B0B0),
+                    color = if (ultra) (if (isDark) Color.White else accent) else velvetColors.muted,
                 )
             }
         }
@@ -1507,8 +1532,8 @@ private fun PlayerBottomCards(
                 .scale(queueScale)
                 .height(64.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF14171A))
-                .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
+                .background(velvetColors.surface)
+                .border(1.dp, velvetColors.glassBorder, RoundedCornerShape(16.dp))
                 .clickable(
                     interactionSource = queueInteraction,
                     indication = null,
@@ -1528,7 +1553,7 @@ private fun PlayerBottomCards(
                 Icon(
                     AppIcons.QueueMusic,
                     contentDescription = "Queue",
-                    tint = Color.White,
+                    tint = velvetColors.text,
                     modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.height(4.dp))
@@ -1538,7 +1563,7 @@ private fun PlayerBottomCards(
                         fontWeight = FontWeight.Medium,
                         fontSize = 12.sp,
                     ),
-                    color = Color.White,
+                    color = velvetColors.text,
                 )
             }
         }
@@ -1553,12 +1578,12 @@ private fun PlayerBottomCards(
                 .then(
                     if (sleepActive) {
                         Modifier
-                            .background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.22f), accent.copy(alpha = 0.08f))))
+                            .background(Brush.verticalGradient(listOf(accent.copy(alpha = if (isDark) 0.22f else 0.14f), accent.copy(alpha = if (isDark) 0.08f else 0.04f))))
                             .border(1.5.dp, accent, RoundedCornerShape(16.dp))
                     } else {
                         Modifier
-                            .background(Color(0xFF14171A))
-                            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(16.dp))
+                            .background(velvetColors.surface)
+                            .border(1.dp, velvetColors.glassBorder, RoundedCornerShape(16.dp))
                     }
                 )
                 .clickable(
@@ -1580,7 +1605,7 @@ private fun PlayerBottomCards(
                 Icon(
                     AppIcons.Timer,
                     contentDescription = "Sleep Timer",
-                    tint = if (sleepActive) accent else Color(0xFF9E9E9E),
+                    tint = if (sleepActive) accent else velvetColors.muted,
                     modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.height(4.dp))
@@ -1590,7 +1615,7 @@ private fun PlayerBottomCards(
                         fontWeight = FontWeight.Medium,
                         fontSize = 12.sp,
                     ),
-                    color = if (sleepActive) Color.White else Color(0xFFB0B0B0),
+                    color = if (sleepActive) (if (isDark) Color.White else accent) else velvetColors.muted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1891,7 +1916,7 @@ private fun QueueSheet(onDismiss: () -> Unit) {
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         containerColor = velvetColors.surface,
         tonalElevation = 0.dp,
-        scrimColor = Color(0xB3000000),
+        scrimColor = if (velvetColors.surface.luminance() < 0.5f) Color(0xB3000000) else Color(0x66000000),
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = sheetMaxHeight),

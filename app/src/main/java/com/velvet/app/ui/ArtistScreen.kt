@@ -165,7 +165,7 @@ fun ArtistScreen(artist: ArtistRef, onBack: () -> Unit) {
                 val popular = page?.popular.orEmpty()
                 val isPlayingArtist = PlayerConnection.isPlaying && popular.any { it.id == PlayerConnection.current?.id }
                 PanelIconButton(AppIcons.Shuffle, "Shuffle", size = 48.dp) {
-                    if (popular.isNotEmpty()) PlayerConnection.play(popular, popular.indices.random(), shuffled = true, context = playbackContext)
+                    if (popular.isNotEmpty()) PlayerConnection.play(popular, 0, shuffled = true, context = playbackContext)
                 }
                 PlayCircle(
                     enabled = popular.isNotEmpty(),
