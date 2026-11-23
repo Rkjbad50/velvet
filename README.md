@@ -26,6 +26,16 @@
 
 ---
 
+## 🌟 What's New in v2.7.5
+
+- 📑 **Queue Slide List 2-Stage Smooth Anchoring (40% ➔ 90%)**:
+  - **Stage 1 (40% Peek)**: Tapping the Queue icon smoothly animates the queue sheet up from the bottom boundary to exactly 40% screen height.
+  - **Stage 2 (90% Expanded)**: Manually dragging or stretching upward fluidly expands the sheet to 90% screen height, preserving status bar clearance at the top.
+  - **Unbroken Ground Contact**: In both stages and all intermediate gestures, the sheet remains physically anchored to the bottom edge without detaching.
+  - **Fluid Spring Physics**: Seamless finger tracking and spring interpolation across 40% and 90% transitions, with smart Back button collapse.
+
+---
+
 ## 🌟 What's New in v2.7.4
 
 - 📑 **Queue Bottom Sheet True Ground Anchoring**:

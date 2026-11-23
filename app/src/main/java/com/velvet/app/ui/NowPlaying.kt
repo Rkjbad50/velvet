@@ -136,6 +136,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -837,9 +841,12 @@ fun NowPlayingScreen(onClose: () -> Unit) {
             AnimatedVisibility(showLyrics, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
                 FullLyrics(lyrics, position, onRequest = requestLyrics, onClose = { showLyrics = false })
             }
+
+            if (showQueue) {
+                QueueSheet(maxHeight = maxHeight) { showQueue = false }
+            }
         }
 
-        if (showQueue) QueueSheet { showQueue = false }
         if (showSleep) SleepSheet { showSleep = false }
     }
 }
@@ -1790,13 +1797,49 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun QueueSheet(onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val screenHeight = configuration.screenHeightDp.dp
-    val topInsetSpace = (screenHeight * 0.10f).coerceAtLeast(54.dp)
+private fun QueueSheet(
+    maxHeight: Dp,
+    onDismiss: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val fullHeightPx = with(density) { maxHeight.toPx() }
+    val peekHeightPx = fullHeightPx * 0.40f
+    val expandedHeightPx = fullHeightPx * 0.90f
+
+    val sheetHeightAnim = remember { Animatable(0f) }
+    val coroutineScope = rememberCoroutineScope()
+
+    val dismissWithAnimation: () -> Unit = {
+        coroutineScope.launch {
+            sheetHeightAnim.animateTo(0f, tween(durationMillis = 200, easing = FastOutSlowInEasing))
+            onDismiss()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        sheetHeightAnim.animateTo(
+            targetValue = peekHeightPx,
+            animationSpec = spring(
+                dampingRatio = 0.85f,
+                stiffness = Spring.StiffnessMediumLow,
+            ),
+        )
+    }
+
+    BackHandler(enabled = true) {
+        if (sheetHeightAnim.value > peekHeightPx + 40f) {
+            coroutineScope.launch {
+                sheetHeightAnim.animateTo(
+                    peekHeightPx,
+                    spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                )
+            }
+        } else {
+            dismissWithAnimation()
+        }
+    }
 
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
@@ -1975,79 +2018,174 @@ private fun QueueSheet(onDismiss: () -> Unit) {
     val displayUserQueue = previewUserQueue ?: userQueue
     val displayUpNext = previewUpNext ?: upNext
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        dragHandle = null,
-        shape = RectangleShape,
-        containerColor = Color.Transparent,
-        tonalElevation = 0.dp,
-        scrimColor = if (velvetColors.surface.luminance() < 0.5f) Color(0xB3000000) else Color(0x66000000),
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight(),
+    val nestedScrollConnection = remember(peekHeightPx, expandedHeightPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val deltaY = available.y
+                // Upward drag: if sheet is below 90%, expand sheet instead of scrolling list
+                if (deltaY < 0 && sheetHeightAnim.value < expandedHeightPx - 1f) {
+                    val newHeight = (sheetHeightAnim.value - deltaY).coerceAtMost(expandedHeightPx)
+                    val consumed = newHeight - sheetHeightAnim.value
+                    coroutineScope.launch { sheetHeightAnim.snapTo(newHeight) }
+                    return Offset(0f, -consumed)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                val deltaY = available.y
+                // Downward drag: if list is at top, collapse sheet
+                if (deltaY > 0 && !listState.canScrollBackward) {
+                    val newHeight = (sheetHeightAnim.value - deltaY).coerceAtLeast(0f)
+                    val consumed = sheetHeightAnim.value - newHeight
+                    coroutineScope.launch { sheetHeightAnim.snapTo(newHeight) }
+                    return Offset(0f, consumed)
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                val current = sheetHeightAnim.value
+                val midPoint = (peekHeightPx + expandedHeightPx) / 2f
+                val dismissThreshold = peekHeightPx * 0.5f
+
+                if (available.y < -400f) {
+                    sheetHeightAnim.animateTo(
+                        expandedHeightPx,
+                        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                    )
+                    return available
+                } else if (available.y > 600f) {
+                    if (current > peekHeightPx + 40f) {
+                        sheetHeightAnim.animateTo(
+                            peekHeightPx,
+                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                        )
+                    } else {
+                        dismissWithAnimation()
+                    }
+                    return available
+                }
+
+                if (current > midPoint) {
+                    sheetHeightAnim.animateTo(
+                        expandedHeightPx,
+                        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                    )
+                } else if (current > dismissThreshold) {
+                    sheetHeightAnim.animateTo(
+                        peekHeightPx,
+                        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                    )
+                } else {
+                    dismissWithAnimation()
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+
+    val currentHeightDp = with(density) { sheetHeightAnim.value.coerceAtLeast(0f).toDp() }
+    val isDark = velvetColors.surface.luminance() < 0.5f
+    val scrimProgress = (sheetHeightAnim.value / expandedHeightPx).coerceIn(0f, 1f)
+    val scrimAlpha = scrimProgress * (if (isDark) 0.65f else 0.45f)
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            // Top 10% translucent space: tap to dismiss; reveals Now Playing artwork & phone status bar
+        // Semi-transparent backdrop scrim (tapping dismisses queue)
+        if (scrimAlpha > 0.01f) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(topInsetSpace)
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = scrimAlpha))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = onDismiss,
+                        onClick = dismissWithAnimation,
                     ),
             )
+        }
 
-            // Main Queue Surface: anchored flush to physical bottom with rounded top corners
-            Surface(
+        // Bottom Sheet Surface anchored permanently to physical bottom ("ground")
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(currentHeightDp)
+                .nestedScroll(nestedScrollConnection),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = velvetColors.surface,
+            tonalElevation = 0.dp,
+        ) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-                color = velvetColors.surface,
-                tonalElevation = 0.dp,
+                    .fillMaxSize()
+                    .navigationBarsPadding(),
             ) {
-                Column(
+                // Top Sheet Drag Handle & Gesture Bar
+                Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .navigationBarsPadding(),
-                ) {
-                    // Top Sheet Drag Handle
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp, bottom = 6.dp)
-                            .pointerInput(Unit) {
-                                detectVerticalDragGestures { change, dragAmount ->
-                                    if (dragAmount > 0) {
-                                        change.consume()
-                                        coroutineScope.launch {
-                                            sheetState.hide()
-                                            onDismiss()
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 6.dp)
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    coroutineScope.launch {
+                                        val newHeight = (sheetHeightAnim.value - dragAmount).coerceIn(0f, expandedHeightPx)
+                                        sheetHeightAnim.snapTo(newHeight)
+                                    }
+                                },
+                                onDragEnd = {
+                                    coroutineScope.launch {
+                                        val current = sheetHeightAnim.value
+                                        val midPoint = (peekHeightPx + expandedHeightPx) / 2f
+                                        val dismissThreshold = peekHeightPx * 0.5f
+                                        if (current > midPoint) {
+                                            sheetHeightAnim.animateTo(
+                                                expandedHeightPx,
+                                                spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                            )
+                                        } else if (current > dismissThreshold) {
+                                            sheetHeightAnim.animateTo(
+                                                peekHeightPx,
+                                                spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                            )
+                                        } else {
+                                            dismissWithAnimation()
                                         }
                                     }
-                                }
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .width(36.dp)
-                                .height(4.dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(velvetColors.muted.copy(alpha = 0.45f)),
-                        )
-                    }
+                                },
+                                onDragCancel = {
+                                    coroutineScope.launch {
+                                        val current = sheetHeightAnim.value
+                                        val midPoint = (peekHeightPx + expandedHeightPx) / 2f
+                                        val target = if (current > midPoint) expandedHeightPx else peekHeightPx
+                                        sheetHeightAnim.animateTo(target, spring(dampingRatio = 0.85f))
+                                    }
+                                },
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(36.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(velvetColors.muted.copy(alpha = 0.45f)),
+                    )
+                }
 
-                    Row(
-                        Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                Row(
+                    Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Column(Modifier.weight(1f)) {
                         Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
                         Text(
@@ -2179,7 +2317,6 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             }
         }
     }
-}
 }
 
 @OptIn(ExperimentalFoundationApi::class)
