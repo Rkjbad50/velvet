@@ -733,6 +733,7 @@ object PlayerConnection {
                     current = targetSeed,
                     recentSongs = recentSongs,
                     contextName = contextTitle,
+                    isArtistRadio = isRadioActive,
                 )
                 val related = VelvetApp.autoplayPipeline.next(seedProfile, snapshot, n = 10)
 

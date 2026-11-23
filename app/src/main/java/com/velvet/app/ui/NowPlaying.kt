@@ -1192,7 +1192,6 @@ private fun AudioWaveformVisualizer(
             }
         }
     }
-}
 
 @Composable
 private fun ModernControlDock(accent: Color) {
@@ -1791,10 +1790,11 @@ private fun SheetOption(label: String, onClick: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun QueueSheet(onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
     val topInsetSpace = (screenHeight * 0.10f).coerceAtLeast(54.dp)
+    val sheetHeight = screenHeight - topInsetSpace
 
     val queueState = PlayerConnection.queueState
     val currentItem = queueState.current?.copy(qid = "current")
@@ -1872,8 +1872,14 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             val qid = draggingQid
             val baseList = if (draggingIsUserQueue) userQueue else upNext
             val rowHeightPx = getItemHeightPx().coerceAtLeast(10f)
-            val slotShift = (totalDragOffsetY / rowHeightPx).roundToInt()
-            val targetIndex = (dragStartIndex + slotShift).coerceIn(0, baseList.size - 1)
+
+            // Hysteresis deadzone (0.55): prevents rapid jitter/thrashing when dragging near slot boundaries
+            val rawDeltaSlots = (totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * rowHeightPx) / rowHeightPx
+            val targetIndex = when {
+                rawDeltaSlots > 0.55f -> (dragCurrentIndex + 1).coerceIn(0, baseList.size - 1)
+                rawDeltaSlots < -0.55f -> (dragCurrentIndex - 1).coerceIn(0, baseList.size - 1)
+                else -> dragCurrentIndex
+            }
 
             if (targetIndex != dragCurrentIndex) {
                 dragCurrentIndex = targetIndex
@@ -1893,22 +1899,38 @@ private fun QueueSheet(onDismiss: () -> Unit) {
                 }
             }
 
-            // Managed auto-scroll: single cancellable coroutine loop
-            val edgeThreshold = rowHeightPx * 0.8f
-            if (totalDragOffsetY < -edgeThreshold && listState.firstVisibleItemIndex > 0) {
+            // Viewport-edge-based auto-scroll: auto-scroll activates ONLY when the dragged item is near the viewport top or bottom edge
+            val edgeZonePx = with(density) { 56.dp.toPx() }
+            val viewportHeight = (listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset).toFloat()
+            val itemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == draggingQid }
+            val itemTopInViewport = (itemInfo?.offset?.toFloat() ?: 0f) + (totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * rowHeightPx)
+            val itemBottomInViewport = itemTopInViewport + rowHeightPx
+
+            val isNearTop = itemTopInViewport < edgeZonePx && listState.canScrollBackward
+            val isNearBottom = itemBottomInViewport > (viewportHeight - edgeZonePx) && listState.canScrollForward
+
+            if (isNearTop) {
                 if (autoScrollJob == null || autoScrollJob?.isActive != true) {
                     autoScrollJob = coroutineScope.launch {
-                        while (isActive && draggingQid != null && totalDragOffsetY < -edgeThreshold && listState.firstVisibleItemIndex > 0) {
-                            listState.scrollBy(-14f)
+                        while (isActive && draggingQid != null && listState.canScrollBackward) {
+                            val curInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == draggingQid }
+                            val curTop = (curInfo?.offset?.toFloat() ?: 0f) + (totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * rowHeightPx)
+                            if (curTop >= edgeZonePx) break
+                            val speed = ((edgeZonePx - curTop) / edgeZonePx).coerceIn(0.25f, 1f) * 14f
+                            listState.scrollBy(-speed)
                             delay(16)
                         }
                     }
                 }
-            } else if (totalDragOffsetY > edgeThreshold && listState.canScrollForward) {
+            } else if (isNearBottom) {
                 if (autoScrollJob == null || autoScrollJob?.isActive != true) {
                     autoScrollJob = coroutineScope.launch {
-                        while (isActive && draggingQid != null && totalDragOffsetY > edgeThreshold && listState.canScrollForward) {
-                            listState.scrollBy(14f)
+                        while (isActive && draggingQid != null && listState.canScrollForward) {
+                            val curInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == draggingQid }
+                            val curBottom = (curInfo?.offset?.toFloat() ?: 0f) + (totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * rowHeightPx) + rowHeightPx
+                            if (curBottom <= (viewportHeight - edgeZonePx)) break
+                            val speed = ((curBottom - (viewportHeight - edgeZonePx)) / edgeZonePx).coerceIn(0.25f, 1f) * 14f
+                            listState.scrollBy(speed)
                             delay(16)
                         }
                     }
@@ -1955,39 +1977,20 @@ private fun QueueSheet(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         dragHandle = null,
-        shape = RectangleShape,
-        containerColor = Color.Transparent,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = velvetColors.surface,
         tonalElevation = 0.dp,
         scrimColor = if (velvetColors.surface.luminance() < 0.5f) Color(0xB3000000) else Color(0x66000000),
         contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
         modifier = Modifier
             .fillMaxWidth()
-            .fillMaxHeight(),
+            .height(sheetHeight),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding(),
         ) {
-            // Top 10% translucent space: tap to dismiss; reveals Now Playing artwork & phone status bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(topInsetSpace)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismiss,
-                    ),
-            )
-
-            // Main Queue Surface: anchored flush to physical bottom with rounded top corners
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                    .background(velvetColors.surface)
-                    .navigationBarsPadding(),
-            ) {
                 // Top Sheet Drag Handle
                 Box(
                     modifier = Modifier
@@ -2139,7 +2142,6 @@ private fun QueueSheet(onDismiss: () -> Unit) {
             }
         }
     }
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

@@ -390,4 +390,43 @@ class QueueDragReorderTest {
         assertTrue(moved2)
         assertEquals(1, emitCount) // emitCount unchanged!
     }
+
+    @Test
+    fun testDragSlotSwapHysteresis_preventsJitterAtSlotBoundary() {
+        // Simulates the hysteresis formula used in QueueSheet onDragDelta
+        val rowHeightPx = 60f
+        var dragStartIndex = 2
+        var dragCurrentIndex = 2
+        val maxIndex = 5
+
+        fun computeTargetIndex(totalDragOffsetY: Float): Int {
+            val rawDeltaSlots = (totalDragOffsetY - (dragCurrentIndex - dragStartIndex) * rowHeightPx) / rowHeightPx
+            val target = when {
+                rawDeltaSlots > 0.55f -> (dragCurrentIndex + 1).coerceIn(0, maxIndex)
+                rawDeltaSlots < -0.55f -> (dragCurrentIndex - 1).coerceIn(0, maxIndex)
+                else -> dragCurrentIndex
+            }
+            if (target != dragCurrentIndex) {
+                dragCurrentIndex = target
+            }
+            return dragCurrentIndex
+        }
+
+        // 1. Initial position
+        assertEquals(2, computeTargetIndex(0f))
+
+        // 2. Small drag downwards (30px = 50% of row height) -> deadzone prevents swap
+        assertEquals(2, computeTargetIndex(30f))
+
+        // 3. Move past 55% threshold (34px / 60px = 0.567 > 0.55) -> swaps to slot 3
+        assertEquals(3, computeTargetIndex(34f))
+
+        // 4. Minor finger tremor / jitter near the boundary (32px) -> hysteresis retains slot 3 without oscillating
+        assertEquals(3, computeTargetIndex(32f))
+        assertEquals(3, computeTargetIndex(30f))
+
+        // 5. User intentionally drags back up past negative 55% threshold from slot 3
+        // rawDeltaSlots = (0 - (3 - 2)*60) / 60 = -1.0 < -0.55 -> swaps back to slot 2
+        assertEquals(2, computeTargetIndex(0f))
+    }
 }

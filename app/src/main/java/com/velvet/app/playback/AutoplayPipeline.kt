@@ -42,6 +42,7 @@ data class SeedProfile(
     val current: Song,
     val recentSongs: List<Song> = emptyList(),
     val contextName: String? = null,
+    val isArtistRadio: Boolean = false,
 ) {
     fun artistWeights(): Map<String, Double> {
         val map = mutableMapOf<String, Double>()
@@ -767,7 +768,7 @@ class AutoplayPipeline(
             }
             val fallbackSeed = queueSnapshot.lastOrNull()
             if (fallbackSeed != null && fallbackSeed.id != seedProfile.current.id) {
-                return executePipeline(SeedProfile(current = fallbackSeed), queueSnapshot, n, isFallback = true)
+                return executePipeline(SeedProfile(current = fallbackSeed, isArtistRadio = seedProfile.isArtistRadio), queueSnapshot, n, isFallback = true)
             }
             return emptyList()
         }
@@ -1266,24 +1267,21 @@ class AutoplayPipeline(
             }
             breakdown["w2_sameMovieOrAlbum"] = w2
 
-            // 3. W3: Artist Similarity (conditioned on genre & tempo compatibility)
+            // 3. W3: Artist Similarity
+            // In Music-First Autoplay: In normal similar songs autoplay, artist identity receives ZERO positive bonus (w3 = 0.0).
+            // Artist identity is strictly used for spacing and repetition control.
+            // EXCLUSIVE EXCEPTION: Artist Radio (seedProfile.isArtistRadio == true) prioritizes the selected artist.
             var w3 = 0.0
-            val isGenreCompatibleForArtist = seedCluster == candCluster ||
-                seedCluster == MusicCluster.GENERAL ||
-                candCluster == MusicCluster.GENERAL
-            val isTempoCompatibleForArtist = !(seedTempo == SongTempo.FAST && candTempo == SongTempo.SLOW) &&
-                !(seedTempo == SongTempo.SLOW && candTempo == SongTempo.FAST)
-
-            if (isGenreCompatibleForArtist && isTempoCompatibleForArtist) {
+            if (seedProfile.isArtistRadio) {
                 val candArtists = (SongIdentity.normalizeArtists(candidate.artist) + listOf(candPrimary))
                     .filter { it.isNotBlank() }
                     .map { SongIdentity.collapseHindiLatinVariants(it) }
-                val maxArtistWeight = candArtists.maxOfOrNull { profileArtistWeights[it] ?: 0.0 } ?: 0.0
-                if (maxArtistWeight > 0.0) {
-                    w3 = Weights.W3_ARTIST_SIMILARITY * maxArtistWeight
-                } else if (candPrimary.isNotEmpty() && candPrimary == seedPrimary) {
-                    w3 = Weights.W3_ARTIST_SIMILARITY
+                val matchesSeedArtist = candArtists.any { it == seedPrimary } || (candPrimary.isNotEmpty() && candPrimary == seedPrimary)
+                if (matchesSeedArtist) {
+                    w3 = 100.0 // Artist radio highest preference bonus
                 }
+            } else {
+                w3 = Weights.W3_ARTIST_SIMILARITY // 0.0 in normal autoplay
             }
             breakdown["w3_artistSimilarity"] = w3
 

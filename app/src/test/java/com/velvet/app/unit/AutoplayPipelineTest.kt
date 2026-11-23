@@ -805,6 +805,46 @@ class AutoplayPipelineTest {
         assertEquals(0.0, w3Diff, 0.001)
     }
 
+    @Test
+    fun testScoring_artistRadio_prioritizesSelectedArtist() {
+        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
+        val seed = makeSong("seed", "Seed Song", "Kumar Sanu")
+        val candidateSameArtist = makeSong("cand1", "Cand Song 1", "Kumar Sanu")
+        val candidateDiffArtist = makeSong("cand2", "Cand Song 2", "Udit Narayan")
+
+        val seedProfile = SeedProfile(current = seed, isArtistRadio = true)
+        val breakdowns = mutableMapOf<String, Map<String, Double>>()
+
+        pipeline.scoreCandidates(
+            candidates = listOf(candidateSameArtist, candidateDiffArtist),
+            seedProfile = seedProfile,
+            scoreBreakdownOut = breakdowns,
+        )
+
+        val w3Same = breakdowns["cand1"]?.get("w3_artistSimilarity") ?: 0.0
+        val w3Diff = breakdowns["cand2"]?.get("w3_artistSimilarity") ?: 0.0
+
+        // In Artist Radio mode: matching artist receives highest preference bonus (+100.0)
+        assertEquals(100.0, w3Same, 0.001)
+        assertEquals(0.0, w3Diff, 0.001)
+    }
+
+    @Test
+    fun testScoring_musicFirst_differentArtistMatchingMovieOutranksSameArtistMismatched() {
+        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
+        val seed = makeSong("s1", "Aankhon Ki Gustakhiyan (From \"Hum Dil De Chuke Sanam\")", "Kumar Sanu")
+        val candDiffArtistMatchMovie = makeSong("c1", "Chand Chupa Badal Mein (From \"Hum Dil De Chuke Sanam\")", "Udit Narayan")
+        val candSameArtistDiffMovie = makeSong("c2", "Tujhe Dekha Toh (From \"DDLJ\")", "Kumar Sanu")
+
+        val scored = pipeline.scoreCandidates(
+            candidates = listOf(candSameArtistDiffMovie, candDiffArtistMatchMovie),
+            seedProfile = SeedProfile(current = seed, isArtistRadio = false),
+        )
+
+        assertEquals("Different artist with matching movie/soundtrack must outrank same artist in music-first autoplay",
+            "c1", scored.first().id)
+    }
+
     // ── Offline Evaluation Harness (R5) ──────────────────────────────────────
 
     private val json = Json { ignoreUnknownKeys = true }
