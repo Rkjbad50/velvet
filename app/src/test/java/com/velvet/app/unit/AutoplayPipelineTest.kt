@@ -746,13 +746,15 @@ class AutoplayPipelineTest {
         val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
         val pritam1 = makeSong("p1", "Subha Hone Na De", "Pritam")
         val pritam2 = makeSong("p2", "Tu Hi Meri Shab Hai", "Pritam")
-        val pritam3 = makeSong("p3", "Love Mera Hit Hit", "Pritam")
         val arijit = makeSong("a1", "Tum Hi Ho", "Arijit Singh")
         val atif = makeSong("at1", "Tera Hone Laga Hoon", "Atif Aslam")
         val kk = makeSong("k1", "Zara Sa", "KK")
         val mohit = makeSong("m1", "Tum Se Hi", "Mohit Chauhan")
+        val sonu = makeSong("s1", "Kal Ho Naa Ho", "Sonu Nigam")
+        val sunidhi = makeSong("su1", "Kamli", "Sunidhi Chauhan")
+        val shreya = makeSong("sh1", "Teri Ore", "Shreya Ghoshal")
 
-        val candidates = listOf(pritam1, pritam2, pritam3, arijit, atif, kk, mohit)
+        val candidates = listOf(pritam1, pritam2, arijit, atif, kk, mohit, sonu, sunidhi, shreya)
 
         val spaced = pipeline.spaceCandidates(
             candidates = candidates,
@@ -764,7 +766,7 @@ class AutoplayPipelineTest {
         // Since lastQueuedArtist was "Pritam", first spaced track must NOT be Pritam!
         assertNotEquals("Pritam", spaced[0].artist)
 
-        // Check that within the first 4 tracks, there are no consecutive same-artist tracks
+        // Verify that when alternatives exist, no adjacent tracks share the same artist
         for (i in 0 until spaced.size - 1) {
             assertNotEquals(
                 "Adjacent tracks must have different primary artists",
@@ -772,6 +774,11 @@ class AutoplayPipelineTest {
                 spaced[i + 1].artist,
             )
         }
+
+        // Verify that Pritam tracks are properly spaced (at least 4 intervening tracks from seed)
+        val pritamIndices = spaced.indices.filter { spaced[it].artist.equals("Pritam", ignoreCase = true) }
+        assertTrue(pritamIndices.isNotEmpty())
+        assertTrue("First Pritam appearance should be after at least 4 intervening tracks, actual: ${pritamIndices[0]}", pritamIndices[0] >= 4)
     }
 
     @Test
