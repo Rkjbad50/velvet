@@ -373,8 +373,8 @@ private val DEVOTIONAL_TERMS = setOf(
     "ashtak", "ashtakam", "sunderkand", "prarthana", "vandana", "har har", "om namah",
     "gayatri", "vishnu", "sai", "govind", "gopal", "bhagwan", "mandir",
     "bajrang", "bajrangbali", "shambhu", "mahakaal", "mahakal", "rudra", "shlok", "shloka",
-    "suktam", "sukta", "narayan", "raghupati", "vaishnav", "ganga", "shyam", "murari",
-    "kunj bihari", "gopinath", "jagannath", "bhole", "kedarnath", "badrinath", "shani", "surya", "navgraha",
+    "suktam", "sukta", "satyanarayan", "raghupati", "vaishnav", "ganga aarti", "shyam", "murari",
+    "kunj bihari", "gopinath", "jagannath", "bhole", "kedarnath", "badrinath", "shani dev", "navgraha",
 )
 
 private val DEVOTIONAL_ARTISTS = setOf(
@@ -386,6 +386,7 @@ private val DEVOTIONAL_ARTISTS = setOf(
 private val PUNJABI_ARTISTS = setOf(
     "sidhu moosewala", "karan aujla", "diljit dosanjh", "ap dhillon", "shubh", "amrit maan",
     "jassi gill", "jordan sandhu", "cheema y", "b praak", "jaani", "harrdy sandhu", "kaka", "sukhe",
+    "shinda kahlon", "gurinder gill",
 )
 
 private val SUFI_GHAZAL_TERMS = setOf(
