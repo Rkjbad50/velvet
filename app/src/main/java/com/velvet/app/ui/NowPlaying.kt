@@ -156,6 +156,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
@@ -1861,8 +1862,6 @@ private fun QueueSheet(
     var autoScrollJob by remember { mutableStateOf<Job?>(null) }
 
     val haptic = LocalHapticFeedback.current
-    val density = LocalDensity.current
-    val coroutineScope = rememberCoroutineScope()
 
     val getItemHeightPx: () -> Float = {
         val measured = listState.layoutInfo.visibleItemsInfo
