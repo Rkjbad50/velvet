@@ -1392,7 +1392,7 @@ class AutoplayPipeline(
         val spaced = mutableListOf<Song>()
         val recentArtists = ArrayDeque<String>()
         if (!lastQueuedArtist.isNullOrBlank()) {
-            recentArtists.add(lastQueuedArtist)
+            recentArtists.add(normalizePrimaryArtist(lastQueuedArtist))
         }
         var prevMovie = lastQueuedMovie
         val rng = if (randomSeed != null) kotlin.random.Random(randomSeed) else kotlin.random.Random.Default
