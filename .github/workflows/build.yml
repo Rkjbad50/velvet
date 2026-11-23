@@ -2,20 +2,32 @@ name: Build VELVET APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'fix/**', 'checkpoint/**']
     tags: ['v*']
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
-
-permissions:
-  contents: write
+    inputs:
+      publish_release:
+        description: 'Publish official GitHub Release (True/False)'
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Exact release tag to publish (e.g. v2.7.2 - required if publish_release is true)'
+        required: false
+        type: string
 
 concurrency:
-  group: build
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
+    name: Build & Verify (CI)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -33,29 +45,58 @@ jobs:
           BUILD_NUMBER=${{ github.run_number }}
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
 
-      - name: Build release APK
+      - name: Run Unit Tests & Build release APK
         run: gradle testReleaseUnitTest assembleRelease --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
           name: velvet-apk
           path: app/build/outputs/apk/release/*.apk
+          retention-days: 14
+
+  release:
+    name: Publish Official Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: velvet-apk
+          path: app/build/outputs/apk/release
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.release_tag }}"
           else
-            TAG="v2.7.2"
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Tag '$TAG' is not an exact semantic version tag (must start with v followed by numbers, e.g. v2.7.2)"
+            exit 1
+          fi
+
           VERSION="${TAG#v}"
           APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          if [[ ! -f "$APK_FILE" ]]; then
+            echo "::error::Release APK not found in artifacts"
+            exit 1
+          fi
+
           cp "$APK_FILE" velvet.apk
           SHA256=$(sha256sum velvet.apk | awk '{print $1}')
-          echo "Release tag: $TAG"
-          echo "SHA256: $SHA256"
+          BUILD_NUMBER=${{ github.run_number }}
+
+          echo "Publishing Release for tag: $TAG (Version: $VERSION, Build: $BUILD_NUMBER, SHA256: $SHA256)"
 
           cat <<EOF > update.json
           {
@@ -71,44 +112,19 @@ jobs:
 
           **SHA-256:** \`$SHA256\`
 
-          #### 🌟 Highlights & What's New in v2.7.2:
-          - ⏯️ **Rebuilt Playlist Play / Pause / Shuffle Transport Controls**:
-            - **Running Playlist Reshuffle**: Tapping the Shuffle button while a playlist is actively playing now dynamically reshuffles upcoming tracks with a fresh Fisher-Yates permutation and displays a live toast ("Reshuffled queue 🔀") without interrupting playback.
-            - **Active Shuffle State Indication**: The playlist header Shuffle button now highlights in the theme accent color when shuffle is active.
-            - **Sequential Play / Resume Fix**: Resuming paused playlists preserves exact track, playback position, and remaining queue order without restarting from track 0.
-            - Centralized, session-aware state management across all collection headers (Local Playlists, Liked Songs, Downloads, Albums).
-          - 🪟 **High-Contrast Themed Settings Modal Popups**:
-            - Completely removed fragile Compose DropdownMenus across Settings.
-            - Replaced with high-contrast, theme-adaptive modal selection dialogs for Font style, Seekbar style, and Visualizer style, featuring custom card surfaces, radio buttons, and descriptions.
-          - 🌊 **4 Distinct Modern Pulse Wave Visualizer Styles**:
-            - **Fluid Wave**: Silky traveling harmonic continuous ribbon wave with ambient gradient volume.
-            - **Beat Equalizer**: Symmetric studio equalizer spectrum bars with PowerAmp-style beat bounce and aura.
-            - **Neon Ripple**: Completely redesigned concentric expanding radial acoustic ripples with radiating sound particle sparks and a central pulsing beacon.
-            - **Minimal Crest**: Razor-sharp cybernetic acoustic needle and oscilloscope crest profile with luminous peak.
-          - 📋 **Rebuilt Queue Long-Press Drag & Reorder**:
-            - Unified gesture architecture that eliminates pointer slop conflicts between horizontal swipes (Play Next / Remove) and vertical reorder drag.
-            - Added dedicated drag handle icons (`DragHandle`) on track rows for instantaneous reordering.
-            - Smooth live drag tracking formula ensuring zero visual jitter during list item reordering.
-          - 📐 **Queue Bottom Sheet 90% Screen Height Limit**:
-            - Limited expanded Queue sheet height strictly to 90% of screen height, ensuring the top 10% reveals the layered background page underneath without covering the phone's system status bar.
-          - 🛠️ **In-App Updater False Error Prompt Fix**:
-            - Suppressed false aborted/failed update toasts when Velvet resumes while the Android system PackageInstaller is in-flight.
-          - 🎨 **Settings About Card Layout Fix**:
-            - Fixed \`v2.7.2\` version badge text from breaking or wrapping onto two lines on narrow screens.
-          - 🧠 **Autoplay Engine V3 & Song Identity V2**:
-            - **Session Dismissal Memory (`DismissedTrackRegistry`)**: Explicitly removed queue tracks are barred from re-insertions by Autoplay in the active session.
-            - **Original Studio Audio Quality Gate**: Strict classification engine (`AudioClassification`) prioritizing official Topic and record label studio audio releases over lyrical uploads, dialogue film clips, and AI upscaled re-uploads.
-          - 📱 **Android 15+ Target SDK 36**:
-            - Upgraded \`targetSdk = 36\` and \`compileSdk = 36\`.
-            - Set minimum SDK to Android 12 (API 31) for modern Android runtime optimization.
-          - 🔒 **Google Play Protect Passed**: 100% telemetry-free, zero tracking, signed release.
-
+          Official production release built and verified by CI.
           Direct download: **velvet.apk** below.
           EOF
 
-          gh release delete "$TAG" --yes --repo "${{ github.repository }}" 2>/dev/null || true
-          gh release create "$TAG" velvet.apk update.json \
-            --repo "${{ github.repository }}" \
-            --title "Version $VERSION" \
-            --notes-file release_notes.md \
-            --latest
+          # Verify if release already exists. Fail safely rather than automatically deleting releases.
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Uploading/updating assets without deleting release..."
+            gh release upload "$TAG" velvet.apk update.json --repo "${{ github.repository }}" --clobber
+          else
+            echo "Creating new GitHub Release $TAG..."
+            gh release create "$TAG" velvet.apk update.json \
+              --repo "${{ github.repository }}" \
+              --title "Version $VERSION" \
+              --notes-file release_notes.md \
+              --latest
+          fi
