@@ -38,6 +38,8 @@ import com.velvet.app.playback.toMediaItem
 import com.velvet.app.playback.toSong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -76,6 +78,8 @@ object PlayerConnection {
     var isRadioActive by mutableStateOf(false)
         private set
     private var isExtendingAutoplay = false
+    private var autoplayJob: Job? = null
+    private var currentAutoplayGeneration = 0L
 
     /**
      * Whether playback originated from a user-created local playlist.
@@ -710,8 +714,10 @@ object PlayerConnection {
         if (isExtendingAutoplay) return
 
         val requestQueueVersion = queueManager.queueVersion
+        val generation = ++currentAutoplayGeneration
         isExtendingAutoplay = true
-        CoroutineScope(Dispatchers.IO).launch {
+        autoplayJob?.cancel()
+        autoplayJob = CoroutineScope(Dispatchers.IO).launch {
             try {
                 val snapshot = (
                     queueManager.history +
@@ -731,6 +737,13 @@ object PlayerConnection {
                 val related = VelvetApp.autoplayPipeline.next(seedProfile, snapshot, n = 10)
 
                 withContext(Dispatchers.Main) {
+                    if (!isActive || generation != currentAutoplayGeneration) return@withContext
+                    val isStillEnabled = VelvetApp.library.data.value.autoplay || isRadioActive
+                    if (!isStillEnabled) return@withContext
+                    if (current?.id != targetSeed.id && queueManager.history.lastOrNull()?.id != targetSeed.id) {
+                        com.velvet.app.diagnostics.DiagnosticsLogger.i("Autoplay", "Autoplay result discarded: active seed changed")
+                        return@withContext
+                    }
                     val filteredRelated = related.filterNot { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) }
                     if (filteredRelated.isNotEmpty()) {
                         if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
@@ -748,7 +761,9 @@ object PlayerConnection {
                 }
             } catch (_: Exception) {
             } finally {
-                isExtendingAutoplay = false
+                if (generation == currentAutoplayGeneration) {
+                    isExtendingAutoplay = false
+                }
             }
         }
     }

@@ -984,6 +984,86 @@ class AutoplayPipelineTest {
         assertEquals(2, picks.size)
         assertEquals("Artist A (completed) must rank above Artist B (skipped early)", "cand_A", picks.first().id)
     }
+
+    @Test
+    fun testBhaktiAutoplay_hardRejectsSecularSongsBySameArtist() = runBlocking {
+        val seed = makeSong("seed_hc", "Shree Hanuman Chalisa", "Hariharan")
+        val dev1 = makeSong("dev1", "Sankat Mochan Hanuman Ashtak", "Hariharan - Topic", preferred = true)
+        val dev2 = makeSong("dev2", "Bajrang Baan", "Hariharan - Topic", preferred = true)
+        val devOther = makeSong("dev3", "Jai Ganesh Deva", "Anuradha Paudwal - Topic", preferred = true)
+        val secular1 = makeSong("sec1", "Tu Hi Re", "Hariharan - Topic", preferred = true)
+        val secular2 = makeSong("sec2", "Lungi Dance Party Remix", "Hariharan - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(secular1, dev1, secular2, dev2, devOther) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 5)
+        assertEquals(3, next.size)
+        assertTrue(next.none { it.id == "sec1" })
+        assertTrue(next.none { it.id == "sec2" })
+        assertTrue(next.all { it.id in setOf("dev1", "dev2", "dev3") })
+    }
+
+    @Test
+    fun testBhaktiAutoplay_hardRejectsSouthIndianAndEnglishPop() = runBlocking {
+        val seed = makeSong("seed_hc", "Shree Hanuman Chalisa", "Hariharan")
+        val devHindi = makeSong("dev_h", "Shiv Tandav Stotram", "Shankar Mahadevan - Topic", preferred = true)
+        val southIndian = makeSong("south_1", "Pala Pala", "Harris Jayaraj - Topic", preferred = true)
+        val englishPop = makeSong("eng_1", "Shape of You Party Pop", "Ed Sheeran - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(southIndian, devHindi, englishPop) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 5)
+        assertEquals(1, next.size)
+        assertEquals("dev_h", next[0].id)
+    }
+
+    @Test
+    fun testBhaktiAutoplay_negativeScoreFallback_returnsEmptyListSafely() = runBlocking {
+        val seed = makeSong("seed_hc", "Shree Hanuman Chalisa", "Hariharan")
+        // All candidates are secular songs that will be hard rejected or score negative
+        val secular1 = makeSong("sec1", "Club Dance Party Anthem", "Badshah - Topic", preferred = true)
+        val secular2 = makeSong("sec2", "Saturday Saturday Night Club", "DJ Party - Topic", preferred = true)
+
+        val pipeline = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(secular1, secular2) }),
+            history = history,
+        )
+
+        val next = pipeline.next(seed, n = 5)
+        // Must return empty list safely instead of force-returning negative-score or mismatched tracks
+        assertEquals(0, next.size)
+    }
+
+    @Test
+    fun testNormalAutoplay_bollywoodAndPunjabiNotOverFiltered() = runBlocking {
+        val seedBollywood = makeSong("seed_bolly", "Aankhon Ki Gustakhiyan", "Kumar Sanu")
+        val candBolly1 = makeSong("b1", "Chand Chupa Badal Mein", "Udit Narayan - Topic", preferred = true)
+        val candBolly2 = makeSong("b2", "Dheere Dheere Se", "Kumar Sanu - Topic", preferred = true)
+
+        val pipelineBolly = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candBolly1, candBolly2) }),
+            history = history,
+        )
+        val picksBolly = pipelineBolly.next(seedBollywood, n = 5)
+        assertEquals(2, picksBolly.size)
+
+        val seedPunjabi = makeSong("seed_punjabi", "Brown Munde", "AP Dhillon")
+        val candPunjabi1 = makeSong("p1", "Excuses", "AP Dhillon - Topic", preferred = true)
+        val candPunjabi2 = makeSong("p2", "Insane", "Shinda Kahlon - Topic", preferred = true)
+
+        val pipelinePunjabi = AutoplayPipeline(
+            sources = listOf(CandidateSource { listOf(candPunjabi1, candPunjabi2) }),
+            history = history,
+        )
+        val picksPunjabi = pipelinePunjabi.next(seedPunjabi, n = 5)
+        assertEquals(2, picksPunjabi.size)
+    }
 }
 
 @Serializable

@@ -372,11 +372,15 @@ private val DEVOTIONAL_TERMS = setOf(
     "durga", "mata", "devi", "amritwani", "kavach", "katha", "dhun", "sankatmochan",
     "ashtak", "ashtakam", "sunderkand", "prarthana", "vandana", "har har", "om namah",
     "gayatri", "vishnu", "sai", "govind", "gopal", "bhagwan", "mandir",
+    "bajrang", "bajrangbali", "shambhu", "mahakaal", "mahakal", "rudra", "shlok", "shloka",
+    "suktam", "sukta", "narayan", "raghupati", "vaishnav", "ganga", "shyam", "murari",
+    "kunj bihari", "gopinath", "jagannath", "bhole", "kedarnath", "badrinath", "shani", "surya", "navgraha",
 )
 
 private val DEVOTIONAL_ARTISTS = setOf(
     "gulshan kumar", "anuradha paudwal", "anup jalota", "lakhbir singh lakkha", "suresh wadkar",
     "mahendra kapoor", "ravindra jain", "shankar sahney", "t series bhakti", "bhakti sagar",
+    "hariharan bhakti", "jagjit singh bhakti", "hansraj raghuwanshi", "kavita paudwal",
 )
 
 private val PUNJABI_ARTISTS = setOf(
@@ -458,7 +462,11 @@ fun detectCluster(song: Song): MusicCluster {
     val lowerTitle = song.title.lowercase(Locale.ROOT)
     val normArtist = normalizePrimaryArtist(song.artist)
 
-    if (containsTerm(song.title, DEVOTIONAL_TERMS) || containsTerm(normArtist, DEVOTIONAL_TERMS) || DEVOTIONAL_ARTISTS.any { normArtist.contains(it) }) {
+    if (containsTerm(song.title, DEVOTIONAL_TERMS) ||
+        containsTerm(normArtist, DEVOTIONAL_TERMS) ||
+        DEVOTIONAL_ARTISTS.any { normArtist.contains(it) } ||
+        (song.album != null && containsTerm(song.album, DEVOTIONAL_TERMS))
+    ) {
         return MusicCluster.DEVOTIONAL
     }
     if (containsTerm(song.title, SUFI_GHAZAL_TERMS) || containsTerm(normArtist, SUFI_GHAZAL_TERMS)) {
@@ -597,6 +605,7 @@ class AutoplayPipeline(
         val parsedSeed = SongIdentity.normalizeTitle(seed.title)
         val primaryArtist = normalizePrimaryArtist(seed.artist)
         val movieOrAlbum = parsedSeed.movie ?: seed.album ?: seedProfile.contextName
+        val isDevotionalSeed = detectCluster(seed) == MusicCluster.DEVOTIONAL
 
         // G1: Primary Radio / Watch-Next
         val g1Deferred = async(Dispatchers.IO) {
@@ -622,12 +631,17 @@ class AutoplayPipeline(
             } else emptyList()
         }
 
-        // G3: Same Primary Artist
+        // G3: Same Primary Artist (constrained to devotional tracks when seed is devotional)
         val g3Deferred = async(Dispatchers.IO) {
             if (primaryArtist.isNotBlank()) {
                 withTimeoutOrNull(timeboxMs) {
                     runCatching {
-                        artistTracksProvider?.invoke(primaryArtist) ?: emptyList()
+                        val tracks = artistTracksProvider?.invoke(primaryArtist) ?: emptyList()
+                        if (isDevotionalSeed) {
+                            tracks.filter { detectCluster(it) == MusicCluster.DEVOTIONAL }
+                        } else {
+                            tracks
+                        }
                     }.getOrDefault(emptyList())
                 } ?: emptyList()
             } else emptyList()
@@ -643,7 +657,11 @@ class AutoplayPipeline(
                         for (co in coArtists.take(3)) {
                             artistTracksProvider?.invoke(co)?.let { list.addAll(it.take(5)) }
                         }
-                        list
+                        if (isDevotionalSeed) {
+                            list.filter { detectCluster(it) == MusicCluster.DEVOTIONAL }
+                        } else {
+                            list
+                        }
                     }.getOrDefault(emptyList())
                 } ?: emptyList()
             } else emptyList()
@@ -665,7 +683,7 @@ class AutoplayPipeline(
                             normalizePrimaryArtist(s.artist) == primaryArtist ||
                             (movieOrAlbum != null && (s.album?.equals(movieOrAlbum, ignoreCase = true) == true ||
                                 SongIdentity.normalizeTitle(s.title).movie?.equals(movieOrAlbum, ignoreCase = true) == true))
-                        )
+                        ) && (!isDevotionalSeed || detectCluster(s) == MusicCluster.DEVOTIONAL)
                     } ?: emptyList()
                 }.getOrDefault(emptyList())
             } ?: emptyList()
@@ -676,7 +694,8 @@ class AutoplayPipeline(
             withTimeoutOrNull(timeboxMs) {
                 runCatching {
                     recentCompletedProvider?.invoke()?.filter { s ->
-                        s.id != seed.id && normalizePrimaryArtist(s.artist) == primaryArtist
+                        s.id != seed.id && normalizePrimaryArtist(s.artist) == primaryArtist &&
+                            (!isDevotionalSeed || detectCluster(s) == MusicCluster.DEVOTIONAL)
                     } ?: emptyList()
                 }.getOrDefault(emptyList())
             } ?: emptyList()
@@ -740,9 +759,16 @@ class AutoplayPipeline(
     ): List<Song> {
         val result = executePipeline(seedProfile, queueSnapshot, n, isFallback = false)
         if (result.isEmpty()) {
-            // Never-empty fallback: expand ONCE (related of the last queued song or seed) and re-run once
-            val fallbackSeed = queueSnapshot.lastOrNull() ?: seedProfile.current
-            return executePipeline(SeedProfile(current = fallbackSeed), queueSnapshot, n, isFallback = true)
+            val seedCluster = detectCluster(seedProfile.current)
+            if (seedCluster == MusicCluster.DEVOTIONAL) {
+                DiagnosticsLogger.i("Autoplay", "No eligible devotional candidates found; preserving safe empty queue.")
+                return emptyList()
+            }
+            val fallbackSeed = queueSnapshot.lastOrNull()
+            if (fallbackSeed != null && fallbackSeed.id != seedProfile.current.id) {
+                return executePipeline(SeedProfile(current = fallbackSeed), queueSnapshot, n, isFallback = true)
+            }
+            return emptyList()
         }
         return result
     }
@@ -778,7 +804,7 @@ class AutoplayPipeline(
         // 4. Hard filter (duration & blocked keywords)
         val filteredPool = mutableListOf<CandidatePoolItem>()
         for (item in eligiblePool) {
-            if (isHardFiltered(item.song, seed.title)) {
+            if (isHardFiltered(item.song, seed)) {
                 removedHardFilter++
             } else {
                 filteredPool.add(item)
@@ -921,7 +947,7 @@ class AutoplayPipeline(
             val decision = when {
                 finalRankMap.containsKey(s.id) -> "KEPT"
                 !isEligible(s, seedPrimaryArtist) -> "DROPPED_ELIGIBILITY"
-                isHardFiltered(s, seed.title) -> "DROPPED_HARD_FILTER"
+                isHardFiltered(s, seed) -> "DROPPED_HARD_FILTER"
                 SongIdentity.canonicalGroupId(s) in persistedGroups -> "DROPPED_PERSISTED_HISTORY"
                 SongIdentity.canonicalGroupId(s) in tasteProfile.fatiguedGroupIds -> "DROPPED_FATIGUE"
                 dedupedWinners.none { it.id == s.id } -> "DROPPED_DUPLICATE"
@@ -1032,9 +1058,10 @@ class AutoplayPipeline(
 
     /**
      * Hard filter rejects blocked keywords unless seed title also contains them,
-     * rejects user-dismissed tracks, dialogue clips, and enforces duration bounds [90s, 600s].
+     * rejects user-dismissed tracks, dialogue clips, devotional/language mismatches,
+     * and enforces duration bounds [90s, 600s].
      */
-    fun isHardFiltered(candidate: Song, seedTitle: String): Boolean {
+    fun isHardFiltered(candidate: Song, seed: Song): Boolean {
         if (candidate.durationSec in 1 until config.minDurationSec || candidate.durationSec > config.maxDurationSec) {
             return true
         }
@@ -1044,7 +1071,7 @@ class AutoplayPipeline(
 
         val classification = SongIdentity.classifySong(candidate)
         val lowerCandidate = candidate.title.lowercase(Locale.ROOT)
-        val lowerSeed = seedTitle.lowercase(Locale.ROOT)
+        val lowerSeed = seed.title.lowercase(Locale.ROOT)
 
         // Film scenes and dialogue clips are strictly rejected unless seed was explicitly dialogue
         if (classification == SongIdentity.AudioClassification.FILM_DIALOGUE_VERSION && !lowerSeed.contains("dialogue")) {
@@ -1053,6 +1080,27 @@ class AutoplayPipeline(
         // AI enhanced re-uploads are strictly rejected unless requested
         if (classification == SongIdentity.AudioClassification.ENHANCED_REUPLOAD && !lowerSeed.contains("4k")) {
             return true
+        }
+
+        // Devotional seed hard rejections
+        val seedCluster = detectCluster(seed)
+        if (seedCluster == MusicCluster.DEVOTIONAL) {
+            val candCluster = detectCluster(candidate)
+            val candMood = detectMood(candidate)
+            // 1. Strictly reject candidates that are not devotional
+            if (candCluster != MusicCluster.DEVOTIONAL) {
+                return true
+            }
+            // 2. Strictly reject celebratory party/club tracks
+            if (candMood == SongMood.PARTY_CELEBRATORY) {
+                return true
+            }
+            // 3. Strictly reject unrelated South Indic tracks when seed is Hindi devotional
+            val seedIsSouth = isSouthIndic(seed) || hasSouthIndicScript(seed.title)
+            val candIsSouth = isSouthIndic(candidate) || hasSouthIndicScript(candidate.title)
+            if (!seedIsSouth && candIsSouth) {
+                return true
+            }
         }
 
         for (kw in config.blockedKeywords) {
@@ -1066,6 +1114,9 @@ class AutoplayPipeline(
         }
         return false
     }
+
+    fun isHardFiltered(candidate: Song, seedTitle: String): Boolean =
+        isHardFiltered(candidate, Song(id = "", title = seedTitle, artist = ""))
 
     /**
      * Dedupe winner selection order:
@@ -1361,8 +1412,7 @@ class AutoplayPipeline(
         }
 
         val filtered = scoredList.filter { it.second >= 0 }
-        val toSort = if (filtered.isNotEmpty()) filtered else scoredList
-        return toSort.sortedByDescending { it.second }.map { it.first }
+        return filtered.sortedByDescending { it.second }.map { it.first }
     }
 
     /**
