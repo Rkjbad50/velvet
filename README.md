@@ -26,6 +26,29 @@
 
 ---
 
+## 🌟 What's New in v2.7.3
+
+- 📑 **Queue Bottom Sheet Anchoring & Fluid Expansion**:
+  - **Bottom Anchoring**: Bottom sheet is physically anchored flush to the bottom edge throughout its entire lifecycle. Eliminates floating gaps and ensures bottom controls never render over queue tracks.
+  - **Jerk & Stutter Elimination**: Seamless expansion path without conflicting partial expansion states (`skipPartiallyExpanded = true`). Height strictly capped at 90% screen height, preserving top status bar clearance.
+  - **Android System Navigation Insets**: Correctly handles edge-to-edge window insets across 3-button navigation and gesture pills without double-padding.
+
+- 🎚️ **Queue Track Drag & Drop Physics & Auto-Scroll**:
+  - **Slot Swap Hysteresis Deadzone**: Implemented a $0.55\times$ item height deadzone in `onDragDelta`. Eliminates rapid boundary flickering and micro-tremor jitter during track reordering.
+  - **Viewport-Edge-Bounded Auto-Scroll**: Auto-scroll activates only when the dragged item enters within 56dp of the visible viewport boundary, with gradual speed scaling and instant cancellation upon release.
+  - **Single Gesture Ownership**: Dedicated drag handle (`AppIcons.DragHandle`) owns vertical reordering, keeping horizontal swipes (Play Next / Remove) and list scrolling completely conflict-free.
+
+- 🎵 **Music-First Autoplay Ranking & Artist Radio**:
+  - **Music First, Artist Last**: Normal similar-songs autoplay strictly ranks Genre > Mood > Era > Tempo > Movie/Soundtrack Cohesion over Artist Identity (`w3 = 0.0`), utilizing artist identity strictly for diversity and spacing.
+  - **Dedicated Artist Radio Mode**: When starting an Artist Radio session, matching tracks from the selected artist receive top preference ($+100.0$ bonus).
+  - **Devotional / Bhakti Context Protection**: Hard rejection of secular, party, or mismatched tracks during devotional seeds (e.g. *Shree Hanuman Chalisa*).
+  - **Safe Empty Queue Fallback**: Removed negative-score fallback to prevent unrelated songs from force-filling the queue.
+
+- 🛡️ **Playback Stability & Safe Recovery**:
+  - Transient network retry jobs are bounded, cancellable, generation-bound, and strictly respect user pause.
+
+---
+
 ## 🌟 What's New in v2.7.2
 
 - ⏯️ **Rebuilt Playlist Play / Pause / Shuffle Transport Controls**:

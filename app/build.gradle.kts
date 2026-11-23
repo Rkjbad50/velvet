@@ -51,7 +51,7 @@ android {
         minSdk = minSdkVer
         targetSdk = targetSdkVer
         versionCode = buildNumber
-        versionName = "2.7.2"
+        versionName = "2.7.3"
         buildConfigField("int", "UPSTREAM_BUILD_NUMBER", upstreamBuildNumber.toString())
         buildConfigField("String", "RELEASES_URL", "\"${releaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
