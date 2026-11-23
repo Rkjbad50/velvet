@@ -162,7 +162,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
         artworkUrl = info.thumb,
     )
 
-    val albumSessionId = "album:${info.id}"
+    val albumSessionId = "album:${album.url}"
     val isPlayingAlbum = PlayerConnection.isPlaylistSessionPlaying(albumSessionId)
     BackPage(onBack) {
         item {

@@ -1,6 +1,5 @@
 package com.velvet.app.playback
 
-import com.velvet.app.data.QueueItem
 import com.velvet.app.data.Song
 import java.util.concurrent.ConcurrentHashMap
 
