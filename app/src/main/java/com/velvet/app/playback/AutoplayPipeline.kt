@@ -1440,7 +1440,7 @@ class AutoplayPipeline(
 
                 // Tier 3: Relax artist spacing to at least 2 intervening tracks
                 if (eligibleIndices.isEmpty()) {
-                    val halfRecentArtists = recentArtists.takeLast(2).toSet()
+                    val halfRecentArtists = recentArtists.toList().takeLast(2).toSet()
                     eligibleIndices = pool.indices.filter { idx ->
                         normalizePrimaryArtist(pool[idx].artist) !in halfRecentArtists
                     }
