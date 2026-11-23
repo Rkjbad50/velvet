@@ -1,6 +1,5 @@
 package com.velvet.app.unit
 
-import com.velvet.app.data.QueueItem
 import com.velvet.app.data.Song
 import com.velvet.app.playback.AutoplayConfig
 import com.velvet.app.playback.AutoplayPipeline
