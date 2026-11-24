@@ -17,6 +17,7 @@ import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Storage contract for local recommendation events.
@@ -370,6 +371,10 @@ class RecommendationEventRepository(
 
     private val deduplicator = EventDeduplicator()
     private val queue = Channel<WriteOp>(Channel.UNLIMITED)
+    private val mutationCounter = AtomicLong(0L)
+
+    val mutationSequence: Long
+        get() = mutationCounter.get()
 
     init {
         scope.launch {
@@ -448,28 +453,34 @@ class RecommendationEventRepository(
         if (!deduplicator.tryAcquire(event.eventId, event.idempotencyKey)) {
             return false
         }
-        return queue.trySend(WriteOp.Single(event)).isSuccess
+        val sent = queue.trySend(WriteOp.Single(event)).isSuccess
+        if (sent) mutationCounter.incrementAndGet()
+        return sent
     }
 
     fun recordAll(events: List<RecommendationEvent>): Int {
         val accepted = events.filter { deduplicator.tryAcquire(it.eventId, it.idempotencyKey) }
         if (accepted.isEmpty()) return 0
         queue.trySend(WriteOp.Batch(accepted))
+        mutationCounter.incrementAndGet()
         return accepted.size
     }
 
     fun pruneOldEvents(retentionDays: Long = DEFAULT_RETENTION_DAYS, maxEvents: Int = DEFAULT_MAX_EVENTS) {
         val cutoff = clock() - TimeUnit.DAYS.toMillis(retentionDays)
         queue.trySend(WriteOp.Prune(cutoff, maxEvents))
+        mutationCounter.incrementAndGet()
     }
 
     fun scrubSearchQueries() {
         queue.trySend(WriteOp.ScrubQueries)
+        mutationCounter.incrementAndGet()
     }
 
     fun clearAll() {
         deduplicator.clear()
         queue.trySend(WriteOp.ClearAll)
+        mutationCounter.incrementAndGet()
     }
 
     /** Blocks until all queued writes have reached storage. Primarily for unit tests and shutdown. */
@@ -546,6 +557,7 @@ class RecommendationEventRepository(
 
         val accepted = mapped.filter { !backend.existsIdempotencyKey(it.idempotencyKey!!) }
         val inserted = if (accepted.isNotEmpty()) backend.insertBatch(accepted) else 0
+        if (inserted > 0) mutationCounter.incrementAndGet()
         backend.setMeta(META_LEGACY_MIGRATION_DONE, "true")
         backend.setMeta(META_LEGACY_MIGRATION_COUNT, legacyEvents.size.toString())
         return inserted

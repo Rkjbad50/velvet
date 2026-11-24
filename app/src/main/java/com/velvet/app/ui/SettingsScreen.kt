@@ -380,6 +380,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                     library.clearSearches()
                 }
             }
+            ActionRow("Reset recommendation profile", "Clears learned listening affinities, skips, and session taste state") {
+                confirm = ConfirmRequest("Reset recommendation profile?", "Your liked songs and playlists remain saved; personalized learning starts fresh.", "Reset profile") {
+                    scope.launch {
+                        VelvetApp.userProfileRepository.resetLocalProfile()
+                        Toast.makeText(context, "Recommendation profile reset", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         }
 
         SettingsGroup("About") {

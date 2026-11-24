@@ -44,6 +44,16 @@ class VelvetApp : Application(), ImageLoaderFactory {
     val eventRecorder by lazy {
         com.velvet.app.recommendation.events.EventRecorder(recommendationEventRepo)
     }
+    val trackFeatureRepository by lazy {
+        com.velvet.app.recommendation.features.TrackFeatureRepository()
+    }
+    val userProfileRepository by lazy {
+        com.velvet.app.recommendation.profile.DefaultUserProfileRepository(
+            eventRepository = recommendationEventRepo,
+            libraryDataProvider = { library.data.value },
+            builder = com.velvet.app.recommendation.profile.TasteProfileBuilder(trackFeatureRepository),
+        )
+    }
     val autoplayPipeline by lazy {
         com.velvet.app.playback.AutoplayPipeline(
             sources = listOf(
@@ -166,6 +176,10 @@ class VelvetApp : Application(), ImageLoaderFactory {
             get() = instance.recommendationEventRepo
         val eventRecorder: com.velvet.app.recommendation.events.EventRecorder
             get() = instance.eventRecorder
+        val trackFeatureRepository: com.velvet.app.recommendation.features.TrackFeatureRepository
+            get() = instance.trackFeatureRepository
+        val userProfileRepository: com.velvet.app.recommendation.profile.UserProfileRepository
+            get() = instance.userProfileRepository
 
         fun eventRecorderOrNull(): com.velvet.app.recommendation.events.EventRecorder? =
             if (::instance.isInitialized) runCatching { instance.eventRecorder }.getOrNull() else null

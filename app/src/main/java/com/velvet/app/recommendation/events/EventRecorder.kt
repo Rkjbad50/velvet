@@ -423,6 +423,37 @@ class EventRecorder(
         }
     }
 
+    fun recordNotInterested(
+        song: Song,
+        surface: RecommendationSurface = RecommendationSurface.OTHER,
+        reason: String = "USER_NOT_INTERESTED",
+    ) {
+        val now = clock()
+        val prov = provenanceByVideoId[song.id]
+        val recId = SongIdentity.canonicalGroupId(song)
+        repository.record(
+            RecommendationEvent(
+                eventId = UUID.randomUUID().toString(),
+                eventType = RecommendationEventType.RECOMMENDATION_NOT_INTERESTED,
+                occurredAtMillis = now,
+                canonicalRecordingId = recId,
+                providerItemId = song.id,
+                artistIds = SongIdentity.normalizeArtists(song.artist).toList(),
+                albumOrWorkId = SongIdentity.normalizeTitle(song.title).movie ?: song.album,
+                requestId = prov?.requestId,
+                recommendationSessionId = appSessionId,
+                radioSessionId = prov?.radioSessionId ?: activeRadioSessionId,
+                mode = prov?.mode,
+                surface = surface,
+                rankPosition = prov?.rankPosition,
+                sourceId = prov?.sourceId,
+                playbackTransitionReason = reason,
+                modelVersion = prov?.modelVersion,
+                idempotencyKey = "not_interested:${song.id}:${now / 2_000L}",
+            )
+        )
+    }
+
     fun recordPlaylistStarted(
         playlistId: String,
         surface: RecommendationSurface = RecommendationSurface.LIBRARY,
