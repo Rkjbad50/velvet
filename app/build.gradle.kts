@@ -164,7 +164,7 @@ dependencies {
     implementation(libs.findLibrary("media3-datasource-okhttp").get())
     // installs the Compose libraries' bundled startup profiles on sideloaded installs
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
-    implementation("androidx.palette:palette-ktx:1.0.0")
+    implementation("androidx.palette:palette-ktx:1.1.0")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
