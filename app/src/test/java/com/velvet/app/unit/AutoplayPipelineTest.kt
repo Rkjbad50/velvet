@@ -874,11 +874,11 @@ class AutoplayPipelineTest {
     @Test
     fun testAutoplay_hierarchy_genreAboveMoodAboveTempo() {
         val pipeline = AutoplayPipeline(emptyList(), SessionHistory(20))
-        val seed = makeSong("seed1", "Tum Hi Ho Aashiqui 2", "Arijit Singh")
+        val seed = makeSong("seed1", "Aankhon Ki Gustakhiyan", "Kumar Sanu")
 
-        // Matches Genre (Bollywood Melody)
-        val candGenreMatch = makeSong("c_genre", "Aankhon Ki Gustakhiyan", "Kumar Sanu")
-        // Clashing Genre (Punjabi Bhangra)
+        // Matches Genre (Bollywood 90s Melody: Udit Narayan)
+        val candGenreMatch = makeSong("c_genre", "Chand Chupa Badal Mein", "Udit Narayan")
+        // Clashing Genre (Punjabi Bhangra: Diljit Dosanjh)
         val candMoodOnly = makeSong("c_mood", "Do You Know Romantic Love", "Diljit Dosanjh")
 
         val breakdowns = mutableMapOf<String, Map<String, Double>>()
