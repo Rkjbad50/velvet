@@ -156,3 +156,22 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
 - **Verification Scope Caveat:** All Phase 2 identity, strict original-audio classification, ontology, and feature-extraction logic ran in `:app:testReleaseUnitTest` on JVM and compiled/shrank cleanly inside `:app:assembleRelease`. Live YouTube HTML/InnerTube scraping via NewPipeExtractor `StreamInfo` / `StreamInfoItem` against production YouTube channels on a physical Android device remains unverified here (`ExtractionTest.streamFetch` is skipped in CI).
 - **Rollback Point:**
   - Roll back cleanly to Phase 1 via branch `checkpoint/phase-1-events` (`ff01a6a`) or to pre-blueprint `main` (`2e3b362`).
+  - Phase 2 docs commit `9b03ab2` also recorded on `checkpoint/phase-2-identity`.
+
+### Phase 3 — Multi-Horizon Listener Profile v2
+- **Status:** **Code & CI Verification Complete**
+- **Branch / Commit:** `checkpoint/phase-3-profile` (`82781bf`, branched from `checkpoint/phase-2-identity`; `main` untouched at `2e3b362`).
+- **Scope Implemented:**
+  - Created `UserTasteSnapshot`, `FeaturePreferenceVector`, `ExplicitPreferenceSet`, `SearchIntentSnapshot`, and `FatigueSnapshot` in `app/src/main/java/com/velvet/app/recommendation/profile/UserTasteSnapshot.kt` (including `toLegacyTasteProfile()` compatibility bridge).
+  - Implemented multi-horizon decay & signal weighting in `app/src/main/java/com/velvet/app/recommendation/profile/TasteProfileBuilder.kt`: independent long-term (90d half-life), medium-term (14d), and session (2h) profiles; exposure saturation; automatic `TRACK_REPEATED_AUTOMATICALLY` excluded from preference/novelty/overplay inflation; unconverted `SEARCH_SUBMITTED` isolated to weak short-lived `searchIntent` (promotes only after click + meaningful listen); single early skip produces mild fast-decaying item penalty without banning artists/genres; `>= 2` independent early skips in 14d trigger 30d recording fatigue.
+  - Added `recordNotInterested(...)` to `app/src/main/java/com/velvet/app/recommendation/events/EventRecorder.kt` and O(1) `mutationSequence` counter to `app/src/main/java/com/velvet/app/recommendation/events/RecommendationEventRepository.kt`.
+  - Built incremental watermarked `DefaultUserProfileRepository` (`app/src/main/java/com/velvet/app/recommendation/profile/UserProfileRepository.kt`), wired into `VelvetApp.kt`, and added `"Reset recommendation profile"` action row in `SettingsScreen.kt` (leaving saved liked songs & playlists untouched).
+  - Preserved `TasteEngine`, `AutoplayPipeline`, `Weights`, `.github/workflows/build.yml`, and `versionName = "2.7.5"` unchanged.
+- **CI/CD Verification:**
+  - **Workflow Modified:** None (`.github/workflows/build.yml` preserved intact).
+  - **GitHub Actions Run:** `45469084115` on `checkpoint/phase-3-profile` (`82781bf`), job `Build & Verify (CI)` (`138711811750`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 3m 13s** (`59 actionable tasks: 59 executed`); `velvet-apk` uploaded; `Publish Official Release` skipped (`0s`).
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **262 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED**, including all 5 new suites in `app/src/test/java/com/velvet/app/unit/Phase3UserProfileTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; on-device UI testing of Settings `"Reset recommendation profile"` against SQLite remains unverified on physical hardware.
+- **Rollback Point:**
+  - Roll back cleanly to Phase 2 via branch `checkpoint/phase-2-identity` (`9b03ab2`) or to pre-blueprint `main` (`2e3b362`).
