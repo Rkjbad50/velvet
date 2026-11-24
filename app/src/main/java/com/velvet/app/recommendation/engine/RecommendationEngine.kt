@@ -79,14 +79,20 @@ class DefaultRecommendationEngine(
         val dedupedResult = duplicateFilter.filter(eligible, request)
         val ranked = ranker.rank(dedupedResult.kept, request, profile, seedFeatures)
 
-        val recentFeatures = request.recentSongs
-            .takeLast(6)
+        val chronologicalLeadIn = (
+            request.recentSongs.takeLast(4) +
+                listOfNotNull(primarySeed) +
+                request.userQueueSongs +
+                request.queueSongs
+            ).distinctBy { it.id }.takeLast(6)
+        val recentFeatures = chronologicalLeadIn
             .map { featureRepository.getCachedOrExtract(it) }
+        val seamAnchorFeatures = recentFeatures.lastOrNull() ?: seedFeatures
         val sequenced = sequenceOptimizer.optimize(
             ranked = ranked,
             request = request,
             recentHistoryFeatures = recentFeatures,
-            seedFeatures = seedFeatures,
+            seedFeatures = seamAnchorFeatures,
         )
 
         val finishedAt = clock()

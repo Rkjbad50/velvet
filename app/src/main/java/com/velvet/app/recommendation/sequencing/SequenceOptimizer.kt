@@ -236,7 +236,7 @@ class DefaultSequenceOptimizer(
         config: SequenceConfig,
     ): List<RankedCandidate> {
         val cooldownSlice = if (strictArtistCooldown && config.artistCooldownWindow > 0) {
-            state.recentFeatures.takeLast(minOf(config.artistCooldownWindow, 2))
+            state.recentFeatures.takeLast(config.artistCooldownWindow)
         } else emptyList()
 
         return pool.filter { ranked ->

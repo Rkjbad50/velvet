@@ -908,7 +908,7 @@ object PlayerConnection {
             currentSong = current ?: st.current?.song,
             upcomingSongs = st.upNext.map { it.song },
             userQueueSongs = st.userQueue.map { it.song },
-            historySongs = (st.history + st.sourceList).map { it.song },
+            historySongs = st.history.map { it.song },
             queueVersion = ver,
             repeatMode = st.repeatMode,
             isAutoplayEnabled = libData.autoplay,
