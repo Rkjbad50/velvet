@@ -15,9 +15,28 @@ import java.util.Locale
  */
 object RecordingIdentityResolver {
 
+    private val WORK_VERSION_PAREN_REGEX = Regex(
+        """[\[(][^)\]]*\b(?:remix|remixed|dj\s+mix|club\s+mix|slowed|reverb|lofi|lo-fi|sped\s+up|speed\s+up|speedup|""" +
+            """nightcore|acoustic|unplugged|live|concert|cover|instrumental|karaoke|mashup|remaster|remastered|""" +
+            """reprise|jhankar|encore|version)\b[^)\]]*[\])]""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private val WORK_VERSION_TAIL_REGEX = Regex(
+        """(?i)(?:\s*-\s*(?:dj\s+)?(?:remix|live(?:\s+performance|\s+concert|\s+session)?|acoustic|unplugged|""" +
+            """slowed(?:\s*\+?\s*reverb)?|reverb|lofi|lo-fi|mashup|instrumental|karaoke|cover(?:\s+by\s+.*)?)|""" +
+            """\b(?:live\s+performance|live\s+concert|dj\s+remix|slowed\s*\+?\s*reverb)\b)$""",
+    )
+
     fun resolveWork(song: Song): MusicalWorkRef {
-        val parsed = SongIdentity.normalizeTitle(song.title)
-        val artists = (SongIdentity.normalizeArtists(song.artist) + parsed.extraArtists)
+        val rawTitle = song.title.trim()
+        val baseTitle = WORK_VERSION_TAIL_REGEX.replace(
+            WORK_VERSION_PAREN_REGEX.replace(rawTitle, " "),
+            " ",
+        ).trim().ifBlank { rawTitle }
+        val parsed = SongIdentity.normalizeTitle(baseTitle)
+        val rawParsed = SongIdentity.normalizeTitle(rawTitle)
+        val artists = (SongIdentity.normalizeArtists(song.artist) + rawParsed.extraArtists)
             .filter { it.isNotBlank() }
             .toSet()
         val primary = artists.firstOrNull() ?: song.artist.lowercase(Locale.ROOT).trim().take(20)
@@ -26,7 +45,7 @@ object RecordingIdentityResolver {
             normalizedTitle = parsed.cleanTitle,
             comparisonKey = parsed.comparisonKey,
             primaryArtists = artists,
-            albumOrWorkTitle = parsed.movie ?: song.album,
+            albumOrWorkTitle = rawParsed.movie ?: song.album,
         )
     }
 
@@ -47,7 +66,7 @@ object RecordingIdentityResolver {
         val canonicalRecId = when {
             !isrc.isNullOrBlank() -> "rec:isrc:${isrc.trim().uppercase(Locale.ROOT)}"
             !musicBrainzRecordingId.isNullOrBlank() -> "rec:mbid:${musicBrainzRecordingId.trim()}"
-            else -> "rec:${parsed.comparisonKey}|$primaryArtist|$versionSuffix"
+            else -> "rec:${work.comparisonKey}|$primaryArtist|$versionSuffix"
         }
 
         val evidence = buildSet {
