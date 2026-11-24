@@ -66,9 +66,11 @@ data class QueueState(
  * without Android framework dependencies.
  */
 class QueueManager(initialState: QueueState = QueueState()) {
+    @Volatile
     var state: QueueState = initialState
         private set
 
+    @Volatile
     var queueVersion: Long = 0L
         private set
 

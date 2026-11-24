@@ -107,6 +107,66 @@ class VelvetApp : Application(), ImageLoaderFactory {
         )
     }
 
+    val recommendationEngine: com.velvet.app.recommendation.engine.DefaultRecommendationEngine by lazy {
+        val searchSongsProvider: suspend (String) -> List<com.velvet.app.data.Song> = { query ->
+            com.velvet.app.data.YouTube.Search(query, com.velvet.app.data.YouTube.FILTER_SONGS)
+                .loadNext()
+                .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
+                .map { it.song }
+        }
+        val sources = listOf(
+            com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource(
+                relatedProvider = { seed -> com.velvet.app.data.StreamResolver.related(seed.id) },
+            ),
+            com.velvet.app.recommendation.candidates.SameReleaseCandidateSource(
+                releaseTracksProvider = searchSongsProvider,
+            ),
+            com.velvet.app.recommendation.candidates.ArtistCatalogueCandidateSource(
+                artistTracksProvider = { artist -> searchSongsProvider("$artist songs") },
+            ),
+            com.velvet.app.recommendation.candidates.CollaboratorCandidateSource(
+                artistTracksProvider = { artist -> searchSongsProvider("$artist songs") },
+            ),
+            com.velvet.app.recommendation.candidates.GenreLanguageNeighbourSource(
+                querySearchProvider = searchSongsProvider,
+            ),
+            com.velvet.app.recommendation.candidates.LibraryTrackCandidateSource(
+                libraryTracksProvider = {
+                    val data = library.data.value
+                    data.liked + data.playlists.flatMap { it.songs }
+                },
+                featureRepository = trackFeatureRepository,
+            ),
+            com.velvet.app.recommendation.candidates.SessionMomentumCandidateSource(
+                recentSessionSongsProvider = { library.data.value.recent.take(50) },
+                featureRepository = trackFeatureRepository,
+            ),
+            com.velvet.app.recommendation.candidates.AudioNeighbourCandidateSource(enabled = false),
+            com.velvet.app.recommendation.candidates.SearchIntentCandidateSource(
+                querySearchProvider = searchSongsProvider,
+            ),
+        )
+        com.velvet.app.recommendation.engine.DefaultRecommendationEngine(
+            candidatePoolBuilder = com.velvet.app.recommendation.candidates.CandidatePoolBuilder(
+                sources = sources,
+                featureRepository = trackFeatureRepository,
+            ),
+            userProfileRepository = userProfileRepository,
+            featureRepository = trackFeatureRepository,
+        )
+    }
+
+    val autoplayRefillCoordinator by lazy {
+        com.velvet.app.recommendation.engine.AutoplayRefillCoordinator(
+            engine = recommendationEngine,
+            policy = com.velvet.app.recommendation.engine.RefillPolicy(
+                targetUpcomingBuffer = 10,
+                lowWatermarkTrigger = 6,
+                refillBatchSize = 10,
+            ),
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -180,8 +240,15 @@ class VelvetApp : Application(), ImageLoaderFactory {
             get() = instance.trackFeatureRepository
         val userProfileRepository: com.velvet.app.recommendation.profile.UserProfileRepository
             get() = instance.userProfileRepository
+        val recommendationEngine: com.velvet.app.recommendation.engine.DefaultRecommendationEngine
+            get() = instance.recommendationEngine
+        val autoplayRefillCoordinator: com.velvet.app.recommendation.engine.AutoplayRefillCoordinator
+            get() = instance.autoplayRefillCoordinator
 
         fun eventRecorderOrNull(): com.velvet.app.recommendation.events.EventRecorder? =
             if (::instance.isInitialized) runCatching { instance.eventRecorder }.getOrNull() else null
+
+        fun recommendationEngineOrNull(): com.velvet.app.recommendation.engine.DefaultRecommendationEngine? =
+            if (::instance.isInitialized) runCatching { instance.recommendationEngine }.getOrNull() else null
     }
 }
