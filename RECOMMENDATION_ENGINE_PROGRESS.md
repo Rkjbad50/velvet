@@ -196,3 +196,19 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
 - **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live network behaviour against YouTube servers on physical devices awaits Phase 7/8 live queue integration testing.
 - **Rollback Point:**
   - Roll back cleanly to Phase 3 via branch `checkpoint/phase-3-profile` (`169eb2b`) or to pre-blueprint `main` (`2e3b362`).
+
+### Phase 5 — Normalised Mode-Aware Ranker and Shadow Evaluator
+- **Status:** **Code & CI Verification Complete**
+- **Branch / Commit:** `checkpoint/phase-5-ranker` (`f05238d` / `503a705`, branched from `checkpoint/phase-4-candidates`; `main` untouched at `2e3b362`).
+- **Scope Implemented:**
+  - Added calibrated per-mode weight profiles (`RankerWeights`, `ModeRankerConfigs`) in `app/src/main/java/com/velvet/app/recommendation/ranking/ModeRankerConfig.kt` with `selectedArtistWeight = 0.0` strictly enforced across `SIMILAR_SONGS`, `SONG_RADIO`, `NEXT_SONG`, `AUTOPLAY`, `ENDLESS_QUEUE`, and `HOME_*`, and explicit selected-artist boost enabled only for `ARTIST_RADIO`.
+  - Built normalised, confidence-aware, explainable `DefaultCandidateRanker` (`app/src/main/java/com/velvet/app/recommendation/ranking/CandidateRanker.kt`) incorporating music type fit, ontology genre/subgenre similarity, mood fit, 1.0x/0.5x/2.0x rhythmic BPM alignment, language & era fit (with missing metadata remaining neutral rather than creating false penalties), capped taste & search-intent boosts gated by music/genre/mood compatibility, Strict Original Studio Audio quality tiering (zero OMV bonus), fatigue/clash penalties, NaN/Inf sanitization, and human-readable `RecommendationReason` breakdowns.
+  - Added offline `RankerShadowEvaluator` (`app/src/main/java/com/velvet/app/recommendation/ranking/RankerShadowEvaluator.kt`) comparing legacy `AutoplayPipeline.rankCandidates` against strict Phase 4 eligibility + Phase 5 ranking, explicitly surfacing video/`UNVERIFIED` leaks in legacy pools.
+- **Debugging & CI/CD Verification:**
+  - **Attempt 1 (`855701e`):** Run `45474194411` failed 1 of 272 unit tests (`Phase5RankerTest.goldenHierarchy_compatibleMusicBeatsSameArtistMismatchEvenWithFavoriteArtistTaste`) because artist-name tokens (`"hariharan bhakti"`) matched devotional classification ahead of explicit secular `"Party Dance"` title tokens in `MetadataFeatureExtractor`, bypassing the `compatibleMusic` gate. Fixed by protecting secular title/album indicators against artist-name devotional leakage and gating `compatibleMusic` on `rawMood >= -0.25` in `f05238d`.
+  - **Final Verified CI Run (`f05238d`):** Run `45475869985` on `checkpoint/phase-5-ranker`, job `Build & Verify (CI)` (`138735831992`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 2m 37s**; `velvet-apk` uploaded; `Publish Official Release` skipped (`0s`). (Verification push `503a705` also passed via run `45475906965`.)
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **271 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED**, including all 4 suites in `app/src/test/java/com/velvet/app/unit/Phase5RankerTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live listening shadow comparison awaits Phase 7 live coordinator integration.
+- **Rollback Point:**
+  - Roll back cleanly to Phase 4 via branch `checkpoint/phase-4-candidates` (`e753c2e`) or to pre-blueprint `main` (`2e3b362`).
