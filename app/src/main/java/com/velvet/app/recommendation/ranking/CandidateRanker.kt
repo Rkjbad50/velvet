@@ -64,7 +64,7 @@ class DefaultCandidateRanker(
             val rawEra = computeEraFit(seedFeatures, feat)
             val rawContext = computeContextFit(cand, seedFeatures, maxSourceCount)
 
-            val compatibleMusic = rawType >= 0.0 && rawGenre >= -0.25
+            val compatibleMusic = rawType >= 0.0 && rawGenre >= -0.25 && rawMood >= -0.25
             val rawPersonalTaste = if (compatibleMusic) {
                 computePersonalTasteFit(cand, feat, profile)
             } else 0.0

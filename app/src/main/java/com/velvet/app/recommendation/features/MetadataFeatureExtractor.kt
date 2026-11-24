@@ -31,7 +31,14 @@ class MetadataFeatureExtractor(
         val titleLow = song.title.lowercase(Locale.ROOT)
         val artistNorm = normalizePrimaryArtist(song.artist)
         val albumNorm = (parsed.movie ?: song.album)?.lowercase(Locale.ROOT).orEmpty()
-        val combinedText = "$titleLow ${parsed.cleanTitle} $artistNorm $albumNorm"
+        val titleAlbumText = "$titleLow ${parsed.cleanTitle} $albumNorm"
+        val combinedText = "$titleAlbumText $artistNorm"
+
+        val hasExplicitTitleDevotional = containsToken(
+            titleAlbumText,
+            listOf("chalisa", "aarti", "arti", "mantra", "stotra", "stotram", "ashtakam", "suktam", "kavach", "jaap", "bhajan", "kirtan", "keertan", "amritwani", "vandana", "bhakti", "devotional") + DEVOTIONAL_DEITY_TERMS,
+        )
+        val hasExplicitSecularTitleTone = !hasExplicitTitleDevotional && containsToken(titleAlbumText, PARTY_MOOD_TERMS)
 
         val provenance = mutableMapOf<String, String>()
         provenance["release_audio"] = identity.releaseClassification.reasonCode
@@ -43,27 +50,27 @@ class MetadataFeatureExtractor(
                 musicTypes[MusicType.PODCAST_OR_SPOKEN] = 0.90
                 provenance["music_type"] = "spoken_keyword"
             }
-            containsToken(combinedText, listOf("chalisa")) -> {
+            containsToken(titleAlbumText, listOf("chalisa")) -> {
                 musicTypes[MusicType.CHALISA] = 0.92
                 musicTypes[MusicType.DEVOTIONAL] = 0.90
                 provenance["music_type"] = "title_form_chalisa"
             }
-            containsToken(combinedText, listOf("aarti", "arti")) -> {
+            containsToken(titleAlbumText, listOf("aarti", "arti")) -> {
                 musicTypes[MusicType.AARTI] = 0.92
                 musicTypes[MusicType.DEVOTIONAL] = 0.90
                 provenance["music_type"] = "title_form_aarti"
             }
-            containsToken(combinedText, listOf("mantra", "stotra", "stotram", "ashtakam", "suktam", "kavach", "jaap")) -> {
+            containsToken(titleAlbumText, listOf("mantra", "stotra", "stotram", "ashtakam", "suktam", "kavach", "jaap")) -> {
                 musicTypes[MusicType.MANTRA] = 0.90
                 musicTypes[MusicType.DEVOTIONAL] = 0.88
                 provenance["music_type"] = "title_form_mantra"
             }
-            containsToken(combinedText, listOf("bhajan", "kirtan", "keertan", "amritwani", "vandana", "bhakti", "devotional")) -> {
+            !hasExplicitSecularTitleTone && containsToken(combinedText, listOf("bhajan", "kirtan", "keertan", "amritwani", "vandana", "bhakti", "devotional")) -> {
                 musicTypes[MusicType.BHAJAN] = 0.85
                 musicTypes[MusicType.DEVOTIONAL] = 0.88
                 provenance["music_type"] = "devotional_term"
             }
-            DEVOTIONAL_ARTISTS.any { artistNorm.contains(it) } || containsToken(combinedText, DEVOTIONAL_DEITY_TERMS) -> {
+            !hasExplicitSecularTitleTone && (DEVOTIONAL_ARTISTS.any { artistNorm.contains(it) } || containsToken(combinedText, DEVOTIONAL_DEITY_TERMS)) -> {
                 musicTypes[MusicType.DEVOTIONAL] = 0.72
                 musicTypes[MusicType.BHAJAN] = 0.65
                 provenance["music_type"] = "devotional_artist_or_deity"
@@ -168,6 +175,9 @@ class MetadataFeatureExtractor(
         }
         if (WESTERN_POP_ARTISTS.any { artistNorm.contains(it) }) {
             genreIds[GenreOntology.WESTERN_POP] = 0.72
+        }
+        if (hasExplicitSecularTitleTone && GenreOntology.EDM !in genreIds && GenreOntology.BOLLYWOOD !in genreIds && GenreOntology.PUNJABI !in genreIds) {
+            genreIds[GenreOntology.EDM] = 0.72
         }
 
         enrichment?.verifiedGenreIds?.forEach { (rawGenre, conf) ->
