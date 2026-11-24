@@ -48,8 +48,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.velvet.app.ui.theme.velvetColors
-import com.velvet.app.ui.theme.velvetThemeAccentColor
 import kotlinx.coroutines.delay
 
 /**
@@ -72,7 +70,7 @@ fun RadioNotificationBanner(
     onDismiss: () -> Unit = {},
 ) {
     val isDark = isSystemInDarkTheme()
-    val accent = velvetThemeAccentColor
+    val accent = velvetColors.accent
 
     LaunchedEffect(bannerState?.token) {
         if (bannerState != null) {
