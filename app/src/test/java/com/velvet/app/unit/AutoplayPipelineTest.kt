@@ -871,6 +871,29 @@ class AutoplayPipelineTest {
         pipeline.clearCandidatePoolCache(null)
     }
 
+    @Test
+    fun testAutoplay_hierarchy_genreAboveMoodAboveTempo() {
+        val pipeline = AutoplayPipeline(emptyList(), SessionHistory(20))
+        val seed = makeSong("seed1", "Tum Hi Ho Aashiqui 2", "Arijit Singh")
+
+        // Matches Genre (Bollywood Melody)
+        val candGenreMatch = makeSong("c_genre", "Aankhon Ki Gustakhiyan", "Kumar Sanu")
+        // Clashing Genre (Punjabi Bhangra)
+        val candMoodOnly = makeSong("c_mood", "Do You Know Romantic Love", "Diljit Dosanjh")
+
+        val breakdowns = mutableMapOf<String, Map<String, Double>>()
+        val scored = pipeline.scoreCandidates(
+            candidates = listOf(candMoodOnly, candGenreMatch),
+            seedProfile = SeedProfile(current = seed, isArtistRadio = false),
+            scoreBreakdownOut = breakdowns,
+        )
+
+        val genreScore = breakdowns["c_genre"]?.get("totalScore") ?: 0.0
+        val moodScore = breakdowns["c_mood"]?.get("totalScore") ?: 0.0
+        assertTrue("Genre match must outrank mood-only match when genre clashes", genreScore > moodScore)
+        assertEquals("c_genre", scored.first().id)
+    }
+
     // ── Offline Evaluation Harness (R5) ──────────────────────────────────────
 
     private val json = Json { ignoreUnknownKeys = true }

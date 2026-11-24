@@ -1316,19 +1316,22 @@ class AutoplayPipeline(
             }
             breakdown["w4_eraProximity"] = w4
 
-            // 5. W5: Language Match & Genre Cluster Alignment
+            // 5. W5: Language Match & Music Alignment (Genre -> Mood -> Beats/Tempo)
             var w5 = 0.0
             if (seedIsDevanagari && candIsDevanagari) {
                 w5 += Weights.W5_LANGUAGE_MATCH
             }
+            // 1. GENRE: Highest Priority
             if (seedCluster != MusicCluster.GENERAL && seedCluster == candCluster) {
-                w5 += 80.0
+                w5 += Weights.W5_GENRE_MATCH
             }
-            if (seedTempo == candTempo) {
-                w5 += 35.0
-            }
+            // 2. TYPES OF MOOD OF SONG: Second Highest Priority
             if (seedMood != SongMood.GENERAL && seedMood == candMood) {
-                w5 += 25.0
+                w5 += Weights.W5_MOOD_MATCH
+            }
+            // 3. BEATS OF THE SONG / TEMPO: Third Priority
+            if (seedTempo == candTempo) {
+                w5 += Weights.W5_TEMPO_MATCH
             }
             breakdown["w5_languageMatch"] = w5
 
@@ -1391,8 +1394,14 @@ class AutoplayPipeline(
             }
             if (seedCluster == MusicCluster.DEVOTIONAL && candCluster != MusicCluster.DEVOTIONAL) {
                 penalties += Weights.PENALTY_GENRE_CLASH
-            } else if (seedCluster == MusicCluster.PUNJABI_BHANGRA && candCluster != MusicCluster.PUNJABI_BHANGRA) {
-                penalties += 60.0
+            } else if (seedCluster != MusicCluster.GENERAL && candCluster != MusicCluster.GENERAL && seedCluster != candCluster) {
+                penalties += 80.0
+            }
+            val isMoodClash = (seedMood == SongMood.SAD_MELANCHOLIC && candMood == SongMood.PARTY_CELEBRATORY) ||
+                (seedMood == SongMood.PARTY_CELEBRATORY && candMood == SongMood.SAD_MELANCHOLIC) ||
+                (seedMood == SongMood.DEVOTIONAL_SPIRITUAL && candMood == SongMood.PARTY_CELEBRATORY)
+            if (isMoodClash) {
+                penalties += Weights.PENALTY_MOOD_CLASH
             }
             if ((seedIsDevanagari || seedCluster == MusicCluster.DEVOTIONAL || seedCluster == MusicCluster.BOLLYWOOD_MELODY) && candIsSouth) {
                 val userAllowsSouth = userTaste.preferredLanguages.any {
@@ -1406,7 +1415,7 @@ class AutoplayPipeline(
             if ((seedTempo == SongTempo.FAST && candTempo == SongTempo.SLOW) ||
                 (seedTempo == SongTempo.SLOW && candTempo == SongTempo.FAST)
             ) {
-                penalties += 35.0
+                penalties += Weights.PENALTY_TEMPO_CLASH
             }
             val v = views[candidate.id]
             if (v != null && bottomThreshold != null && v <= bottomThreshold) {

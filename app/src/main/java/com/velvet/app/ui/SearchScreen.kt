@@ -366,7 +366,7 @@ fun BrowseItemRow(item: BrowseItem, onSongClick: ((Song) -> Unit)? = null) {
     val nav = LocalNav.current
     when (item) {
         is BrowseItem.SongItem -> SongRow(item.song, onClick = {
-            PlayerConnection.startRadio(item.song)
+            PlayerConnection.play(listOf(item.song))
             onSongClick?.invoke(item.song)
         })
         is BrowseItem.ArtistItem -> BrowseRow(
@@ -405,7 +405,7 @@ fun LazyListScope.topResults(
         item { BrowseSection("Songs", action = seeAll) { onMore?.invoke(SearchFilter.Songs) } }
         items(top.songs.take(5), key = { "ts-" + it.id }) { song ->
             SongRow(song, onClick = {
-                PlayerConnection.startRadio(song)
+                PlayerConnection.play(listOf(song))
                 onSongClick?.invoke(song)
             })
             HorizontalDivider(Modifier.padding(start = 88.dp, end = 20.dp), color = velvetColors.rule)
@@ -457,7 +457,7 @@ private fun TopResultCard(artist: ArtistRef?, song: Song?, onSongClick: ((Song) 
                 if (artist != null) {
                     nav.open(Route.Artist(artist))
                 } else song?.let { s ->
-                    PlayerConnection.startRadio(s)
+                    PlayerConnection.play(listOf(s))
                     onSongClick?.invoke(s)
                 }
             }

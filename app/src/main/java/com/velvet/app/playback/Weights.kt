@@ -26,9 +26,13 @@ object Weights {
     // Decade proximity (same decade = 1.0, adjacent decade = 0.5)
     const val W4_ERA_PROXIMITY = 25.0
 
-    // W5: Language Match (+25)
+    // W5: Language Match (+25) & Music Alignment
     // Script & language alignment (Devanagari/Hindi match, prevents abrupt language clash)
     const val W5_LANGUAGE_MATCH = 25.0
+    // Autoplay Music-First Hierarchy: Genre (120) -> Mood (70) -> Beats/Tempo (40)
+    const val W5_GENRE_MATCH = 120.0
+    const val W5_MOOD_MATCH = 70.0
+    const val W5_TEMPO_MATCH = 40.0
 
     // W6: Personal Taste Score (+35)
     // Normalized artistAffinity and movieAffinity from TasteProfile (range [-1.0, 1.0])
@@ -51,6 +55,8 @@ object Weights {
     const val PENALTY_DURATION_MISMATCH = 20.0       // Duration difference > 90s from seed
     const val PENALTY_VERSION_TAG_MISMATCH = 50.0   // Candidate has remix/slowed tag when seed did not
     const val PENALTY_GENRE_CLASH = 100.0           // e.g. Devotional vs Party secular
+    const val PENALTY_MOOD_CLASH = 50.0            // e.g. Sad Melancholic vs Party Celebratory
+    const val PENALTY_TEMPO_CLASH = 40.0           // Severe beat clash (Fast vs Slow)
     const val PENALTY_LANGUAGE_CLASH = 120.0        // e.g. South Indic in Hindi Devotional session
 
     // ── Diversity & Exploration ───────────────────────────────────────────────

@@ -500,8 +500,8 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     }
 
                     val radioSubtitle = remember(PlayerConnection.isRadioActive, PlayerConnection.radioSeedSong, song) {
-                        if (PlayerConnection.isRadioActive) {
-                            (PlayerConnection.radioSeedSong?.title ?: song.title).trim()
+                        if (PlayerConnection.isRadioActive && PlayerConnection.radioSeedSong != null) {
+                            PlayerConnection.radioSeedSong?.title?.trim()
                         } else null
                     }
 

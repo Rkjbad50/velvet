@@ -488,6 +488,9 @@ object PlayerConnection {
         isRadioActive = radio
         isArtistRadioActive = if (radio) isArtistRadio else false
         radioSeedSong = if (radio) (songs.getOrNull(startIndex) ?: songs.firstOrNull()) else null
+        if (!radio) {
+            dismissRadioBanner()
+        }
         val isUserPlaylist = playlistId != null && VelvetApp.library.data.value.playlists.any { it.id == playlistId }
         val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
 
