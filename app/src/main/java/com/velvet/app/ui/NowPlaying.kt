@@ -33,6 +33,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -40,6 +41,8 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.gestures.scrollBy
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -1850,6 +1853,8 @@ private fun QueueSheet(
     val openMenu = LocalSongMenu.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val isQueueLocked = PlayerConnection.isQueueLocked
+    val libraryData by VelvetApp.library.data.collectAsStateWithLifecycle()
+    val isDragReorderEnabled = libraryData.queueDragReorderEnabled
 
     var draggingQid by remember { mutableStateOf<String?>(null) }
     var draggingIsUserQueue by remember { mutableStateOf(false) }
@@ -1888,7 +1893,7 @@ private fun QueueSheet(
     }
 
     val onDragStart: (String, Boolean) -> Unit = { qid, isUserQueue ->
-        if (!isQueueLocked) {
+        if (!isQueueLocked && isDragReorderEnabled) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             draggingQid = qid
             draggingIsUserQueue = isUserQueue
@@ -2028,6 +2033,13 @@ private fun QueueSheet(
                     coroutineScope.launch { sheetHeightAnim.snapTo(newHeight) }
                     return Offset(0f, -consumed)
                 }
+                // Downward drag: if list is at top, collapse sheet instead of scrolling list
+                if (deltaY > 0 && !listState.canScrollBackward && sheetHeightAnim.value > 0f) {
+                    val newHeight = (sheetHeightAnim.value - deltaY).coerceAtLeast(0f)
+                    val consumed = sheetHeightAnim.value - newHeight
+                    coroutineScope.launch { sheetHeightAnim.snapTo(newHeight) }
+                    return Offset(0f, consumed)
+                }
                 return Offset.Zero
             }
 
@@ -2126,86 +2138,110 @@ private fun QueueSheet(
                     .fillMaxSize()
                     .navigationBarsPadding(),
             ) {
-                // Top Sheet Drag Handle & Gesture Bar
-                Box(
+                // Top Sheet Header: Entire area (pill + title + lock button + padding) is draggable and responsive to vertical flings
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 6.dp)
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures(
-                                onVerticalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    coroutineScope.launch {
-                                        val newHeight = (sheetHeightAnim.value - dragAmount).coerceIn(0f, expandedHeightPx)
-                                        sheetHeightAnim.snapTo(newHeight)
+                        .draggable(
+                            orientation = Orientation.Vertical,
+                            state = rememberDraggableState { delta ->
+                                val newHeight = (sheetHeightAnim.value - delta).coerceIn(0f, expandedHeightPx)
+                                coroutineScope.launch {
+                                    sheetHeightAnim.snapTo(newHeight)
+                                }
+                            },
+                            onDragStopped = { velocity ->
+                                val current = sheetHeightAnim.value
+                                val midPoint = (peekHeightPx + expandedHeightPx) / 2f
+                                val dismissThreshold = peekHeightPx * 0.5f
+
+                                if (velocity < -400f) {
+                                    sheetHeightAnim.animateTo(
+                                        expandedHeightPx,
+                                        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                    )
+                                } else if (velocity > 600f) {
+                                    if (current > peekHeightPx + 40f) {
+                                        sheetHeightAnim.animateTo(
+                                            peekHeightPx,
+                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                        )
+                                    } else {
+                                        dismissWithAnimation()
                                     }
-                                },
-                                onDragEnd = {
-                                    coroutineScope.launch {
-                                        val current = sheetHeightAnim.value
-                                        val midPoint = (peekHeightPx + expandedHeightPx) / 2f
-                                        val dismissThreshold = peekHeightPx * 0.5f
-                                        if (current > midPoint) {
-                                            sheetHeightAnim.animateTo(
-                                                expandedHeightPx,
-                                                spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                                            )
-                                        } else if (current > dismissThreshold) {
-                                            sheetHeightAnim.animateTo(
-                                                peekHeightPx,
-                                                spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                                            )
-                                        } else {
-                                            dismissWithAnimation()
-                                        }
+                                } else {
+                                    if (current > midPoint) {
+                                        sheetHeightAnim.animateTo(
+                                            expandedHeightPx,
+                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                        )
+                                    } else if (current > dismissThreshold) {
+                                        sheetHeightAnim.animateTo(
+                                            peekHeightPx,
+                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                        )
+                                    } else {
+                                        dismissWithAnimation()
                                     }
-                                },
-                                onDragCancel = {
-                                    coroutineScope.launch {
-                                        val current = sheetHeightAnim.value
-                                        val midPoint = (peekHeightPx + expandedHeightPx) / 2f
-                                        val target = if (current > midPoint) expandedHeightPx else peekHeightPx
-                                        sheetHeightAnim.animateTo(target, spring(dampingRatio = 0.85f))
-                                    }
-                                },
-                            )
-                        },
-                    contentAlignment = Alignment.Center,
+                                }
+                            },
+                        ),
                 ) {
+                    // Tap pill handle to toggle peek / expanded
                     Box(
                         modifier = Modifier
-                            .width(36.dp)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(velvetColors.muted.copy(alpha = 0.45f)),
-                    )
-                }
-
-                Row(
-                    Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
-                        Text(
-                            if (isQueueLocked) "Queue locked" else "Swipe right to play next, left to remove",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 6.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val target = if (sheetHeightAnim.value > peekHeightPx + 40f) peekHeightPx else expandedHeightPx
+                                        sheetHeightAnim.animateTo(
+                                            target,
+                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                        )
+                                    }
+                                },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(velvetColors.muted.copy(alpha = 0.45f)),
                         )
                     }
-                    IconButton(onClick = {
-                        PlayerConnection.isQueueLocked = !PlayerConnection.isQueueLocked
-                        android.widget.Toast.makeText(
-                            context,
-                            if (PlayerConnection.isQueueLocked) "Queue Locked" else "Queue Unlocked",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }) {
-                        Icon(
-                            if (isQueueLocked) AppIcons.Lock else AppIcons.LockOpen,
-                            contentDescription = if (isQueueLocked) "Unlock Queue" else "Lock Queue",
-                            tint = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
-                        )
+
+                    Row(
+                        Modifier.padding(start = 22.dp, end = 16.dp, top = 2.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Queue", style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
+                            Text(
+                                if (isQueueLocked) "Queue locked" else "Swipe right to play next, left to remove",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
+                            )
+                        }
+                        IconButton(onClick = {
+                            PlayerConnection.isQueueLocked = !PlayerConnection.isQueueLocked
+                            android.widget.Toast.makeText(
+                                context,
+                                if (PlayerConnection.isQueueLocked) "Queue Locked" else "Queue Unlocked",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }) {
+                            Icon(
+                                if (isQueueLocked) AppIcons.Lock else AppIcons.LockOpen,
+                                contentDescription = if (isQueueLocked) "Unlock Queue" else "Lock Queue",
+                                tint = if (isQueueLocked) velvetColors.accentText else velvetColors.muted,
+                            )
+                        }
                     }
                 }
                 LazyColumn(
@@ -2264,6 +2300,7 @@ private fun QueueSheet(
                                 canMoveDown = index < displayUserQueue.size - 1,
                                 onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
                                 onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                                isDragEnabled = isDragReorderEnabled,
                                 onDragStart = { onDragStart(item.qid, true) },
                                 onDragDelta = onDragDelta,
                                 onDragEnd = onDragEnd,
@@ -2305,6 +2342,7 @@ private fun QueueSheet(
                                 canMoveDown = index < displayUpNext.size - 1,
                                 onMoveUp = { PlayerConnection.reorder(item.qid, index - 1) },
                                 onMoveDown = { PlayerConnection.reorder(item.qid, index + 1) },
+                                isDragEnabled = isDragReorderEnabled,
                                 onDragStart = { onDragStart(item.qid, false) },
                                 onDragDelta = onDragDelta,
                                 onDragEnd = onDragEnd,
@@ -2332,6 +2370,7 @@ private fun LazyItemScope.QueueRow(
     canMoveDown: Boolean = false,
     onMoveUp: () -> Unit = {},
     onMoveDown: () -> Unit = {},
+    isDragEnabled: Boolean = false,
     onDragStart: () -> Unit = {},
     onDragDelta: (Float) -> Unit = {},
     onDragEnd: () -> Unit = {},
@@ -2618,28 +2657,30 @@ private fun LazyItemScope.QueueRow(
                             modifier = Modifier.size(20.dp),
                         )
                     }
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .pointerInput(item.qid) {
-                                detectDragGestures(
-                                    onDragStart = { onDragStart() },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        onDragDelta(dragAmount.y)
-                                    },
-                                    onDragEnd = { onDragEnd() },
-                                    onDragCancel = { onDragCancel() },
-                                )
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            AppIcons.DragHandle,
-                            contentDescription = "Hold and drag to reorder",
-                            tint = velvetColors.muted,
-                            modifier = Modifier.size(20.dp),
-                        )
+                    if (isDragEnabled && !isQueueLocked && !isCurrent) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .pointerInput(item.qid) {
+                                    detectDragGestures(
+                                        onDragStart = { onDragStart() },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            onDragDelta(dragAmount.y)
+                                        },
+                                        onDragEnd = { onDragEnd() },
+                                        onDragCancel = { onDragCancel() },
+                                    )
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                AppIcons.DragHandle,
+                                contentDescription = "Hold and drag to reorder",
+                                tint = velvetColors.muted,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 }
             }

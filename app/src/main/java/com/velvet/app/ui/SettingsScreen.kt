@@ -323,6 +323,12 @@ fun SettingsScreen(onBack: () -> Unit) {
         SettingsGroup("Playback") {
             ToggleRow("Autoplay", "Keep playing similar songs when your queue ends", data.autoplay, library::setAutoplay)
             ToggleRow(
+                "Queue drag to move {BETA}",
+                "Allow long-pressing and dragging songs to reorder the playback queue",
+                data.queueDragReorderEnabled,
+                library::setQueueDragReorderEnabled,
+            )
+            ToggleRow(
                 "Self-healing",
                 "Automatically retry transient errors, re-resolve expired links, and skip broken songs",
                 data.selfHealingEnabled,

@@ -68,6 +68,7 @@ data class LibraryData(
     val includePrereleases: Boolean = false,
     val autoUpdateCheck: Boolean = true,
     val skipNearDuplicatesInShuffle: Boolean = true,
+    val queueDragReorderEnabled: Boolean = false,
     val playedGroupIds: List<String> = emptyList(),
     val listenEvents: List<ListenEvent> = emptyList(),
 ) {
@@ -515,6 +516,8 @@ class Library(dir: File) {
     // ---------------------------------------------------------------- settings
 
     fun setAutoplay(enabled: Boolean) = update { it.copy(autoplay = enabled) }
+
+    fun setQueueDragReorderEnabled(enabled: Boolean) = update { it.copy(queueDragReorderEnabled = enabled) }
 
     fun setDarkTheme(dark: Boolean) = update { it.copy(isDarkTheme = dark) }
 
