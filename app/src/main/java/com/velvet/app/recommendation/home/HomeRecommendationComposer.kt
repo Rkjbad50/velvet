@@ -293,7 +293,6 @@ class HomeRecommendationComposer(
     companion object {
         private val ALLOWED_ORIGINAL_VERSIONS = setOf(
             VersionKind.ORIGINAL_STUDIO,
-            VersionKind.SOUNDTRACK_ORIGINAL,
             VersionKind.UNKNOWN,
         )
         private val LONG_FORM_TYPES = setOf(
