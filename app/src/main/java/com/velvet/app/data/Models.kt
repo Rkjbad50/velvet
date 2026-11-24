@@ -44,6 +44,11 @@ data class Song(
     val artistUrl: String? = null,
     val preferredMusicSource: Boolean = false,
     val album: String? = null,
+    val isTopicRelease: Boolean = false,
+    val isUploaderVerified: Boolean = false,
+    val rawUploaderName: String? = null,
+    val hasSquareArtwork: Boolean = false,
+    val releaseDescriptionHint: String? = null,
 )
 
 @Serializable
