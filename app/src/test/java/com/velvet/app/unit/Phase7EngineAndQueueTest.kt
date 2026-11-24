@@ -13,7 +13,8 @@ import com.velvet.app.recommendation.engine.QueueRefillSnapshot
 import com.velvet.app.recommendation.engine.RefillDecision
 import com.velvet.app.recommendation.engine.RefillPolicy
 import com.velvet.app.recommendation.engine.RefillStatus
-import com.velvet.app.recommendation.events.InMemoryRecommendationEventRepository
+import com.velvet.app.recommendation.events.InMemoryEventBackend
+import com.velvet.app.recommendation.events.RecommendationEventRepository
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.ReleaseAudioClass
 import com.velvet.app.recommendation.profile.DefaultUserProfileRepository
@@ -59,7 +60,7 @@ class Phase7EngineAndQueueTest {
             clock = clock,
         )
         val profileRepo = DefaultUserProfileRepository(
-            eventRepository = InMemoryRecommendationEventRepository(),
+            eventRepository = RecommendationEventRepository(backend = InMemoryEventBackend()),
             libraryDataProvider = { LibraryData() },
             clock = clock,
         )
@@ -97,7 +98,7 @@ class Phase7EngineAndQueueTest {
     fun coordinatorDiscardsStaleRefillOnConcurrentQueueVersionMutation() = runBlocking {
         val seed = topicSong("s1", "Tum Hi Ho", "Arijit Singh")
         val validRec = topicSong("rec1", "Agar Tum Saath Ho", "Alka Yagnik")
-        val engine = buildEngine(listOf(validRec), relatedDelayMs = 80L)
+        val engine = buildEngine(listOf(validRec), relatedDelayMs = 200L)
         val coordinator = AutoplayRefillCoordinator(engine)
 
         val queueManager = QueueManager()
@@ -116,7 +117,7 @@ class Phase7EngineAndQueueTest {
         val deferred = async {
             coordinator.requestRefill(initial, latestSnapshotProvider = ::snapshot)
         }
-        delay(20L)
+        delay(35L)
         // Mutate QueueManager mid-flight (user queues a manual song)
         queueManager.playNext(topicSong("manual_1", "Pehla Nasha", "Udit Narayan"))
 
