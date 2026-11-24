@@ -247,3 +247,29 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
 - **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live network playback / background service transitions on a physical Android device await manual device testing.
 - **Rollback Point:**
   - Roll back cleanly to Phase 6 via branch `checkpoint/phase-6-sequencing` (`2f350a0`) or to pre-blueprint `main` (`2e3b362`).
+
+### Phases 8 & 9 — Unified Modes, Radio Session Evolution, Home Composer, Diagnostics & Golden Acceptance
+- **Status:** **Code & CI Verification Complete**
+- **Branch / Commit:** `checkpoint/phase-8-modes-home` (`76e0140`, branched from `checkpoint/phase-7-engine-queue`; `main` untouched at `2e3b362`).
+- **Scope Implemented:**
+  - Implemented `RadioSessionManager` (`app/src/main/java/com/velvet/app/recommendation/modes/RadioSessionManager.kt`) managing persistent `RadioSessionState` with decaying multi-seed weights (`45%` initial anchor, `25% / 20% / 10%` genuinely completed/liked tracks, ignoring early skips so outliers never pull the radio off vibe), wired into `DefaultRecommendationEngine.buildWeightedSeedFeatures` (compatibility-guarded blending) and `PlayerConnection` playback/skip callbacks, plus `playSimilarSongs(...)` keeping non-radio playback cleanly separated from Radio UI indicators.
+  - Implemented `HomeRecommendationComposer` (`app/src/main/java/com/velvet/app/recommendation/home/HomeRecommendationComposer.kt`) upgrading Trending filtering, Quick Picks (`RecommendationMode.HOME_SONGS`), Speed Dial, Made-for-you Artist Radio seeds, and Personalized Mixes (`RecommendationMode.PERSONALIZED_PLAYLIST`) behind Strict Original Studio Audio Only (`ReleaseAudioClassifier` + duration/spoken checks), deduplication, and cold-start safety without relaxing gates on sparse pools.
+  - Wired `VelvetApp.radioSessionManager` / `homeRecommendationComposer`, `HomeViewModel` & `HomeScreen` shelf composition, and upgraded `DeveloperScreen` (`A6 • Recommendation Engine & Autoplay Inspector`) to surface live `RecommendationDiagnosticsLog` funnels (raw -> strict studio -> deduped -> returned counts, rejected reasons, average transition scores) without logging raw user search queries.
+  - Preserved blueprint Rule 5 discipline: kept pluggable `MetadataEnrichmentProvider` / disabled `g8_audio_neighbours` interfaces ready without adding unverified external cloud services, paid APIs, unlicensed audio ML binaries, or premature multi-user Ktor/ALS backends (`Blueprint §17.6`).
+- **Debugging & CI/CD Verification:**
+  - **Attempt 1 (`c3820da`):** Run `45506415297` failed compilation on `VersionKind.SOUNDTRACK_ORIGINAL` (non-existent enum constant in `HomeRecommendationComposer.kt`). Fixed to `ORIGINAL_STUDIO, UNKNOWN` (`VERIFIED_OST_AUDIO` already maps to `ORIGINAL_STUDIO`) in `04677eb`.
+  - **Attempt 2 (`04677eb`):** Run `45506746172` compiled production APK cleanly (`compileReleaseKotlin`, `lintVitalAnalyzeRelease`, `minifyReleaseWithR8` succeeded) but failed `GoldenAcceptanceSuiteTest` (`FeedbackSource` / `RecommendationEvent` constructor signature mismatch). Fixed in `c5d8e5c` -> `76e0140`.
+  - **Final Verified CI Run (`76e0140`):** Run `45508507117` on `checkpoint/phase-8-modes-home`, job `Build & Verify (CI)` (`138849835804`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 4m 50s**; `velvet-apk` uploaded; `Publish Official Release` skipped (`0s`).
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **288 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED**, including all 4 suites in `app/src/test/java/com/velvet/app/unit/Phase8ModesAndHomeTest.kt` and all 5 §39 + Strict Audio acceptance suites in `app/src/test/java/com/velvet/app/unit/GoldenAcceptanceSuiteTest.kt` (verifying rejection of Official Music Videos, Official Videos, Lyric Videos, Visualizers, Live Concerts, Remixes/Slowed+Reverb, and `UNVERIFIED` channel uploads across `SIMILAR_SONGS`, `SONG_RADIO`, `ARTIST_RADIO`, `NEXT_SONG`, `AUTOPLAY_REFILL`, `HOME_SONGS`, and `PERSONALIZED_PLAYLIST`).
+- **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; physical Android device playback, Home scrolling/loading over live InnerTube/NewPipe endpoints, and long background service sessions await manual on-device QA. `main` (`2e3b362`) and release version `2.7.5` remain untouched pending explicit merge/release approval.
+- **Rollback Points (Full Branch Chain):**
+  - Pre-blueprint baseline: `main` (`2e3b362`)
+  - Phase 1 (Telemetry): `checkpoint/phase-1-events` (`ff01a6a`)
+  - Phase 2 (Identity & Strict Audio Classification): `checkpoint/phase-2-identity` (`9b03ab2`)
+  - Phase 3 (Multi-Horizon Taste Profile): `checkpoint/phase-3-profile` (`169eb2b`)
+  - Phase 4 (Candidate Platform & Eligibility Gate): `checkpoint/phase-4-candidates` (`e753c2e`)
+  - Phase 5 (Normalised Mode Ranker & Shadow Eval): `checkpoint/phase-5-ranker` (`29b6148`)
+  - Phase 6 (Bounded Beam Sequence Optimizer): `checkpoint/phase-6-sequencing` (`2f350a0`)
+  - Phase 7 (Unified Engine, Refill Coordinator & Queue Wiring): `checkpoint/phase-7-engine-queue` (`1866f37`)
+  - Phases 8–9 (Radio Evolution, Home Composer, Inspector & Acceptance): `checkpoint/phase-8-modes-home` (`76e0140` + docs commit)
