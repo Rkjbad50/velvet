@@ -525,12 +525,16 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
         activeEntries.map { it.song }
     }
     val filteredEntries = remember(activeEntries, searchQuery) {
-        if (searchQuery.isBlank()) activeEntries
+        val q = searchQuery.trim().lowercase()
+        if (q.isBlank()) activeEntries
         else {
-            val q = searchQuery.trim().lowercase()
-            activeEntries.filter { entry ->
-                entry.song.title.lowercase().contains(q) ||
-                entry.song.artist.lowercase().contains(q)
+            val tokens = q.split(" ").filter { it.isNotBlank() }
+            if (tokens.isEmpty()) activeEntries
+            else {
+                activeEntries.filter { entry ->
+                    val fullText = "${entry.song.title} ${entry.song.artist} ${entry.song.album.orEmpty()}".lowercase()
+                    tokens.all { token -> fullText.contains(token) }
+                }
             }
         }
     }

@@ -428,6 +428,7 @@ fun SongRow(
     playlistId: String? = null,
     trackNumber: Int? = null,
     showArt: Boolean = true,
+    sourceHint: String? = null,
 ) {
     val openMenu = LocalSongMenu.current
     val active = PlayerConnection.current?.id == song.id
@@ -481,6 +482,27 @@ fun SongRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (sourceHint != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
+                    Icon(
+                        AppIcons.QueueMusic,
+                        contentDescription = null,
+                        tint = velvetColors.accentText,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        sourceHint,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = velvetColors.accentText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         IconButton(onClick = { openMenu(SongMenuRequest(song, playlistId)) }) {

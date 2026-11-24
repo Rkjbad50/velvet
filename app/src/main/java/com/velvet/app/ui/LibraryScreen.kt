@@ -1,6 +1,7 @@
 package com.velvet.app.ui
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +30,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -52,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,12 +65,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,7 +84,15 @@ import com.velvet.app.data.ArtistRef
 import com.velvet.app.data.CoverMode
 import com.velvet.app.data.Playlist
 import com.velvet.app.data.PlaylistSorter
+import com.velvet.app.data.Song
 import com.velvet.app.data.SortDirection
+import kotlinx.coroutines.delay
+
+private data class LibrarySongMatch(
+    val song: Song,
+    val sourceHint: String,
+    val playlistId: String?,
+)
 
 enum class LibraryFilter(val label: String) {
     PLAYLISTS("Playlists"),
@@ -100,6 +115,19 @@ fun LibraryScreen() {
 
     var isSearching by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    val searchFocusRequester = remember { FocusRequester() }
+
+    BackHandler(enabled = isSearching) {
+        isSearching = false
+        searchQuery = ""
+    }
+
+    LaunchedEffect(isSearching) {
+        if (isSearching) {
+            delay(120)
+            searchFocusRequester.requestFocus()
+        }
+    }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var showPlusMenu by remember { mutableStateOf(false) }
@@ -126,20 +154,117 @@ fun LibraryScreen() {
         }
     }
 
-    // Prepare lists
+    // Tokenized search for playlists (real-time as you type, multi-word matching)
     val filteredPlaylists = remember(data.playlists, searchQuery) {
-        data.playlists.filter {
-            searchQuery.isBlank() || it.name.contains(searchQuery.trim(), ignoreCase = true)
+        val q = searchQuery.trim().lowercase()
+        if (q.isBlank()) data.playlists
+        else {
+            val tokens = q.split(" ").filter { it.isNotBlank() }
+            if (tokens.isEmpty()) data.playlists
+            else {
+                data.playlists.filter { pl ->
+                    val fullText = pl.name.lowercase()
+                    tokens.all { token -> fullText.contains(token) }
+                }
+            }
         }
     }
+    // Tokenized search for albums
     val filteredAlbums = remember(data.albums, searchQuery) {
-        data.albums.filter {
-            searchQuery.isBlank() || it.title.contains(searchQuery.trim(), ignoreCase = true) || it.subtitle.contains(searchQuery.trim(), ignoreCase = true)
+        val q = searchQuery.trim().lowercase()
+        if (q.isBlank()) data.albums
+        else {
+            val tokens = q.split(" ").filter { it.isNotBlank() }
+            if (tokens.isEmpty()) data.albums
+            else {
+                data.albums.filter { al ->
+                    val fullText = "${al.title} ${al.subtitle}".lowercase()
+                    tokens.all { token -> fullText.contains(token) }
+                }
+            }
         }
     }
+    // Tokenized search for artists
     val filteredArtists = remember(data.artists, searchQuery) {
-        data.artists.filter {
-            searchQuery.isBlank() || it.name.contains(searchQuery.trim(), ignoreCase = true)
+        val q = searchQuery.trim().lowercase()
+        if (q.isBlank()) data.artists
+        else {
+            val tokens = q.split(" ").filter { it.isNotBlank() }
+            if (tokens.isEmpty()) data.artists
+            else {
+                data.artists.filter { ar ->
+                    val fullText = ar.name.lowercase()
+                    tokens.all { token -> fullText.contains(token) }
+                }
+            }
+        }
+    }
+
+    // Real-time search across all songs in playlists, liked songs, and downloads with playlist source hint
+    val matchingSongs = remember(data.playlists, data.liked, data.downloads, searchQuery) {
+        val q = searchQuery.trim().lowercase()
+        if (q.isBlank()) emptyList()
+        else {
+            val tokens = q.split(" ").filter { it.isNotBlank() }
+            if (tokens.isEmpty()) emptyList()
+            else {
+                val songMap = mutableMapOf<String, Pair<Song, MutableList<String>>>()
+                val primaryPlaylistMap = mutableMapOf<String, String>()
+
+                // 1. Playlists
+                data.playlists.forEach { pl ->
+                    pl.resolvedSongs.forEach { song ->
+                        val entry = songMap.getOrPut(song.id) { song to mutableListOf() }
+                        if (!entry.second.contains(pl.name)) {
+                            entry.second.add(pl.name)
+                        }
+                        if (!primaryPlaylistMap.containsKey(song.id)) {
+                            primaryPlaylistMap[song.id] = pl.id
+                        }
+                    }
+                }
+
+                // 2. Liked songs
+                data.liked.forEach { song ->
+                    val entry = songMap.getOrPut(song.id) { song to mutableListOf() }
+                    if (!entry.second.contains("Liked Songs")) {
+                        entry.second.add("Liked Songs")
+                    }
+                    if (!primaryPlaylistMap.containsKey(song.id)) {
+                        primaryPlaylistMap[song.id] = "liked"
+                    }
+                }
+
+                // 3. Downloads
+                data.downloads.forEach { song ->
+                    val entry = songMap.getOrPut(song.id) { song to mutableListOf() }
+                    if (!entry.second.contains("Downloads")) {
+                        entry.second.add("Downloads")
+                    }
+                    if (!primaryPlaylistMap.containsKey(song.id)) {
+                        primaryPlaylistMap[song.id] = "downloads"
+                    }
+                }
+
+                songMap.values
+                    .filter { (song, _) ->
+                        val fullText = "${song.title} ${song.artist} ${song.album.orEmpty()}".lowercase()
+                        tokens.all { token -> fullText.contains(token) }
+                    }
+                    .map { (song, sources) ->
+                        val hint = when {
+                            sources.isEmpty() -> "In Library"
+                            sources.size == 1 -> "In: ${sources[0]}"
+                            sources.size == 2 -> "In: ${sources[0]}, ${sources[1]}"
+                            else -> "In: ${sources[0]} +${sources.size - 1} more"
+                        }
+                        LibrarySongMatch(
+                            song = song,
+                            sourceHint = hint,
+                            playlistId = primaryPlaylistMap[song.id],
+                        )
+                    }
+            }
         }
     }
 
@@ -177,7 +302,7 @@ fun LibraryScreen() {
     val likedTextColor = if (isLightAccent) Color(0xFF111111) else Color.White
     val likedMutedColor = if (isLightAccent) Color(0xFF333333) else Color.White.copy(alpha = 0.82f)
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().imePadding()) {
         // 1. Top Bar
         Row(
             modifier = Modifier
@@ -245,9 +370,32 @@ fun LibraryScreen() {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search your library...", color = velvetColors.muted) },
+                    placeholder = { Text("Search songs, playlists, albums...", color = velvetColors.muted) },
+                    leadingIcon = {
+                        Icon(
+                            AppIcons.Search,
+                            contentDescription = null,
+                            tint = velvetColors.muted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Clear search",
+                                    tint = velvetColors.muted,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(searchFocusRequester),
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = velvetColors.accentText,
@@ -263,9 +411,181 @@ fun LibraryScreen() {
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 28.dp),
         ) {
-            // 2. TWO ROUNDED SQUARE TILES SIDE BY SIDE
-            // Exactly (screenWidth - 16dp side padding*2 - 12dp gap) / 2 wide with aspectRatio 1:1, corner radius 20 dp
-            item(key = "library-hero-tiles") {
+            val isSearchActive = isSearching && searchQuery.isNotBlank()
+
+            if (isSearchActive) {
+                // Filter Chips Row in search
+                item(key = "search-filter-chips") {
+                    Row(
+                        modifier = Modifier
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        BrowseChip("All", selected = filter == null) { filter = null }
+                        LibraryFilter.entries.forEach { f ->
+                            BrowseChip(f.label, selected = filter == f) {
+                                filter = if (filter == f) null else f
+                            }
+                        }
+                    }
+                }
+
+                val hasSongs = matchingSongs.isNotEmpty() && (filter == null || filter == LibraryFilter.PLAYLISTS)
+                val hasPlaylists = sortedPlaylists.isNotEmpty() && (filter == null || filter == LibraryFilter.PLAYLISTS)
+                val hasAlbums = sortedAlbums.isNotEmpty() && (filter == null || filter == LibraryFilter.ALBUMS)
+                val hasArtists = sortedArtists.isNotEmpty() && (filter == null || filter == LibraryFilter.ARTISTS)
+                val isSearchEmpty = !hasSongs && !hasPlaylists && !hasAlbums && !hasArtists
+
+                if (isSearchEmpty) {
+                    item(key = "search-empty-results") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp, vertical = 48.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Icon(
+                                AppIcons.Search,
+                                contentDescription = null,
+                                tint = velvetColors.muted,
+                                modifier = Modifier.size(48.dp),
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                "No results found for \"$searchQuery\"",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = velvetColors.text,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Check spelling or try a different search keyword.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = velvetColors.muted,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                } else {
+                    // 1. Matching songs from playlists / liked / downloads
+                    if (hasSongs) {
+                        item(key = "search-header-songs") {
+                            BrowseSection("Songs in Library (${matchingSongs.size})")
+                        }
+                        items(matchingSongs, key = { "search-song-${it.song.id}" }) { item ->
+                            SongRow(
+                                song = item.song,
+                                sourceHint = item.sourceHint,
+                                playlistId = item.playlistId,
+                                onClick = {
+                                    val songList = matchingSongs.map { it.song }
+                                    val index = matchingSongs.indexOf(item).coerceAtLeast(0)
+                                    PlayerConnection.play(songList, index, playlistId = item.playlistId)
+                                },
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 72.dp, end = 20.dp),
+                                color = velvetColors.rule.copy(alpha = 0.5f),
+                            )
+                        }
+                    }
+
+                    // 2. Matching Playlists
+                    if (hasPlaylists) {
+                        item(key = "search-header-playlists") {
+                            BrowseSection("Playlists (${sortedPlaylists.size})")
+                        }
+                        items(sortedPlaylists, key = { "search-pl-${it.id}" }) { p ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { nav.open(Route.LocalPlaylist(p.id)) },
+                                        onLongClick = { playlistToManage = p },
+                                    )
+                                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                PlaylistCover(
+                                    songs = p.songs,
+                                    size = 56.dp,
+                                    corner = 12.dp,
+                                    customCover = p.customCover,
+                                    coverMode = p.coverMode,
+                                    coverRef = p.coverRef,
+                                )
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 14.dp),
+                                ) {
+                                    Text(p.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("Playlist • ${songCountLabel(p.songs.size)}", style = MaterialTheme.typography.bodySmall, color = velvetColors.muted, maxLines = 1)
+                                }
+                            }
+                            HorizontalDivider(Modifier.padding(start = 90.dp, end = 20.dp), color = velvetColors.rule.copy(alpha = 0.5f))
+                        }
+                    }
+
+                    // 3. Matching Albums
+                    if (hasAlbums) {
+                        item(key = "search-header-albums") {
+                            BrowseSection("Albums (${sortedAlbums.size})")
+                        }
+                        items(sortedAlbums, key = { "search-al-${it.url}" }) { a ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { nav.open(Route.Album(a)) }
+                                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Artwork(a.thumb, 56.dp, corner = 12.dp, placeholder = AppIcons.Album)
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 14.dp),
+                                ) {
+                                    Text(a.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${if (a.isAlbum) "Album" else "Playlist"} • ${a.subtitle}", style = MaterialTheme.typography.bodySmall, color = velvetColors.muted, maxLines = 1)
+                                }
+                            }
+                            HorizontalDivider(Modifier.padding(start = 90.dp, end = 20.dp), color = velvetColors.rule.copy(alpha = 0.5f))
+                        }
+                    }
+
+                    // 4. Matching Artists
+                    if (hasArtists) {
+                        item(key = "search-header-artists") {
+                            BrowseSection("Artists (${sortedArtists.size})")
+                        }
+                        items(sortedArtists, key = { "search-ar-${it.url}" }) { r ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { nav.open(Route.Artist(r)) }
+                                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Artwork(r.thumb, 56.dp, corner = 28.dp, placeholder = Icons.Default.Person)
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 14.dp),
+                                ) {
+                                    Text(r.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("Artist", style = MaterialTheme.typography.bodySmall, color = velvetColors.muted, maxLines = 1)
+                                }
+                            }
+                            HorizontalDivider(Modifier.padding(start = 90.dp, end = 20.dp), color = velvetColors.rule.copy(alpha = 0.5f))
+                        }
+                    }
+                }
+            } else {
+                // 2. TWO ROUNDED SQUARE TILES SIDE BY SIDE
+                // Exactly (screenWidth - 16dp side padding*2 - 12dp gap) / 2 wide with aspectRatio 1:1, corner radius 20 dp
+                item(key = "library-hero-tiles") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -680,6 +1000,7 @@ fun LibraryScreen() {
                         HorizontalDivider(Modifier.padding(start = 90.dp, end = 20.dp), color = velvetColors.rule.copy(alpha = 0.5f))
                     }
                 }
+            }
             }
         }
     }
