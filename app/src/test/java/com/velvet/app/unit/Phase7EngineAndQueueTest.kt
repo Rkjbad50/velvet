@@ -53,7 +53,7 @@ class Phase7EngineAndQueueTest {
                     clock = clock,
                 ),
                 GenreLanguageNeighbourSource(
-                    querySearchProvider = { catalog },
+                    querySearchProvider = { catalog.reversed() },
                     clock = clock,
                 ),
             ),
@@ -178,9 +178,13 @@ class Phase7EngineAndQueueTest {
         var now = 20_000_000L
         val clock = { now }
         val artists = listOf("Arijit Singh", "Atif Aslam", "Alka Yagnik", "KK", "Jubin Nautiyal", "Armaan Malik", "Shreya Ghoshal", "Sonu Nigam", "Mohit Chauhan", "Rahat Fateh Ali Khan")
-        val verifiedCatalog = (1..60).map { i ->
+        val adjectives = listOf("Savera", "Dhalti", "Meethi", "Gehri", "Uljhi", "Nayi", "Khwabi", "Pehli", "Chupke", "Sard")
+        val nouns = listOf("Baarish", "Raatein", "Hawayein", "Kahaani", "Parchhai", "Manzil", "Khamoshi", "Roshni", "Sargam", "Dastaan")
+        val verifiedCatalog = (0 until 60).map { i ->
             val artist = artists[i % artists.size]
-            topicSong("studio_$i", "Romantic Ishq Melody $i", artist, durationSec = 240L, album = "Album ${i % 15}")
+            val adj = adjectives[i / nouns.size]
+            val noun = nouns[i % nouns.size]
+            topicSong("studio_${i + 1}", "$adj $noun", artist, durationSec = 240L, album = "Ishq Album ${i % 15}")
         }
         val pollutedCatalog = verifiedCatalog + listOf(
             Song("bad_omv_a", "Romantic Melody (Official Music Video)", "Arijit Singh", 240L, isUploaderVerified = true, rawUploaderName = "Sony Music India"),
@@ -190,7 +194,7 @@ class Phase7EngineAndQueueTest {
         val engine = buildEngine(pollutedCatalog, clock = clock)
         val coordinator = AutoplayRefillCoordinator(engine, policy = RefillPolicy(minCooldownMs = 0L), clock = clock)
         val queueManager = QueueManager()
-        val startSeed = topicSong("studio_0", "Romantic Ishq Melody 0", "Arijit Singh", durationSec = 240L, album = "Album 0")
+        val startSeed = topicSong("studio_0", "Noor e Ishq", "Arijit Singh", durationSec = 240L, album = "Ishq Album 0")
         queueManager.start(listOf(startSeed), startIndex = 0)
 
         fun snapshot() = QueueRefillSnapshot(
