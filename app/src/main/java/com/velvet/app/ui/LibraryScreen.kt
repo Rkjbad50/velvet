@@ -30,6 +30,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -69,7 +71,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -116,8 +120,10 @@ fun LibraryScreen() {
     var isSearching by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     BackHandler(enabled = isSearching) {
+        keyboardController?.hide()
         isSearching = false
         searchQuery = ""
     }
@@ -314,8 +320,11 @@ fun LibraryScreen() {
 
             IconButton(
                 onClick = {
+                    if (isSearching) {
+                        keyboardController?.hide()
+                        searchQuery = ""
+                    }
                     isSearching = !isSearching
-                    if (!isSearching) searchQuery = ""
                 },
                 modifier = Modifier.size(48.dp),
             ) {
@@ -364,46 +373,70 @@ fun LibraryScreen() {
             }
         }
 
-        // Inline in-library search field if active
+        // Inline in-library search field if active (Uniform Velvet raised panel)
         if (isSearching) {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp)) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search songs, playlists, albums...", color = velvetColors.muted) },
-                    leadingIcon = {
-                        Icon(
-                            AppIcons.Search,
-                            contentDescription = null,
-                            tint = velvetColors.muted,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Clear search",
-                                    tint = velvetColors.muted,
-                                    modifier = Modifier.size(18.dp),
-                                )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .panel(RoundedCornerShape(14.dp), fill = velvetColors.raised)
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        AppIcons.Search,
+                        contentDescription = null,
+                        tint = velvetColors.muted,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        singleLine = true,
+                        maxLines = 1,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = velvetColors.text),
+                        cursorBrush = SolidColor(velvetColors.accentText),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                if (searchQuery.isEmpty()) {
+                                    Text(
+                                        "Search songs, playlists, albums...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = velvetColors.muted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                innerTextField()
                             }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(searchFocusRequester),
+                    )
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { searchQuery = "" },
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = velvetColors.muted,
+                                modifier = Modifier.size(16.dp),
+                            )
                         }
-                    },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(searchFocusRequester),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = velvetColors.accentText,
-                        unfocusedBorderColor = velvetColors.rule,
-                        focusedTextColor = velvetColors.text,
-                        unfocusedTextColor = velvetColors.text,
-                    ),
-                )
+                    }
+                }
             }
         }
 
