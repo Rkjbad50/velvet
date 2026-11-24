@@ -212,3 +212,19 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
 - **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live listening shadow comparison awaits Phase 7 live coordinator integration.
 - **Rollback Point:**
   - Roll back cleanly to Phase 4 via branch `checkpoint/phase-4-candidates` (`e753c2e`) or to pre-blueprint `main` (`2e3b362`).
+
+### Phase 6 — Bounded Beam Sequence Optimizer and Transition Scorer
+- **Status:** **Code & CI Verification Complete**
+- **Branch / Commit:** `checkpoint/phase-6-sequencing` (`2f2d015`, branched from `checkpoint/phase-5-ranker`; `main` untouched at `2e3b362`).
+- **Scope Implemented:**
+  - Created mode-specific sequence configurations (`SequenceConfig`, `SequenceConfigs`) in `app/src/main/java/com/velvet/app/recommendation/sequencing/SequenceConfig.kt` with deterministic lookahead caps (`28..40`), bounded beam widths (`3..4`), and mode-appropriate artist/album cooldown windows (relaxed in `ARTIST_RADIO` for the requested performer while still guarding against consecutive same-album dumps).
+  - Implemented `DefaultTransitionScorer` (`app/src/main/java/com/velvet/app/recommendation/sequencing/TransitionScorer.kt`) evaluating 1.0x/0.5x/2.0x BPM & `TempoBucket` continuity, mood/energy curve smoothness & clash prevention, style bridge bonuses via `GenreOntology`, language/era continuity, recent-window artist/album/work repetition penalties, and slow-sad streak fatigue guards without penalizing unknown BPM.
+  - Implemented `DefaultSequenceOptimizer` (`app/src/main/java/com/velvet/app/recommendation/sequencing/SequenceOptimizer.kt`) with deterministic bounded beam search, transparent progressive relaxation strictly limited to artist cooldowns/batch caps (never relaxing strict original audio eligibility or work deduplication), and merged rank + transition `RecommendationReason` / `scoreBreakdown` outputs.
+- **Debugging & CI/CD Verification:**
+  - **Attempt 1 (`2ed751b`):** Run `45477869949` failed Kotlin compilation because `SequenceConfig.kt` used placeholder mode names (`AUTOPLAY`, `HOME_QUICK_PICKS`, `HOME_FOR_YOU`, `HOME_KEEP_LISTENING`, `PERSONALIZED_MIX`, `ENDLESS_QUEUE`) instead of `RecommendationMode`'s exact constants (`AUTOPLAY_REFILL`, `HOME_SONGS`, `HOME_RADIOS`, `HOME_PLAYLISTS`, `PERSONALIZED_PLAYLIST`). Fixed in `2f2d015`.
+  - **Final Verified CI Run (`2f2d015`):** Run `45478334660` on `checkpoint/phase-6-sequencing`, job `Build & Verify (CI)` (`138744423632`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 3m 22s**; `velvet-apk` uploaded; `Publish Official Release` skipped (`0s`).
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **275 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED**, including all 4 suites in `app/src/test/java/com/velvet/app/unit/Phase6SequenceOptimizerTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live multi-track playback flow on physical hardware awaits Phase 7 queue integration.
+- **Rollback Point:**
+  - Roll back cleanly to Phase 5 via branch `checkpoint/phase-5-ranker` (`29b6148`) or to pre-blueprint `main` (`2e3b362`).
