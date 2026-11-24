@@ -7,11 +7,9 @@ import com.velvet.app.recommendation.candidates.CandidatePoolBuilder
 import com.velvet.app.recommendation.candidates.GenreLanguageNeighbourSource
 import com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource
 import com.velvet.app.recommendation.engine.DefaultRecommendationEngine
-import com.velvet.app.recommendation.events.EventRecorder
 import com.velvet.app.recommendation.events.InMemoryEventBackend
 import com.velvet.app.recommendation.events.RecommendationEventRepository
 import com.velvet.app.recommendation.identity.RecordingIdentityResolver
-import com.velvet.app.recommendation.model.FeedbackSource
 import com.velvet.app.recommendation.model.RecommendationEvent
 import com.velvet.app.recommendation.model.RecommendationEventType
 import com.velvet.app.recommendation.model.RecommendationMode
@@ -117,29 +115,26 @@ class GoldenAcceptanceSuiteTest {
 
     @Test
     fun goldenFeedbackSuppression_notInterestedBlocksTrackWithoutBanningWholeGenre() = runBlocking {
-        var now = 50_000_000L
+        val now = 50_000_000L
         val eventRepo = RecommendationEventRepository(backend = InMemoryEventBackend())
-        val recorder = EventRecorder(eventRepo, clock = { now })
 
         val seed = topic("s_rom", "Kesariya", "Arijit Singh")
         val suppressedSong = topic("sup_1", "Ishq Track Bad", "Armaan Malik")
         val allowedSong = topic("ok_1", "Jeena Jeena Love", "Atif Aslam")
 
-        val recorderEventId = "ni-1"
         val resolvedSuppressed = RecordingIdentityResolver.resolve(suppressedSong)
         eventRepo.record(
             RecommendationEvent(
-                eventId = recorderEventId,
-                timestampMillis = now - 1_000L,
-                sessionId = "sess-1",
-                eventType = RecommendationEventType.NOT_INTERESTED,
-                recordingId = resolvedSuppressed.canonicalRecordingId,
-                workId = resolvedSuppressed.workId,
+                eventId = "ni-1",
+                eventType = RecommendationEventType.RECOMMENDATION_NOT_INTERESTED,
+                occurredAtMillis = now - 1_000L,
                 providerItemId = suppressedSong.id,
-                feedbackSource = FeedbackSource.EXPLICIT_USER,
+                canonicalRecordingId = resolvedSuppressed.canonicalRecordingId,
+                workId = resolvedSuppressed.workId,
+                recommendationSessionId = "sess-1",
             ),
         )
-        recorder.flushBlocking()
+        eventRepo.flushBlocking()
 
         val engine = buildTestEngine(listOf(suppressedSong, allowedSong), eventRepo = eventRepo, clock = { now })
         val result = engine.nextSimilar(seed, mode = RecommendationMode.SONG_RADIO, limit = 10)
