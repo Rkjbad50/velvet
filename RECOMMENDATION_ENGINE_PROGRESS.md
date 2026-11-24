@@ -175,3 +175,24 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
 - **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; on-device UI testing of Settings `"Reset recommendation profile"` against SQLite remains unverified on physical hardware.
 - **Rollback Point:**
   - Roll back cleanly to Phase 2 via branch `checkpoint/phase-2-identity` (`9b03ab2`) or to pre-blueprint `main` (`2e3b362`).
+  - Phase 3 docs commit `169eb2b` also recorded on `checkpoint/phase-3-profile`.
+
+### Phase 4 — Pluggable Candidate Platform and Strict Audio Eligibility Gate
+- **Status:** **Code & CI Verification Complete**
+- **Branch / Commit:** `checkpoint/phase-4-candidates` (`334582a`, branched from `checkpoint/phase-3-profile`; `main` untouched at `2e3b362`).
+- **Scope Implemented:**
+  - Defined typed recommendation contracts (`RecommendationRequest`, `RecommendationResult`, `RecommendedTrack`, `RankedCandidate`, `RankScoreBreakdown`, `CandidateTrack`, `CandidateSourceEvidence`, `EligibilityDecision`, `SourceHealth`, `CandidateSourceStatus`) in `app/src/main/java/com/velvet/app/recommendation/model/RecommendationRequest.kt` and `RecommendationResult.kt`.
+  - Built pluggable candidate source contract + exponential backoff `SourceCircuitBreaker` (`app/src/main/java/com/velvet/app/recommendation/candidates/RecommendationCandidateSource.kt`).
+  - Adapted G1–G7 generators, replaced the empty G5 stub with a live ontology-backed `GenreLanguageNeighbourSource`, added `SearchIntentCandidateSource` (`G13`) and disabled-until-Tier-3 `AudioNeighbourCandidateSource` (`G8`) in `DefaultCandidateSources.kt`.
+  - Built context-aware TTL-cached, deadline-bounded parallel `CandidatePoolBuilder.kt` with mode-specific quotas, per-artist pre-rank diversity caps, structured `CancellationException` propagation, and merged provenance tracking (no direct queue mutation).
+  - Implemented `DefaultEligibilityPolicy` (`app/src/main/java/com/velvet/app/recommendation/filtering/EligibilityPolicy.kt`) and `DuplicateFilter` (`DuplicateFilter.kt`) enforcing Strict Original Studio Audio Only (`REJECTED_*` and `UNVERIFIED` fail closed with zero padding), content-type duration limits (allowing up to 1200s for long-form devotional/classical), explicit dislikes/fatigue, devotional integrity, and explicit language compatibility.
+  - Preserved `AutoplayPipeline`, `Weights`, `QueueManager`, `QueueExoAdapter`, `.github/workflows/build.yml`, and `versionName = "2.7.5"` unchanged.
+- **Debugging & CI/CD Verification:**
+  - **Attempt 1 (`e5545ed`):** Run `45470560374` failed test compilation because trailing lambda `{ ... }` bound `clock` instead of `relatedProvider` on `SeedRelatedCandidateSource`. Fixed in `20d2b85`.
+  - **Attempt 2 (`20d2b85`):** Run `45471695319` failed 1 of 268 unit tests (`Phase4CandidateAndFilterTest.circuitBreakerTripsAndRecoversAfterCooldownAndCacheRespectsModeKeys`) because `SourceCircuitBreaker.recordResult(CIRCUIT_OPEN)` retained the prior `RATE_LIMITED` `SourceHealth.status` instead of surfacing `CIRCUIT_OPEN`. Fixed cleanly in `334582a`.
+  - **Final Verified CI Run (`334582a`):** Run `45472738047` on `checkpoint/phase-4-candidates`, job `Build & Verify (CI)` (`138724748480`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 4m 19s** (`59 actionable tasks: 59 executed`); `velvet-apk` uploaded; `Publish Official Release` skipped (`0s`).
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **267 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED**, including all 5 new suites in `app/src/test/java/com/velvet/app/unit/Phase4CandidateAndFilterTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live network behaviour against YouTube servers on physical devices awaits Phase 7/8 live queue integration testing.
+- **Rollback Point:**
+  - Roll back cleanly to Phase 3 via branch `checkpoint/phase-3-profile` (`169eb2b`) or to pre-blueprint `main` (`2e3b362`).
