@@ -228,3 +228,22 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
 - **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live multi-track playback flow on physical hardware awaits Phase 7 queue integration.
 - **Rollback Point:**
   - Roll back cleanly to Phase 5 via branch `checkpoint/phase-5-ranker` (`29b6148`) or to pre-blueprint `main` (`2e3b362`).
+
+### Phase 7 — Unified Recommendation Engine, Autoplay Refill Coordinator, and Live Queue Wiring
+- **Status:** **Code & CI Verification Complete**
+- **Branch / Commit:** `checkpoint/phase-7-engine-queue` (`6a609fa`, branched from `checkpoint/phase-6-sequencing`; `main` untouched at `2e3b362`).
+- **Scope Implemented:**
+  - Built privacy-safe operational diagnostics (`RecommendationDiagnostics`, `RecommendationDiagnosticsLog`) in `app/src/main/java/com/velvet/app/recommendation/engine/RecommendationDiagnostics.kt` logging pool counts, eligibility rejections, source health, transition quality, and latency without raw user query text.
+  - Built `DefaultRecommendationEngine` (`app/src/main/java/com/velvet/app/recommendation/engine/RecommendationEngine.kt`) orchestrating G1–G7 + G13 candidate retrieval (`G8` safely disabled) -> `DefaultEligibilityPolicy` (Strict Original Studio Audio Only) -> `DuplicateFilter` -> `DefaultCandidateRanker` -> `DefaultSequenceOptimizer` (preserving chronological `upNext` seam lead-in across refill batches).
+  - Implemented `AutoplayRefillCoordinator` (`app/src/main/java/com/velvet/app/recommendation/engine/AutoplayRefillCoordinator.kt`) with `RefillPolicy`, `RefillState` (`IDLE`, `IN_FLIGHT`, `COOLDOWN`, `EXHAUSTED`, `PAUSED`), `RepeatMode.ONE` guard, anchor exhaustion protection (never relaxing strict audio gates on empty pools), and optimistic-concurrency `queueVersion` stale-result discard.
+  - Added `@Volatile` JMM visibility on `QueueManager.state` / `queueVersion` (`PlayerQueueManager.kt`), initialized `recommendationEngine` & `autoplayRefillCoordinator` in `VelvetApp.kt`, and wired `PlayerConnection.checkAndExtendAutoplay`, `loadSmartShuffleRecommendations`, `startRadio`, and `startArtistRadio` through the unified engine while keeping `QueueManager` as logical source of truth and `QueueExoAdapter` (`shuffleModeEnabled = false`) intact.
+- **Debugging & CI/CD Verification:**
+  - **Attempt 1 (`cda94aa`):** Run `45480035903` compiled production code & APK cleanly (`lintVitalAnalyzeRelease`, `minifyReleaseWithR8` succeeded) but failed test compilation in `Phase7EngineAndQueueTest` referencing non-existent `InMemoryRecommendationEventRepository`. Fixed to `RecommendationEventRepository(backend = InMemoryEventBackend())` in `9d1323e`.
+  - **Attempt 2 (`9d1323e`):** Run `45481013021` ran all unit tests, catching a real multi-refill seam defect in the 4-hour synthetic queue test (`8/37` back-to-back artist transitions across batch append boundaries) because `DefaultRecommendationEngine` passed only played history instead of `upNext` tail context into `SequenceOptimizer`. Fixed in `1734e83` by passing chronological `(recent + current + userQueue + upNext)` lead-in and honoring full `artistCooldownWindow`.
+  - **Attempt 3 (`1734e83`):** Run `45482014608` surfaced synthetic title prefix collisions (`"Romantic Ishq Melody 1"` blocking `"10..19"` via `Models.isSameTrackAs`). Fixed synthetic catalog to distinct collision-free song titles in `6a609fa`.
+  - **Final Verified CI Run (`6a609fa`):** Run `45483552121` on `checkpoint/phase-7-engine-queue`, job `Build & Verify (CI)` (`138762798931`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 3m 42s**; `velvet-apk` uploaded; `Publish Official Release` skipped (`0s`).
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **279 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED**, including all 4 suites in `app/src/test/java/com/velvet/app/unit/Phase7EngineAndQueueTest.kt` (full OMV/unverified exclusion, mid-flight `queueVersion` stale discard, `RepeatMode.ONE`/exhaustion transitions, and 4-hour synthetic session continuity).
+- **Verification Scope Caveat:** Verified deterministically via JVM tests + R8 release APK compilation; live network playback / background service transitions on a physical Android device await manual device testing.
+- **Rollback Point:**
+  - Roll back cleanly to Phase 6 via branch `checkpoint/phase-6-sequencing` (`2f350a0`) or to pre-blueprint `main` (`2e3b362`).
