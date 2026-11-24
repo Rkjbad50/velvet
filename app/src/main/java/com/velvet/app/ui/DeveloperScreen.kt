@@ -97,7 +97,7 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
     var activeLogFilter by remember { mutableStateOf<LogLevel?>(null) }
     var preferredClientName by remember {
-        mutableStateOf(if (StreamResolver.forceFullExtractor) "NewPipeExtractor (Full)" else "Android Reel (Fast) + Fallback")
+        mutableStateOf(if (StreamResolver.forceFullExtractor) "NewPipeExtractor (Full)" else "VisionOS (Fast) + Fallback")
     }
 
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }

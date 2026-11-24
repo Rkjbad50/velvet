@@ -58,7 +58,7 @@ object DefaultHealingDiagnostics : HealingDiagnostics {
  * Pure-Kotlin state machine implementing the W3-B Self-healing playback ladder:
  * 1. Transient IO error (timeout, connection reset): 2 retries with exponential backoff
  * 2. HTTP 403/410/expired URL: invalidate cache entry, re-resolve, retry
- * 3. Next stream candidate (itag/bitrate), then next client (AndroidReel Fast <-> NewPipeExtractor Full)
+ * 3. Next stream candidate (itag/bitrate), then next client (VisionOS Fast <-> NewPipeExtractor Full)
  * 4. Still failing: skip to next queue item (do not stall)
  * 5. 3 DIFFERENT songs in a row fail with the same error class: stop auto-skipping, pause,
  *    and show ONE banner (max once per 10 minutes).
@@ -183,7 +183,7 @@ class PlaybackHealingLadder(
             return HealingDecision.TryNextCandidate(videoId)
         }
 
-        // 3b. Try next client (AndroidReel Fast <-> NewPipeExtractor Full)
+        // 3b. Try next client (VisionOS Fast <-> NewPipeExtractor Full)
         if (!state.triedNextClient) {
             state.triedNextClient = true
             val detail = "Step 3b: Switch to alternate extractor client for videoId=$videoId [host=$host]"

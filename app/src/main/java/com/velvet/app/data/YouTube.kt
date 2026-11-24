@@ -95,7 +95,7 @@ object YouTube {
 
     fun songFrom(info: StreamInfo): Song {
         val rawUploader = info.uploaderName?.trim()?.takeIf { it.isNotBlank() }
-        val descContent = runCatching { info.description?.content }.getOrNull()
+        val descContent = runCatching { info.description?.content() }.getOrNull()
         val descHint = extractReleaseDescriptionHint(descContent)
         val topicChannel = isTopicUploaderName(rawUploader) || descHint != null
         val verifiedUploader = runCatching { info.isUploaderVerified }.getOrDefault(false)

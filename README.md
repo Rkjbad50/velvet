@@ -17,6 +17,7 @@
 ## ✨ What's New in v2.7.6
 
 - **Strict Original Studio Music Audio Only**: Autoplay, Song Radio, Artist Radio, Similar Songs, Smart Shuffle, and Home shelves filter fail-closed to verified `- Topic` audio, official label studio tracks, and OST audio—rejecting official music videos, lyric videos, visualizers, live concerts, and unverified uploads.
+- **Latest Extraction Engine (`NewPipeExtractor v0.27.1`)**: Upgraded stream resolution to `NewPipeExtractor v0.27.1` with VisionOS fast-path + Firefox ESR 153 headers and updated n-sig / client compatibility.
 - **Local Personalized Recommendation Intelligence**: Multi-source discovery (`G1–G7 + G13`), music/genre/mood/tempo-first mode ranker with zero artist bias outside Artist Radio, multi-horizon taste learning (with safe `"Not interested"` and skip handling), and bounded beam sequencing to prevent back-to-back artist or album dumps.
 - **Radio Evolution & Smart Home Filtering**: Persistent Song Radio sessions smoothly adapt from genuinely completed tracks (`45/25/20/10`) without drifting on skips, alongside studio-audio-verified `Quick picks`, `Speed Dial`, `Trending`, and `Made for you`.
 - **Queue Safety & On-Device Inspector**: Concurrent `queueVersion`-safe Autoplay refills honoring `RepeatMode.ONE`, plus a local Recommendation Engine Inspector (`Developer options`) with zero query tracking leaks.
@@ -45,7 +46,7 @@
 
 - **UI**: Kotlin & Jetpack Compose (Material 3)
 - **Audio Engine**: AndroidX Media3 (ExoPlayer) + `MediaSessionService`
-- **Source & Lyrics**: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) & [LRCLIB](https://lrclib.net)
+- **Source & Lyrics**: [NewPipeExtractor v0.27.1](https://github.com/TeamNewPipe/NewPipeExtractor) & [LRCLIB](https://lrclib.net)
 - **Media & Data**: Coil (with Palette colors) & KotlinX Serialization
 
 ---

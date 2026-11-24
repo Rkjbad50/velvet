@@ -67,13 +67,13 @@ object StreamResolver {
     @Volatile
     var dataSaver = false
 
-    /** Developer options toggle: force full NewPipe extractor instead of AndroidReel fast path. */
+    /** Developer options toggle: force full NewPipe extractor instead of VisionOS fast path. */
     @Volatile
     var forceFullExtractor = false
 
     fun togglePreferredClient(): String {
         forceFullExtractor = !forceFullExtractor
-        return if (forceFullExtractor) "NewPipeExtractor (Full)" else "Android Reel (Fast) + Fallback"
+        return if (forceFullExtractor) "NewPipeExtractor (Full)" else "VisionOS (Fast) + Fallback"
     }
 
     /** Clears all in-memory stream URLs and related metadata caches. */
@@ -116,7 +116,7 @@ object StreamResolver {
                 peek(videoId, saver)?.let { return it }
                 val isFastAllowed = fastPathAllowed(videoId)
                 val resolved = (if (isFastAllowed) {
-                    clientName = "AndroidReel (Fast)"
+                    clientName = "VisionOS (Fast)"
                     fetchFastOrNull(videoId, saver)
                 } else null) ?: run {
                     clientName = "NewPipeExtractor (Full)"
@@ -204,7 +204,7 @@ object StreamResolver {
 
     private fun fetchFast(videoId: String, saver: Boolean): Resolved {
         val cpn = YoutubeParsingHelper.generateContentPlaybackNonce()
-        val response = YoutubeStreamHelper.getAndroidReelPlayerResponse(
+        val response = YoutubeStreamHelper.getVisionOsPlayerResponse(
             NewPipe.getPreferredContentCountry(), NewPipe.getPreferredLocalization(), videoId, cpn,
         )
         val status = response.getObject("playabilityStatus").getString("status")
@@ -296,15 +296,10 @@ object StreamResolver {
 
     // Mirrors what NewPipe's player sends: each YouTube client's stream URLs only work
     // with that client's user agent.
-    private fun headersFor(url: String): Map<String, String> = when {
-        YoutubeParsingHelper.isAndroidStreamingUrl(url) ->
-            mapOf("User-Agent" to YoutubeParsingHelper.getAndroidUserAgent(null))
-        YoutubeParsingHelper.isIosStreamingUrl(url) ->
-            mapOf("User-Agent" to YoutubeParsingHelper.getIosUserAgent(null))
+    internal fun headersFor(url: String): Map<String, String> = when {
         YoutubeParsingHelper.isVisionOsStreamingUrl(url) ->
             mapOf("User-Agent" to YoutubeParsingHelper.getVisionOsUserAgent(null))
-        YoutubeParsingHelper.isWebStreamingUrl(url) ||
-            YoutubeParsingHelper.isWebEmbeddedPlayerStreamingUrl(url) -> mapOf(
+        YoutubeParsingHelper.isWebStreamingUrl(url) -> mapOf(
             "User-Agent" to YtDownloader.USER_AGENT,
             "Origin" to "https://www.youtube.com",
             "Referer" to "https://www.youtube.com/",
