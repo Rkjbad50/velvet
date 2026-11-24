@@ -1,6 +1,7 @@
 package com.velvet.app.ui
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,7 +31,10 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -42,7 +47,11 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -548,130 +557,47 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     val isCurrentPlaylistShuffled = PlayerConnection.isPlaylistSessionActive(id) && PlayerConnection.shuffle
 
     Box(Modifier.fillMaxSize()) {
-        BackPage(onBack) {
-            item {
-                CollectionHeader(
-                    title = playlist.name,
-                    subtitle = playlist.description.orEmpty(),
-                    meta = listOf(songCountStr, totalDuration(activeSongs)).filter { it.isNotBlank() }.joinToString(" • "),
-                    tint = rememberArtColor(activeSongs.firstOrNull()?.thumb),
-                    onTitleClick = { showEditSheet = true },
-                    onTitleLongClick = { showEditSheet = true },
-                    art = {
-                        Box(
-                            modifier = Modifier
-                                .shadow(12.dp, RoundedCornerShape(12.dp))
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { showEditSheet = true },
-                        ) {
-                            PlaylistCover(
-                                activeSongs,
-                                if (activeSongs.size <= 1) 156.dp else 230.dp,
-                                corner = 12.dp,
-                                customCover = playlist.customCover,
-                                coverMode = playlist.coverMode,
-                                coverRef = playlist.coverRef,
-                            )
-                        }
-                    },
-                    artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
-                    playEnabled = activeSongs.isNotEmpty(),
-                    isPlaying = isCurrentPlaylistPlaying,
-                    isShuffled = isCurrentPlaylistShuffled,
-                    onPlay = {
-                        PlayerConnection.playOrResumePlaylist(id, activeSongs, playbackContext)
-                    },
-                    onShuffle = { PlayerConnection.shufflePlayOrToggle(id, activeSongs, playbackContext) },
-                    topActions = {
-                        PanelIconButton(
-                            if (showSearch) Icons.Default.Close else Icons.Default.Search,
-                            if (showSearch) "Close search" else "Search in playlist",
-                        ) {
-                            showSearch = !showSearch
-                            if (!showSearch) searchQuery = ""
-                        }
-                        PanelIconButton(AppIcons.Pencil, "Edit playlist") { showEditSheet = true }
-                        Box {
-                            PanelIconButton(Icons.Default.MoreVert, "More options") { showOverflowMenu = true }
-                            DropdownMenu(
-                                expanded = showOverflowMenu,
-                                onDismissRequest = { showOverflowMenu = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Edit playlist") },
-                                    leadingIcon = { Icon(AppIcons.Pencil, null) },
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        showEditSheet = true
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Duplicate playlist") },
-                                    leadingIcon = { Icon(Icons.Default.Share, null) },
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        val newId = library.duplicatePlaylist(playlist.id)
-                                        if (newId != null) {
-                                            Toast.makeText(context, "Playlist duplicated", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Delete playlist", color = velvetColors.danger) },
-                                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = velvetColors.danger) },
-                                    onClick = {
-                                        showOverflowMenu = false
-                                        confirm = ConfirmRequest(
-                                            "Delete \"${playlist.name}\"?",
-                                            "This playlist and its ${playlist.songs.size} songs will be removed from your library. This can't be undone.",
-                                            "Delete",
-                                        ) {
-                                            library.deletePlaylist(playlist.id)
-                                            onBack()
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                    },
-                    actions = {
-                        Surface(
-                            onClick = { showSortSheet = true },
-                            shape = RoundedCornerShape(20.dp),
-                            color = velvetColors.raised,
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    AppIcons.Sort,
-                                    contentDescription = "Sort playlist",
-                                    tint = velvetColors.accentText,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    PlaylistSorter.getSortLabel(playlist.sortKey, playlist.sortDirection),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = velvetColors.text,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        DownloadAllButton(activeSongs)
-                    },
-                )
+        if (showSearch) {
+            BackHandler {
+                showSearch = false
+                searchQuery = ""
+            }
+            val focusRequester = remember { FocusRequester() }
+            val keyboardController = LocalSoftwareKeyboardController.current
+
+            LaunchedEffect(Unit) {
+                delay(120)
+                focusRequester.requestFocus()
             }
 
-            if (showSearch) {
-                item {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding(),
+            ) {
+                // Top Search Bar Header (Always at the very top, permanently above the keyboard)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    PanelIconButton(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        "Close search",
+                        onClick = {
+                            keyboardController?.hide()
+                            showSearch = false
+                            searchQuery = ""
+                        },
+                    )
+
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 6.dp)
+                            .weight(1f)
                             .panel(RoundedCornerShape(14.dp), fill = velvetColors.raised)
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -683,69 +609,220 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                                 tint = velvetColors.muted,
                                 modifier = Modifier.size(20.dp),
                             )
-                            Spacer(Modifier.width(10.dp))
+                            Spacer(Modifier.width(8.dp))
                             BasicTextField(
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
                                 singleLine = true,
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = velvetColors.text),
                                 cursorBrush = SolidColor(velvetColors.accent),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
                                 decorationBox = { innerTextField ->
                                     if (searchQuery.isEmpty()) {
                                         Text(
-                                            "Search in playlist...",
+                                            "Search in ${playlist.name}...",
                                             style = MaterialTheme.typography.bodyLarge,
                                             color = velvetColors.muted,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                     }
                                     innerTextField()
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusRequester(focusRequester),
                             )
                             if (searchQuery.isNotEmpty()) {
                                 IconButton(
                                     onClick = { searchQuery = "" },
                                     modifier = Modifier.size(24.dp),
                                 ) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear", tint = velvetColors.muted, modifier = Modifier.size(16.dp))
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Clear",
+                                        tint = velvetColors.muted,
+                                        modifier = Modifier.size(16.dp),
+                                    )
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            if (playlist.sortKey != SortKey.CUSTOM && activeEntries.isNotEmpty()) {
+                // Filtered Songs List (Scrollable, fully visible between top search bar and keyboard)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                ) {
+                    if (filteredEntries.isEmpty()) {
+                        if (searchQuery.isNotBlank()) {
+                            item { EmptyHint("No songs match \"$searchQuery\"") }
+                        } else {
+                            item { EmptyHint("No songs in this playlist.") }
+                        }
+                    } else {
+                        itemsIndexed(filteredEntries, key = { _, entry -> entry.entryId }) { _, entry ->
+                            SongRow(
+                                song = entry.song,
+                                onClick = {
+                                    keyboardController?.hide()
+                                    val origIdx = activeSongs.indexOfFirst { it.id == entry.song.id }.coerceAtLeast(0)
+                                    PlayerConnection.play(activeSongs, origIdx, playlistId = id, context = playbackContext)
+                                },
+                                playlistId = id,
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            BackPage(onBack) {
                 item {
-                    Text(
-                        "Switch to Custom order to rearrange",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = velvetColors.muted,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 6.dp),
-                        textAlign = TextAlign.Center,
+                    CollectionHeader(
+                        title = playlist.name,
+                        subtitle = playlist.description.orEmpty(),
+                        meta = listOf(songCountStr, totalDuration(activeSongs)).filter { it.isNotBlank() }.joinToString(" • "),
+                        tint = rememberArtColor(activeSongs.firstOrNull()?.thumb),
+                        onTitleClick = { showEditSheet = true },
+                        onTitleLongClick = { showEditSheet = true },
+                        art = {
+                            Box(
+                                modifier = Modifier
+                                    .shadow(12.dp, RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { showEditSheet = true },
+                            ) {
+                                PlaylistCover(
+                                    activeSongs,
+                                    if (activeSongs.size <= 1) 156.dp else 230.dp,
+                                    corner = 12.dp,
+                                    customCover = playlist.customCover,
+                                    coverMode = playlist.coverMode,
+                                    coverRef = playlist.coverRef,
+                                )
+                            }
+                        },
+                        artworkBackdropSize = if (activeSongs.size <= 1) 156.dp else 300.dp,
+                        playEnabled = activeSongs.isNotEmpty(),
+                        isPlaying = isCurrentPlaylistPlaying,
+                        isShuffled = isCurrentPlaylistShuffled,
+                        onPlay = {
+                            PlayerConnection.playOrResumePlaylist(id, activeSongs, playbackContext)
+                        },
+                        onShuffle = { PlayerConnection.shufflePlayOrToggle(id, activeSongs, playbackContext) },
+                        topActions = {
+                            PanelIconButton(
+                                Icons.Default.Search,
+                                "Search in playlist",
+                            ) {
+                                showSearch = true
+                            }
+                            PanelIconButton(AppIcons.Pencil, "Edit playlist") { showEditSheet = true }
+                            Box {
+                                PanelIconButton(Icons.Default.MoreVert, "More options") { showOverflowMenu = true }
+                                DropdownMenu(
+                                    expanded = showOverflowMenu,
+                                    onDismissRequest = { showOverflowMenu = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Edit playlist") },
+                                        leadingIcon = { Icon(AppIcons.Pencil, null) },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            showEditSheet = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Duplicate playlist") },
+                                        leadingIcon = { Icon(Icons.Default.Share, null) },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            val newId = library.duplicatePlaylist(playlist.id)
+                                            if (newId != null) {
+                                                Toast.makeText(context, "Playlist duplicated", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Delete playlist", color = velvetColors.danger) },
+                                        leadingIcon = { Icon(Icons.Default.Delete, null, tint = velvetColors.danger) },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            confirm = ConfirmRequest(
+                                                "Delete \"${playlist.name}\"?",
+                                                "This playlist and its ${playlist.songs.size} songs will be removed from your library. This can't be undone.",
+                                                "Delete",
+                                            ) {
+                                                library.deletePlaylist(playlist.id)
+                                                onBack()
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        },
+                        actions = {
+                            Surface(
+                                onClick = { showSortSheet = true },
+                                shape = RoundedCornerShape(20.dp),
+                                color = velvetColors.raised,
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        AppIcons.Sort,
+                                        contentDescription = "Sort playlist",
+                                        tint = velvetColors.accentText,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        PlaylistSorter.getSortLabel(playlist.sortKey, playlist.sortDirection),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = velvetColors.text,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            DownloadAllButton(activeSongs)
+                        },
                     )
                 }
-            }
 
-            if (filteredEntries.isEmpty()) {
-                if (searchQuery.isNotBlank()) {
-                    item { EmptyHint("No songs match \"$searchQuery\"") }
-                } else {
+                if (playlist.sortKey != SortKey.CUSTOM && activeEntries.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Switch to Custom order to rearrange",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = velvetColors.muted,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+
+                if (activeEntries.isEmpty()) {
                     item { EmptyHint("No songs in this playlist.") }
                 }
-            }
 
-            itemsIndexed(filteredEntries, key = { _, entry -> entry.entryId }) { _, entry ->
-                SongRow(
-                    song = entry.song,
-                    onClick = {
-                        val origIdx = activeSongs.indexOfFirst { it.id == entry.song.id }.coerceAtLeast(0)
-                        PlayerConnection.play(activeSongs, origIdx, playlistId = id, context = playbackContext)
-                    },
-                    playlistId = id,
-                )
+                itemsIndexed(activeEntries, key = { _, entry -> entry.entryId }) { _, entry ->
+                    SongRow(
+                        song = entry.song,
+                        onClick = {
+                            val origIdx = activeSongs.indexOfFirst { it.id == entry.song.id }.coerceAtLeast(0)
+                            PlayerConnection.play(activeSongs, origIdx, playlistId = id, context = playbackContext)
+                        },
+                        playlistId = id,
+                    )
+                }
             }
         }
 

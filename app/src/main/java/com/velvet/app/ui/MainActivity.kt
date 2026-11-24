@@ -27,8 +27,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -154,8 +157,11 @@ private fun AppRoot() {
     val hasPlayer = PlayerConnection.current != null
     // Reserve the actual dock height so large navigation labels never overlap the screen.
     var dockHeight by remember { mutableStateOf(0.dp) }
-    val bottomRoom by animateDpAsState(dockHeight, label = "bottomRoom")
     val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val isImeVisible = imeBottom > 0
+    val targetBottomRoom = if (isImeVisible) 0.dp else dockHeight
+    val bottomRoom by animateDpAsState(targetBottomRoom, label = "bottomRoom")
 
     // tell the user once if their library file had to be recovered
     LaunchedEffect(Unit) {
@@ -197,6 +203,7 @@ private fun AppRoot() {
                     .fillMaxSize()
                     .statusBarsPadding()
                     .navigationBarsPadding()
+                    .imePadding()
                     .padding(bottom = bottomRoom),
             ) {
                 PlayerConnection.brokenStreamingBanner?.let { bannerText ->
