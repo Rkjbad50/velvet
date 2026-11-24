@@ -538,16 +538,50 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
-        // A6: Autoplay Inspector (V2 Engine)
+        // A6: Recommendation Intelligence & Autoplay Inspector
+        val latestDiag = com.velvet.app.VelvetApp.recommendationEngineOrNull()?.diagnosticsLog?.latest()
         val inspectionReport = com.velvet.app.playback.AutoplayPipeline.lastInspectionReport
-        DevSectionCard(title = "A6 • Autoplay Inspector (V2 Engine)") {
-            if (inspectionReport == null) {
+        DevSectionCard(title = "A6 • Recommendation Engine & Autoplay Inspector") {
+            if (latestDiag != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                    Text(
+                        text = "Engine Mode: ${latestDiag.mode.name} (${latestDiag.durationMs}ms${if (latestDiag.usedCache) " • cached" else ""})",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = velvetColors.accentText,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Pool: raw=${latestDiag.rawCandidateCount} -> strictAudio=${latestDiag.eligibleCandidateCount} -> deduped=${latestDiag.duplicateRemovedCount} -> returned=${latestDiag.returnedCount}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = velvetColors.text,
+                    )
+                    if (latestDiag.rejectedReasonCounts.isNotEmpty()) {
+                        Text(
+                            text = "Rejected: ${latestDiag.rejectedReasonCounts.entries.take(4).joinToString { "${it.key}=${it.value}" }}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFFEF5350),
+                        )
+                    }
+                    Text(
+                        text = "Avg transition=${"%.2f".format(latestDiag.averageTransitionScore)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = velvetColors.muted,
+                    )
+                    if (inspectionReport != null) {
+                        HorizontalDivider(color = velvetColors.rule, modifier = Modifier.padding(vertical = 4.dp))
+                    }
+                }
+            }
+            if (inspectionReport == null && latestDiag == null) {
                 Text(
                     text = "No autoplay candidate pool evaluated yet.\nPlay a track with Autoplay active to inspect candidate ranking.",
                     style = MaterialTheme.typography.bodySmall,
                     color = velvetColors.muted,
                 )
-            } else {
+            } else if (inspectionReport != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "Seed: \"${inspectionReport.seedTitle}\" — ${inspectionReport.seedArtist}",

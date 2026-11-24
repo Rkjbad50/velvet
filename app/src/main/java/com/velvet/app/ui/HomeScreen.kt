@@ -132,7 +132,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             if (cached.isNotEmpty() && age in 0 until feedMaxAge) return@launch
 
             val latest = withContext(Dispatchers.IO) {
-                val songs = runCatching { YouTube.trendingMusic().rankMusic().take(20) }.getOrDefault(emptyList())
+                val rawSongs = try {
+                    YouTube.trendingMusic().distinctBy { it.id }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                val composer = VelvetApp.homeRecommendationComposerOrNull()
+                val langs = VelvetApp.library.data.value.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
+                val songs = if (composer != null) {
+                    composer.rankAndFilterTrending(rawSongs, preferredLanguageIds = langs, limit = 20)
+                } else {
+                    rawSongs.rankMusic().take(20)
+                }
                 if (songs.isNotEmpty()) {
                     cache.edit()
                         .putString("locale", locale)
@@ -146,7 +159,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Build Quick Picks from the YouTube Music song catalog of recently played artists. */
+    private fun mapLanguageToIso(raw: String): String? = when (raw.trim().lowercase(Locale.ROOT)) {
+        "hindi" -> "hi"
+        "english" -> "en"
+        "punjabi" -> "pa"
+        "tamil" -> "ta"
+        "telugu" -> "te"
+        "malayalam" -> "ml"
+        "kannada" -> "kn"
+        "bengali" -> "bn"
+        "sanskrit" -> "sa"
+        else -> null
+    }
+
+    /** Build Quick Picks from strict verified studio recommendations anchored by listening habits. */
     fun loadFor(recent: List<Song>) {
         val ids = recent.map { it.id }
         if (ids == historyIds) return
@@ -159,32 +185,30 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         val played = ids.toSet()
         quickPicks = quickPicks.filterNot { it.id in played }
-        val seeds = recent.asSequence()
-            .filter { it.artist.isNotBlank() }
-            .distinctBy { it.artist.trim().lowercase(Locale.ROOT) }
-            .take(3)
-            .toList()
         quickPicksJob = viewModelScope.launch {
-            val groups = seeds.map { seed ->
-                async(Dispatchers.IO) {
-                    val artist = seed.artist.trim()
-                    runCatching { YouTube.Search(artist, YouTube.FILTER_SONGS).loadNext() }
-                        .getOrDefault(emptyList())
-                        .filterIsInstance<BrowseItem.SongItem>()
-                        .map { it.song }
-                        .filter { song ->
-                            song.id !in played && (song.artist.equals(artist, ignoreCase = true) ||
-                                song.artist.startsWith("$artist and ", ignoreCase = true) ||
-                                (seed.artistUrl != null && song.artistUrl == seed.artistUrl))
-                        }
+            val composer = VelvetApp.homeRecommendationComposerOrNull()
+            val libData = VelvetApp.library.data.value
+            val langs = libData.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
+            val resolved = withContext(Dispatchers.IO) {
+                if (composer != null) {
+                    composer.composeQuickPicks(
+                        recent = recent,
+                        liked = libData.liked,
+                        preferredLanguageIds = langs,
+                        directSearchProvider = { query ->
+                            YouTube.Search(query, YouTube.FILTER_SONGS).loadNext()
+                                .filterIsInstance<BrowseItem.SongItem>()
+                                .map { it.song }
+                        },
+                        limit = 10,
+                    )
+                } else {
+                    emptyList()
                 }
-            }.awaitAll()
-            // Take results by rank across artists before moving deeper into any one catalog.
-            quickPicks = buildList {
-                repeat(groups.maxOfOrNull { it.size } ?: 0) { rank ->
-                    groups.mapNotNullTo(this) { it.getOrNull(rank) }
-                }
-            }.distinctBy { it.id }.take(10)
+            }
+            if (resolved.isNotEmpty()) {
+                quickPicks = resolved
+            }
         }
     }
 
@@ -285,16 +309,24 @@ fun HomeScreen(vm: HomeViewModel) {
         }
     }.take(4)
 
-    // one radio per artist you actually listen to, each shown with that artist's song cover
-    val mixes = (recent + data.liked).distinctBy { it.artist.lowercase() }.take(8)
+    val composer = remember { VelvetApp.homeRecommendationComposerOrNull() }
 
-    // Speed Dial songs: 2-3 tracks from recent/favorites + 6-7 fresh discovery tracks closely related to listening habits
+    // One radio per verified artist you listen to, balanced across artists and styles
+    val mixes = remember(recent, data.liked) {
+        composer?.composeMadeForYouMixSeeds(recent, data.liked, limit = 8)
+            ?: (recent + data.liked).distinctBy { it.artist.lowercase() }.take(8)
+    }
+
+    // Speed Dial songs: strict verified studio tracks mixing familiar picks + fresh discovery
     val speedDialSongs = remember(recent, data.liked, quickPicks, trending) {
-        val userPicks = (recent + data.liked).distinctBy { it.id }.filter { it.isPureMusic() }.take(3)
-        val freshDiscovery = (quickPicks + trending).distinctBy { it.id }
-            .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
-            .take(6)
-        (userPicks + freshDiscovery).take(9)
+        composer?.composeSpeedDial(recent, data.liked, quickPicks, trending, limit = 9)
+            ?: run {
+                val userPicks = (recent + data.liked).distinctBy { it.id }.filter { it.isPureMusic() }.take(3)
+                val freshDiscovery = (quickPicks + trending).distinctBy { it.id }
+                    .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
+                    .take(6)
+                (userPicks + freshDiscovery).take(9)
+            }
     }
 
     val homeVisitRequestId = remember { UUID.randomUUID().toString() }

@@ -346,6 +346,14 @@ object PlayerConnection {
             liked = isLiked,
         )
         VelvetApp.library.recordListenEvent(event)
+        if (isRadioActive) {
+            when (reason) {
+                com.velvet.app.data.ListenEndReason.COMPLETED,
+                com.velvet.app.data.ListenEndReason.REPLAY -> VelvetApp.radioSessionManagerOrNull()?.onTrackCompletedOrLiked(song)
+                com.velvet.app.data.ListenEndReason.SKIP_EARLY -> VelvetApp.radioSessionManagerOrNull()?.onTrackSkippedEarly(song)
+                else -> Unit
+            }
+        }
         lastRecordedEventSongId = song.id
         trackStartedAt = System.currentTimeMillis()
     }
@@ -510,6 +518,7 @@ object PlayerConnection {
         radioSeedSong = if (radio) (songs.getOrNull(startIndex) ?: songs.firstOrNull()) else null
         if (!radio) {
             activeRadioSessionId = null
+            VelvetApp.radioSessionManagerOrNull()?.clearSession()
             dismissRadioBanner()
         } else {
             activeRadioSessionId = attribution.recommendationSessionId ?: activeRadioSessionId
@@ -807,6 +816,11 @@ object PlayerConnection {
             attribution = attribution,
         )
         activeRadioSessionId = radioSessionId
+        VelvetApp.radioSessionManagerOrNull()?.startSession(
+            anchor = song,
+            mode = RecommendationMode.SONG_RADIO,
+            sessionId = radioSessionId ?: UUID.randomUUID().toString(),
+        )
         VelvetApp.recommendationEngineOrNull()?.invalidateCandidateCache(song.id)
 
         if (current?.id == song.id) {
@@ -843,6 +857,12 @@ object PlayerConnection {
             attribution = attribution,
         )
         activeRadioSessionId = radioSessionId
+        VelvetApp.radioSessionManagerOrNull()?.startSession(
+            anchor = seed,
+            mode = RecommendationMode.ARTIST_RADIO,
+            sessionId = radioSessionId ?: UUID.randomUUID().toString(),
+            selectedArtistId = seed.artist,
+        )
         VelvetApp.recommendationEngineOrNull()?.invalidateCandidateCache(seed.id)
         VelvetApp.autoplayPipeline.clearCandidatePoolCache(seed.id)
         play(
@@ -853,6 +873,20 @@ object PlayerConnection {
                 mode = RecommendationMode.ARTIST_RADIO,
                 surface = if (attribution.surface != RecommendationSurface.OTHER) attribution.surface else RecommendationSurface.ARTIST_RADIO,
                 recommendationSessionId = radioSessionId ?: attribution.recommendationSessionId,
+            ),
+        )
+    }
+
+    /**
+     * Plays strictly verified similar studio tracks without treating playback as a Radio session.
+     */
+    fun playSimilarSongs(seed: Song, attribution: PlaybackAttribution = PlaybackAttribution()) {
+        play(
+            listOf(seed),
+            radio = false,
+            isArtistRadio = false,
+            attribution = attribution.copy(
+                mode = RecommendationMode.SIMILAR_SONGS,
             ),
         )
     }
@@ -917,6 +951,10 @@ object PlayerConnection {
             radioSeedSong = radioSeedSong,
             radioSessionId = activeRadioSessionId,
             preferredLanguageIds = mapLanguagesToIso(libData.musicLanguages),
+            seedSongsOverride = if (isRadioActive) {
+                val anchor = radioSeedSong ?: current ?: st.current?.song
+                if (anchor != null) VelvetApp.radioSessionManagerOrNull()?.evolvedSeedSongs(anchor).orEmpty() else emptyList()
+            } else emptyList(),
         )
     }
 

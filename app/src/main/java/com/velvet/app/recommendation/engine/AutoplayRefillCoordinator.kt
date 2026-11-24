@@ -51,6 +51,7 @@ data class QueueRefillSnapshot(
     val radioSessionId: String? = null,
     val preferredLanguageIds: Set<String> = emptySet(),
     val excludedProviderIds: Set<String> = emptySet(),
+    val seedSongsOverride: List<Song> = emptyList(),
 )
 
 sealed class RefillDecision {
@@ -196,6 +197,7 @@ class AutoplayRefillCoordinator(
                     (initialSnapshot.radioSeedSong ?: anchor).artist
                 } else null,
                 requestedLanguageIds = initialSnapshot.preferredLanguageIds,
+                seedSongsOverride = initialSnapshot.seedSongsOverride,
             )
         } catch (e: CancellationException) {
             stateMutex.withLock {

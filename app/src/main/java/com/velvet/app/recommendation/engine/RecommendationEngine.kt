@@ -35,6 +35,7 @@ interface RecommendationEngine {
         selectedArtistId: String? = null,
         requestedLanguageIds: Set<String> = emptySet(),
         allowExplicitUserIntentOverride: Boolean = false,
+        seedSongsOverride: List<Song> = emptyList(),
     ): RecommendationResult
 
     fun invalidateCandidateCache(seedId: String? = null)
@@ -63,7 +64,7 @@ class DefaultRecommendationEngine(
         val pool = candidatePoolBuilder.build(request, profile)
 
         val primarySeed = request.primarySeed
-        val seedFeatures = primarySeed?.let { featureRepository.getCachedOrExtract(it) }
+        val seedFeatures = buildWeightedSeedFeatures(request, primarySeed)
 
         val rejectionCounts = linkedMapOf<String, Int>()
         val eligible = pool.candidates.filter { cand ->
@@ -141,14 +142,16 @@ class DefaultRecommendationEngine(
         selectedArtistId: String?,
         requestedLanguageIds: Set<String>,
         allowExplicitUserIntentOverride: Boolean,
+        seedSongsOverride: List<Song>,
     ): RecommendationResult {
         val snapshotRecs = contextSnapshot.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
         val snapshotIds = contextSnapshot.map { it.id }
+        val effectiveSeeds = if (seedSongsOverride.isNotEmpty()) seedSongsOverride else listOf(seed)
         val request = RecommendationRequest(
             requestId = UUID.randomUUID().toString(),
             mode = mode,
-            seedSongs = listOf(seed),
-            seedRecordingIds = listOf(RecordingIdentityResolver.resolve(seed).canonicalRecordingId),
+            seedSongs = effectiveSeeds,
+            seedRecordingIds = effectiveSeeds.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId },
             currentSong = seed,
             currentRecordingId = RecordingIdentityResolver.resolve(seed).canonicalRecordingId,
             recentSongs = recentSongs,
@@ -165,6 +168,47 @@ class DefaultRecommendationEngine(
             createdAtMillis = clock(),
         )
         return recommend(request)
+    }
+
+    /**
+     * Blends anchor (45%) + recent positive radio tracks (25% / 20% / 10%) for evolved SONG_RADIO / SIMILAR_SONGS
+     * without permitting incompatible categories to overwrite primary anchor identity.
+     */
+    private fun buildWeightedSeedFeatures(
+        request: RecommendationRequest,
+        primarySeed: Song?,
+    ): com.velvet.app.recommendation.model.TrackFeatureRecord? {
+        val anchor = primarySeed?.let { featureRepository.getCachedOrExtract(it) } ?: return null
+        if (request.seedSongs.size <= 1 || request.mode == RecommendationMode.ARTIST_RADIO) {
+            return anchor
+        }
+        val decayWeights = listOf(0.45, 0.25, 0.20, 0.10)
+        val seedRecords = request.seedSongs.take(decayWeights.size).mapIndexed { idx, s ->
+            decayWeights[idx] to featureRepository.getCachedOrExtract(s)
+        }
+        val anchorTopType = anchor.musicTypes.maxByOrNull { it.value }?.key
+        val compatSeeds = seedRecords.filter { (w, rec) ->
+            val recType = rec.musicTypes.maxByOrNull { it.value }?.key
+            if (anchorTopType == null || recType == null) w == decayWeights[0]
+            else com.velvet.app.recommendation.features.GenreOntology.musicTypeCompatibility(anchorTopType, recType) >= 0.45
+        }
+        if (compatSeeds.size <= 1) return anchor
+
+        val normFactor = compatSeeds.sumOf { it.first }.coerceAtLeast(1e-6)
+        val genres = linkedMapOf<String, Double>()
+        val subgenres = linkedMapOf<String, Double>()
+        val moods = linkedMapOf<String, Double>()
+        for ((w, rec) in compatSeeds) {
+            val weight = w / normFactor
+            rec.genreIds.forEach { (g, v) -> genres[g] = (genres[g] ?: 0.0) + v * weight }
+            rec.subgenreIds.forEach { (sg, v) -> subgenres[sg] = (subgenres[sg] ?: 0.0) + v * weight }
+            rec.moodIds.forEach { (m, v) -> moods[m] = (moods[m] ?: 0.0) + v * weight }
+        }
+        return anchor.copy(
+            genreIds = genres.mapValues { it.value.coerceIn(0.0, 1.0) },
+            subgenreIds = subgenres.mapValues { it.value.coerceIn(0.0, 1.0) },
+            moodIds = moods.mapValues { it.value.coerceIn(0.0, 1.0) },
+        )
     }
 
     override fun invalidateCandidateCache(seedId: String?) {

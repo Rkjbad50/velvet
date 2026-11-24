@@ -156,6 +156,18 @@ class VelvetApp : Application(), ImageLoaderFactory {
         )
     }
 
+    val radioSessionManager by lazy {
+        com.velvet.app.recommendation.modes.RadioSessionManager()
+    }
+
+    val homeRecommendationComposer by lazy {
+        com.velvet.app.recommendation.home.HomeRecommendationComposer(
+            engine = recommendationEngine,
+            featureRepository = trackFeatureRepository,
+            profileRepository = userProfileRepository,
+        )
+    }
+
     val autoplayRefillCoordinator by lazy {
         com.velvet.app.recommendation.engine.AutoplayRefillCoordinator(
             engine = recommendationEngine,
@@ -242,6 +254,10 @@ class VelvetApp : Application(), ImageLoaderFactory {
             get() = instance.userProfileRepository
         val recommendationEngine: com.velvet.app.recommendation.engine.DefaultRecommendationEngine
             get() = instance.recommendationEngine
+        val radioSessionManager: com.velvet.app.recommendation.modes.RadioSessionManager
+            get() = instance.radioSessionManager
+        val homeRecommendationComposer: com.velvet.app.recommendation.home.HomeRecommendationComposer
+            get() = instance.homeRecommendationComposer
         val autoplayRefillCoordinator: com.velvet.app.recommendation.engine.AutoplayRefillCoordinator
             get() = instance.autoplayRefillCoordinator
 
@@ -250,5 +266,11 @@ class VelvetApp : Application(), ImageLoaderFactory {
 
         fun recommendationEngineOrNull(): com.velvet.app.recommendation.engine.DefaultRecommendationEngine? =
             if (::instance.isInitialized) runCatching { instance.recommendationEngine }.getOrNull() else null
+
+        fun radioSessionManagerOrNull(): com.velvet.app.recommendation.modes.RadioSessionManager? =
+            if (::instance.isInitialized) runCatching { instance.radioSessionManager }.getOrNull() else null
+
+        fun homeRecommendationComposerOrNull(): com.velvet.app.recommendation.home.HomeRecommendationComposer? =
+            if (::instance.isInitialized) runCatching { instance.homeRecommendationComposer }.getOrNull() else null
     }
 }
