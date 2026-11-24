@@ -2047,19 +2047,12 @@ private fun QueueSheet(
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 val deltaY = available.y
-                // Upward drag: if sheet is below 90%, expand sheet instead of scrolling list
-                if (deltaY < 0 && sheetHeightAnim.value < expandedHeightPx - 1f) {
+                // Upward drag: if sheet is below expanded height, expand sheet first
+                if (deltaY < 0 && sheetHeightAnim.value < expandedHeightPx - 4f) {
                     val newHeight = (sheetHeightAnim.value - deltaY).coerceAtMost(expandedHeightPx)
                     val consumed = newHeight - sheetHeightAnim.value
                     coroutineScope.launch { sheetHeightAnim.snapTo(newHeight) }
                     return Offset(0f, -consumed)
-                }
-                // Downward drag: if list is at top, collapse sheet instead of scrolling list
-                if (deltaY > 0 && !listState.canScrollBackward && sheetHeightAnim.value > 0f) {
-                    val newHeight = (sheetHeightAnim.value - deltaY).coerceAtLeast(0f)
-                    val consumed = sheetHeightAnim.value - newHeight
-                    coroutineScope.launch { sheetHeightAnim.snapTo(newHeight) }
-                    return Offset(0f, consumed)
                 }
                 return Offset.Zero
             }
@@ -2070,28 +2063,33 @@ private fun QueueSheet(
                 source: NestedScrollSource,
             ): Offset {
                 val deltaY = available.y
-                // Downward drag: if list is at top, collapse sheet
-                if (deltaY > 0 && !listState.canScrollBackward) {
+                // Downward drag: only when list is already at the very top and cannot scroll backward
+                if (deltaY > 0 && !listState.canScrollBackward && sheetHeightAnim.value > 0f) {
                     val newHeight = (sheetHeightAnim.value - deltaY).coerceAtLeast(0f)
-                    val consumed = sheetHeightAnim.value - newHeight
+                    val c = sheetHeightAnim.value - newHeight
                     coroutineScope.launch { sheetHeightAnim.snapTo(newHeight) }
-                    return Offset(0f, consumed)
+                    return Offset(0f, c)
                 }
                 return Offset.Zero
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                val current = sheetHeightAnim.value
-                val midPoint = (peekHeightPx + expandedHeightPx) / 2f
-                val dismissThreshold = peekHeightPx * 0.5f
-
-                if (available.y < -400f) {
+                // If sheet is at peek (40%) and user flings UP, expand sheet smoothly
+                if (available.y < -350f && sheetHeightAnim.value < expandedHeightPx - 4f) {
                     sheetHeightAnim.animateTo(
                         expandedHeightPx,
                         spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
                     )
                     return available
-                } else if (available.y > 600f) {
+                }
+                // Never intercept downward fling or flings on expanded sheet: pass directly to LazyColumn for smooth momentum!
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                // When list is at top and user flings downward with unconsumed velocity:
+                if (available.y > 600f && !listState.canScrollBackward) {
+                    val current = sheetHeightAnim.value
                     if (current > peekHeightPx + 40f) {
                         sheetHeightAnim.animateTo(
                             peekHeightPx,
@@ -2103,18 +2101,24 @@ private fun QueueSheet(
                     return available
                 }
 
-                if (current > midPoint) {
-                    sheetHeightAnim.animateTo(
-                        expandedHeightPx,
-                        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                    )
-                } else if (current > dismissThreshold) {
-                    sheetHeightAnim.animateTo(
-                        peekHeightPx,
-                        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                    )
-                } else {
-                    dismissWithAnimation()
+                // If sheet was left partially dragged between peek and expanded, settle to nearest target
+                val current = sheetHeightAnim.value
+                if (current > 0f && current < expandedHeightPx - 4f) {
+                    val midPoint = (peekHeightPx + expandedHeightPx) / 2f
+                    val dismissThreshold = peekHeightPx * 0.5f
+                    if (current > midPoint) {
+                        sheetHeightAnim.animateTo(
+                            expandedHeightPx,
+                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                        )
+                    } else if (current > dismissThreshold) {
+                        sheetHeightAnim.animateTo(
+                            peekHeightPx,
+                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                        )
+                    } else {
+                        dismissWithAnimation()
+                    }
                 }
                 return Velocity.Zero
             }

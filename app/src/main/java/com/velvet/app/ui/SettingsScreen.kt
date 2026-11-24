@@ -481,37 +481,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 }
                             }
                         }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = "Check for updates",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = velvetColors.text,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Surface(
-                                color = if (updateInfo?.hasAppUpdate == true) velvetColors.accent else velvetColors.raised,
-                                shape = RoundedCornerShape(6.dp),
-                            ) {
-                                Text(
-                                    text = version,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                    color = if (updateInfo?.hasAppUpdate == true) velvetColors.onAccent else velvetColors.muted,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
-                        }
+                        Text(
+                            text = "Check for updates",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = velvetColors.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         Spacer(Modifier.height(3.dp))
                         Text(
                             text = when {
@@ -526,29 +506,39 @@ fun SettingsScreen(onBack: () -> Unit) {
                             color = if (updateInfo?.hasAppUpdate == true) velvetColors.accentText else velvetColors.muted,
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
                     if (checkingVersion) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = velvetColors.accentText,
-                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .defaultMinSize(minWidth = 68.dp, minHeight = 36.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = velvetColors.accentText,
+                            )
+                        }
                     } else if (updateInfo?.hasAppUpdate == true) {
-                        FilledTonalButton(
+                        Button(
                             onClick = {
                                 updateDialogInfo = updateInfo
                                 showUpdateDialog = true
                             },
-                            colors = ButtonDefaults.filledTonalButtonColors(
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .defaultMinSize(minHeight = 36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
                                 containerColor = velvetColors.accent,
                                 contentColor = velvetColors.onAccent,
                             ),
-                            shape = RoundedCornerShape(8.dp)
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         ) {
-                            Text("Review")
+                            Text("Update", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                         }
                     } else {
-                        FilledTonalButton(
+                        OutlinedButton(
                             onClick = {
                                 checkingVersion = true
                                 scope.launch {
@@ -578,13 +568,18 @@ fun SettingsScreen(onBack: () -> Unit) {
                                     }
                                 }
                             },
-                            colors = ButtonDefaults.filledTonalButtonColors(
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .defaultMinSize(minHeight = 36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
                                 containerColor = velvetColors.raised,
                                 contentColor = velvetColors.text,
                             ),
-                            shape = RoundedCornerShape(8.dp)
+                            border = androidx.compose.foundation.BorderStroke(1.dp, velvetColors.glassBorder),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         ) {
-                            Text("Check")
+                            Text("Check", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
