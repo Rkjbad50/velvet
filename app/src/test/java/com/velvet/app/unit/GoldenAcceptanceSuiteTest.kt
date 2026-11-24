@@ -130,7 +130,6 @@ class GoldenAcceptanceSuiteTest {
                 occurredAtMillis = now - 1_000L,
                 providerItemId = suppressedSong.id,
                 canonicalRecordingId = resolvedSuppressed.canonicalRecordingId,
-                workId = resolvedSuppressed.workId,
                 recommendationSessionId = "sess-1",
             ),
         )
