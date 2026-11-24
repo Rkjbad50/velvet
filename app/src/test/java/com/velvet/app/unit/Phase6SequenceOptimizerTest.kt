@@ -118,7 +118,7 @@ class Phase6SequenceOptimizerTest {
 
         val res = DefaultSequenceOptimizer().optimize(
             ranked = pool,
-            request = RecommendationRequest("req-flow", RecommendationMode.AUTOPLAY, seedSongs = listOf(seedSong), limit = 3),
+            request = RecommendationRequest("req-flow", RecommendationMode.AUTOPLAY_REFILL, seedSongs = listOf(seedSong), limit = 3),
             recentHistoryFeatures = listOf(seedFeat),
             seedFeatures = seedFeat,
         )

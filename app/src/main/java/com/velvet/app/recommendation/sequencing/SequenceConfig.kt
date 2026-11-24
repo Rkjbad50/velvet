@@ -36,8 +36,7 @@ object SequenceConfigs {
                 transitionWeight = 0.28,
             )
 
-            RecommendationMode.SONG_RADIO,
-            RecommendationMode.ENDLESS_QUEUE -> SequenceConfig(
+            RecommendationMode.SONG_RADIO -> SequenceConfig(
                 targetCount = safeLimit,
                 artistCooldownWindow = 3,
                 albumCooldownWindow = 3,
@@ -49,7 +48,7 @@ object SequenceConfigs {
                 transitionWeight = 0.34,
             )
 
-            RecommendationMode.AUTOPLAY -> SequenceConfig(
+            RecommendationMode.AUTOPLAY_REFILL -> SequenceConfig(
                 targetCount = safeLimit,
                 artistCooldownWindow = 3,
                 albumCooldownWindow = 3,
@@ -86,10 +85,10 @@ object SequenceConfigs {
                 transitionWeight = 0.38,
             )
 
-            RecommendationMode.HOME_QUICK_PICKS,
-            RecommendationMode.HOME_FOR_YOU,
-            RecommendationMode.HOME_KEEP_LISTENING,
-            RecommendationMode.PERSONALIZED_MIX -> SequenceConfig(
+            RecommendationMode.HOME_SONGS,
+            RecommendationMode.HOME_RADIOS,
+            RecommendationMode.HOME_PLAYLISTS,
+            RecommendationMode.PERSONALIZED_PLAYLIST -> SequenceConfig(
                 targetCount = safeLimit,
                 artistCooldownWindow = 3,
                 albumCooldownWindow = 3,
