@@ -243,12 +243,14 @@ class Phase4CandidateAndFilterTest {
 
         val builder = CandidatePoolBuilder(
             sources = listOf(
-                SeedRelatedCandidateSource {
-                    listOf(
-                        verifiedTopic, verifiedLabelAudio, officialVideoVerified,
-                        lyricVideo, visualizer, liveRecording, remix, ambiguousVerifiedNoAudioProof,
-                    )
-                },
+                SeedRelatedCandidateSource(
+                    relatedProvider = {
+                        listOf(
+                            verifiedTopic, verifiedLabelAudio, officialVideoVerified,
+                            lyricVideo, visualizer, liveRecording, remix, ambiguousVerifiedNoAudioProof,
+                        )
+                    },
+                ),
             ),
         )
         val extractor = MetadataFeatureExtractor()
@@ -264,7 +266,7 @@ class Phase4CandidateAndFilterTest {
 
         // If pool ONLY contains official music video + UNVERIFIED, result MUST be empty (never padded with videos!)
         val videoOnlyPool = CandidatePoolBuilder(
-            sources = listOf(SeedRelatedCandidateSource { listOf(officialVideoVerified, ambiguousVerifiedNoAudioProof) }),
+            sources = listOf(SeedRelatedCandidateSource(relatedProvider = { listOf(officialVideoVerified, ambiguousVerifiedNoAudioProof) })),
         ).build(req.copy(requestId = "r-empty-strict"), UserTasteSnapshot())
         val keptFromVideoPool = videoOnlyPool.candidates.filter {
             policy.evaluate(it, req, UserTasteSnapshot(), seedFeatures).eligible
@@ -303,8 +305,8 @@ class Phase4CandidateAndFilterTest {
 
         val builder = CandidatePoolBuilder(
             sources = listOf(
-                SeedRelatedCandidateSource { listOf(sameChalisaTopic, bhajanValid, secularPartySameArtist, tamilTrack) },
-                LibraryTrackCandidateSource({ listOf(sameChalisaLabel, bhajanValid) }),
+                SeedRelatedCandidateSource(relatedProvider = { listOf(sameChalisaTopic, bhajanValid, secularPartySameArtist, tamilTrack) }),
+                LibraryTrackCandidateSource(libraryTracksProvider = { listOf(sameChalisaLabel, bhajanValid) }),
             ),
         )
         val req = RecommendationRequest("r-dev", RecommendationMode.SONG_RADIO, seedSongs = listOf(devotionalSeed))
