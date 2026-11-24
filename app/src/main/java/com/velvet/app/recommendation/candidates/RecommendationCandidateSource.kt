@@ -77,10 +77,14 @@ class SourceCircuitBreaker(
                 circuitOpenUntilMillis = 0L,
                 errorCode = null,
             )
-            CandidateSourceStatus.CIRCUIT_OPEN -> prev ?: SourceHealth(
+            CandidateSourceStatus.CIRCUIT_OPEN -> (prev ?: SourceHealth(
                 sourceId = result.sourceId,
                 status = CandidateSourceStatus.CIRCUIT_OPEN,
-                errorCode = result.errorCode,
+            )).copy(
+                status = CandidateSourceStatus.CIRCUIT_OPEN,
+                latencyMillis = 0L,
+                returnedCount = 0,
+                errorCode = result.errorCode ?: prev?.errorCode ?: "circuit_open",
             )
             CandidateSourceStatus.TIMEOUT,
             CandidateSourceStatus.RATE_LIMITED,
