@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +63,8 @@ import com.velvet.app.data.ArtistRef
 import com.velvet.app.data.BrowseItem
 import com.velvet.app.data.Song
 import com.velvet.app.data.YouTube
+import com.velvet.app.recommendation.model.PlaybackAttribution
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -96,6 +99,11 @@ class SearchViewModel : ViewModel() {
         private set
     var showingResults by mutableStateOf(false)
         private set
+    var activeQueryId by mutableStateOf<String?>(null)
+        private set
+    var searchRequestId by mutableStateOf<String?>(null)
+        private set
+    val searchSessionId: String = UUID.randomUUID().toString()
 
     private var search: YouTube.Search? = null
     private var suggestJob: Job? = null
@@ -121,7 +129,17 @@ class SearchViewModel : ViewModel() {
         if (q.isBlank()) return
         query = q
         showingResults = true
-        if (remember) VelvetApp.library.addSearch(q)
+        searchRequestId = UUID.randomUUID().toString()
+        if (remember) {
+            val qId = UUID.randomUUID().toString()
+            activeQueryId = qId
+            VelvetApp.library.addSearch(q)
+            VelvetApp.eventRecorderOrNull()?.recordSearchSubmitted(
+                queryId = qId,
+                rawQuery = q,
+                searchSessionId = searchSessionId,
+            )
+        }
         suggestJob?.cancel()
         suggestions = emptyList()
         top = null
@@ -182,6 +200,8 @@ class SearchViewModel : ViewModel() {
         onQueryChange("")
         top = null
         items = emptyList()
+        activeQueryId = null
+        searchRequestId = null
     }
 }
 
@@ -348,10 +368,49 @@ private fun SearchResults(vm: SearchViewModel) {
         val top = vm.top
         when {
             vm.error != null && top == null && vm.items.isEmpty() -> item { ErrorBox(vm.error ?: "") { vm.submit(remember = false) } }
-            vm.filter == SearchFilter.All && top != null -> topResults(top, vm.query, onMore = vm::selectFilter, onSongClick = { vm.clear() })
+            vm.filter == SearchFilter.All && top != null -> topResults(
+                top = top,
+                query = vm.query,
+                onMore = vm::selectFilter,
+                onSongClick = { vm.clear() },
+                queryId = vm.activeQueryId,
+                requestId = vm.searchRequestId,
+                searchSessionId = vm.searchSessionId,
+            )
             else -> {
-                items(vm.items, key = ::itemKey) { item ->
-                    BrowseItemRow(item, onSongClick = { vm.clear() })
+                val qId = vm.activeQueryId
+                val reqId = vm.searchRequestId
+                val currentQuery = vm.query
+                val sessionId = vm.searchSessionId
+                itemsIndexed(vm.items, key = { _, item -> itemKey(item) }) { index, item ->
+                    if (item is BrowseItem.SongItem && qId != null && reqId != null) {
+                        LaunchedEffect(reqId, item.song.id, index) {
+                            VelvetApp.eventRecorderOrNull()?.recordSearchResultImpression(
+                                queryId = qId,
+                                rawQuery = currentQuery,
+                                requestId = reqId,
+                                position = index,
+                                song = item.song,
+                                searchSessionId = sessionId,
+                            )
+                        }
+                    }
+                    BrowseItemRow(
+                        item = item,
+                        onSongClick = { vm.clear() },
+                        attributionProvider = if (item is BrowseItem.SongItem && qId != null && reqId != null) {
+                            {
+                                VelvetApp.eventRecorderOrNull()?.recordSearchResultClicked(
+                                    queryId = qId,
+                                    rawQuery = currentQuery,
+                                    requestId = reqId,
+                                    position = index,
+                                    song = item.song,
+                                    searchSessionId = sessionId,
+                                ) ?: PlaybackAttribution()
+                            }
+                        } else null,
+                    )
                     HorizontalDivider(Modifier.padding(start = 88.dp, end = 20.dp), color = velvetColors.rule)
                 }
                 if (!vm.loading && vm.items.isEmpty() && vm.error == null) item { EmptyHint("No results") }
@@ -362,11 +421,16 @@ private fun SearchResults(vm: SearchViewModel) {
 }
 
 @Composable
-fun BrowseItemRow(item: BrowseItem, onSongClick: ((Song) -> Unit)? = null) {
+fun BrowseItemRow(
+    item: BrowseItem,
+    onSongClick: ((Song) -> Unit)? = null,
+    attributionProvider: (() -> PlaybackAttribution)? = null,
+) {
     val nav = LocalNav.current
     when (item) {
         is BrowseItem.SongItem -> SongRow(item.song, onClick = {
-            PlayerConnection.play(listOf(item.song))
+            val attr = attributionProvider?.invoke() ?: PlaybackAttribution()
+            PlayerConnection.play(listOf(item.song), attribution = attr)
             onSongClick?.invoke(item.song)
         })
         is BrowseItem.ArtistItem -> BrowseRow(
@@ -392,6 +456,9 @@ fun LazyListScope.topResults(
     query: String,
     onMore: ((SearchFilter) -> Unit)?,
     onSongClick: ((Song) -> Unit)? = null,
+    queryId: String? = null,
+    requestId: String? = null,
+    searchSessionId: String? = null,
 ) {
     val seeAll = if (onMore != null) "See all" else null
     val topArtist = top.artists.firstOrNull()?.takeIf { it.name.equals(query.trim(), ignoreCase = true) }
@@ -399,13 +466,68 @@ fun LazyListScope.topResults(
 
     if (topArtist != null || topSong != null) {
         item { BrowseSection("Top result") }
-        item { TopResultCard(topArtist, if (topArtist == null) topSong else null, onSongClick) }
+        item {
+            val displayedSong = if (topArtist == null) topSong else null
+            if (displayedSong != null && queryId != null && requestId != null) {
+                LaunchedEffect(requestId, displayedSong.id, 0) {
+                    VelvetApp.eventRecorderOrNull()?.recordSearchResultImpression(
+                        queryId = queryId,
+                        rawQuery = query,
+                        requestId = requestId,
+                        position = 0,
+                        song = displayedSong,
+                        searchSessionId = searchSessionId ?: requestId,
+                    )
+                }
+            }
+            TopResultCard(
+                artist = topArtist,
+                song = displayedSong,
+                onSongClick = onSongClick,
+                attributionProvider = if (displayedSong != null && queryId != null && requestId != null) {
+                    {
+                        VelvetApp.eventRecorderOrNull()?.recordSearchResultClicked(
+                            queryId = queryId,
+                            rawQuery = query,
+                            requestId = requestId,
+                            position = 0,
+                            song = displayedSong,
+                            searchSessionId = searchSessionId ?: requestId,
+                        ) ?: PlaybackAttribution()
+                    }
+                } else null,
+            )
+        }
     }
     if (top.songs.isNotEmpty()) {
         item { BrowseSection("Songs", action = seeAll) { onMore?.invoke(SearchFilter.Songs) } }
-        items(top.songs.take(5), key = { "ts-" + it.id }) { song ->
+        itemsIndexed(top.songs.take(5), key = { _, song -> "ts-" + song.id }) { index, song ->
+            if (queryId != null && requestId != null) {
+                LaunchedEffect(requestId, song.id, index) {
+                    VelvetApp.eventRecorderOrNull()?.recordSearchResultImpression(
+                        queryId = queryId,
+                        rawQuery = query,
+                        requestId = requestId,
+                        position = index,
+                        song = song,
+                        searchSessionId = searchSessionId ?: requestId,
+                    )
+                }
+            }
             SongRow(song, onClick = {
-                PlayerConnection.play(listOf(song))
+                val attr = if (queryId != null && requestId != null) {
+                    VelvetApp.eventRecorderOrNull()?.recordSearchResultClicked(
+                        queryId = queryId,
+                        rawQuery = query,
+                        requestId = requestId,
+                        position = index,
+                        song = song,
+                        searchSessionId = searchSessionId ?: requestId,
+                    ) ?: PlaybackAttribution()
+                } else {
+                    PlaybackAttribution()
+                }
+                PlayerConnection.play(listOf(song), attribution = attr)
                 onSongClick?.invoke(song)
             })
             HorizontalDivider(Modifier.padding(start = 88.dp, end = 20.dp), color = velvetColors.rule)
@@ -441,7 +563,12 @@ fun LazyListScope.topResults(
 }
 
 @Composable
-private fun TopResultCard(artist: ArtistRef?, song: Song?, onSongClick: ((Song) -> Unit)? = null) {
+private fun TopResultCard(
+    artist: ArtistRef?,
+    song: Song?,
+    onSongClick: ((Song) -> Unit)? = null,
+    attributionProvider: (() -> PlaybackAttribution)? = null,
+) {
     val nav = LocalNav.current
     val title = artist?.name ?: song?.title ?: return
     val subtitle = if (artist != null) "Artist" else "Song • ${song?.artist}"
@@ -457,7 +584,8 @@ private fun TopResultCard(artist: ArtistRef?, song: Song?, onSongClick: ((Song) 
                 if (artist != null) {
                     nav.open(Route.Artist(artist))
                 } else song?.let { s ->
-                    PlayerConnection.play(listOf(s))
+                    val attr = attributionProvider?.invoke() ?: PlaybackAttribution()
+                    PlayerConnection.play(listOf(s), attribution = attr)
                     onSongClick?.invoke(s)
                 }
             }

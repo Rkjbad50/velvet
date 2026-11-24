@@ -80,6 +80,9 @@ import com.velvet.app.data.BrowseItem
 import com.velvet.app.data.Song
 import com.velvet.app.data.YouTube
 import com.velvet.app.data.homePlaylists
+import com.velvet.app.recommendation.model.PlaybackAttribution
+import com.velvet.app.recommendation.model.RecommendationMode
+import com.velvet.app.recommendation.model.RecommendationSurface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -90,6 +93,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -293,6 +297,8 @@ fun HomeScreen(vm: HomeViewModel) {
         (userPicks + freshDiscovery).take(9)
     }
 
+    val homeVisitRequestId = remember { UUID.randomUUID().toString() }
+
     val greeting = remember {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         when (hour) {
@@ -420,7 +426,7 @@ fun HomeScreen(vm: HomeViewModel) {
         // YouTube Music Speed Dial section right between Now Playing / Spotlight and Made for you
         if (speedDialSongs.isNotEmpty()) {
             item(key = "speed-dial") {
-                SpeedDialSection(speedDialSongs)
+                SpeedDialSection(speedDialSongs, homeVisitRequestId)
             }
         }
 
@@ -428,9 +434,28 @@ fun HomeScreen(vm: HomeViewModel) {
             item { BrowseSection("Made for you") }
             item {
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    items(mixes, key = { "mix-" + it.id }) { seed ->
+                    itemsIndexed(mixes, key = { _, seed -> "mix-" + seed.id }) { index, seed ->
+                        LaunchedEffect(homeVisitRequestId, seed.id, index) {
+                            VelvetApp.eventRecorderOrNull()?.recordHomeCollectionImpression(
+                                homeVisitRequestId = homeVisitRequestId,
+                                shelfId = "made_for_you",
+                                surface = RecommendationSurface.HOME_RADIO_RAIL,
+                                mode = RecommendationMode.HOME_RADIOS,
+                                position = index,
+                                itemId = seed.id,
+                            )
+                        }
                         MixCard("${seed.artist} Radio", seed.thumb) {
-                            PlayerConnection.startArtistRadio(seed)
+                            PlayerConnection.startArtistRadio(
+                                seed = seed,
+                                attribution = PlaybackAttribution(
+                                    surface = RecommendationSurface.HOME_RADIO_RAIL,
+                                    mode = RecommendationMode.ARTIST_RADIO,
+                                    requestId = homeVisitRequestId,
+                                    shelfId = "made_for_you",
+                                    resultPosition = index,
+                                ),
+                            )
                         }
                     }
                 }
@@ -439,15 +464,24 @@ fun HomeScreen(vm: HomeViewModel) {
 
         if (quickPicks.isNotEmpty()) {
             item {
-                QuickPicksRail(quickPicks) { index ->
-                    PlayerConnection.startRadio(quickPicks[index])
+                QuickPicksRail(quickPicks, homeVisitRequestId) { index ->
+                    PlayerConnection.startRadio(
+                        song = quickPicks[index],
+                        attribution = PlaybackAttribution(
+                            surface = RecommendationSurface.HOME_SONG_RAIL,
+                            mode = RecommendationMode.SONG_RADIO,
+                            requestId = homeVisitRequestId,
+                            shelfId = "quick_picks",
+                            resultPosition = index,
+                        ),
+                    )
                 }
             }
         }
 
         if (trending.isNotEmpty()) {
             item {
-                TrendingRail(trending)
+                TrendingRail(trending, homeVisitRequestId)
             }
         }
 
@@ -465,7 +499,17 @@ fun HomeScreen(vm: HomeViewModel) {
             item { BrowseSection("More for you") }
             item {
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    items(moreForYou, key = { it.url }) { album ->
+                    itemsIndexed(moreForYou, key = { _, album -> album.url }) { index, album ->
+                        LaunchedEffect(homeVisitRequestId, album.url, index) {
+                            VelvetApp.eventRecorderOrNull()?.recordHomeCollectionImpression(
+                                homeVisitRequestId = homeVisitRequestId,
+                                shelfId = "more_for_you",
+                                surface = RecommendationSurface.HOME_PLAYLIST_RAIL,
+                                mode = RecommendationMode.HOME_PLAYLISTS,
+                                position = index,
+                                itemId = album.url,
+                            )
+                        }
                         AlbumCard(album) { nav.open(Route.Album(album)) }
                     }
                 }
@@ -477,7 +521,7 @@ fun HomeScreen(vm: HomeViewModel) {
 /** YouTube Music style Speed Dial grid section */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SpeedDialSection(songs: List<Song>) {
+private fun SpeedDialSection(songs: List<Song>, homeVisitRequestId: String) {
     val openMenu = LocalSongMenu.current
 
     Column(
@@ -512,16 +556,37 @@ private fun SpeedDialSection(songs: List<Song>) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val rows = songs.take(9).chunked(3)
-            rows.forEach { rowSongs ->
+            rows.forEachIndexed { rowIndex, rowSongs ->
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    rowSongs.forEach { song ->
+                    rowSongs.forEachIndexed { colIndex, song ->
+                        val position = rowIndex * 3 + colIndex
+                        LaunchedEffect(homeVisitRequestId, song.id, position) {
+                            VelvetApp.eventRecorderOrNull()?.recordHomeSongImpression(
+                                homeVisitRequestId = homeVisitRequestId,
+                                shelfId = "speed_dial",
+                                surface = RecommendationSurface.HOME_SONG_RAIL,
+                                position = position,
+                                song = song,
+                            )
+                        }
                         SpeedDialSquareTile(
                             song = song,
                             modifier = Modifier.weight(1f),
-                            onClick = { PlayerConnection.play(listOf(song)) },
+                            onClick = {
+                                PlayerConnection.play(
+                                    songs = listOf(song),
+                                    attribution = PlaybackAttribution(
+                                        surface = RecommendationSurface.HOME_SONG_RAIL,
+                                        mode = RecommendationMode.HOME_SONGS,
+                                        requestId = homeVisitRequestId,
+                                        shelfId = "speed_dial",
+                                        resultPosition = position,
+                                    ),
+                                )
+                            },
                             onLongClick = { openMenu(SongMenuRequest(song)) },
                         )
                     }
@@ -929,10 +994,23 @@ private fun MixCard(title: String, thumb: String?, onClick: () -> Unit) {
 }
 
 @Composable
-private fun QuickPicksRail(songs: List<Song>, onPlay: (Int) -> Unit) {
+private fun QuickPicksRail(
+    songs: List<Song>,
+    homeVisitRequestId: String,
+    onPlay: (Int) -> Unit,
+) {
     BrowseSection("Quick picks")
     LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
+            LaunchedEffect(homeVisitRequestId, song.id, index) {
+                VelvetApp.eventRecorderOrNull()?.recordHomeSongImpression(
+                    homeVisitRequestId = homeVisitRequestId,
+                    shelfId = "quick_picks",
+                    surface = RecommendationSurface.HOME_SONG_RAIL,
+                    position = index,
+                    song = song,
+                )
+            }
             SongCard(song) { onPlay(index) }
         }
     }
@@ -966,7 +1044,7 @@ private fun SongCard(song: Song, onClick: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TrendingRail(songs: List<Song>) {
+private fun TrendingRail(songs: List<Song>, homeVisitRequestId: String) {
     val openMenu = LocalSongMenu.current
     BrowseSection("Trending now")
     LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -980,13 +1058,34 @@ private fun TrendingRail(songs: List<Song>) {
                 Column {
                     group.forEachIndexed { offset, song ->
                         val index = page * 3 + offset
+                        LaunchedEffect(homeVisitRequestId, song.id, index) {
+                            VelvetApp.eventRecorderOrNull()?.recordHomeSongImpression(
+                                homeVisitRequestId = homeVisitRequestId,
+                                shelfId = "trending",
+                                surface = RecommendationSurface.HOME_SONG_RAIL,
+                                position = index,
+                                song = song,
+                            )
+                        }
                         if (offset > 0) HorizontalDivider(Modifier.padding(start = 64.dp, end = 12.dp), color = velvetColors.rule)
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .prefetchOnTouch(song.id)
                                 .combinedClickable(
-                                    onClick = { PlayerConnection.play(songs, index) },
+                                    onClick = {
+                                        PlayerConnection.play(
+                                            songs = songs,
+                                            startIndex = index,
+                                            attribution = PlaybackAttribution(
+                                                surface = RecommendationSurface.HOME_SONG_RAIL,
+                                                mode = RecommendationMode.HOME_SONGS,
+                                                requestId = homeVisitRequestId,
+                                                shelfId = "trending",
+                                                resultPosition = index,
+                                            ),
+                                        )
+                                    },
                                     onLongClick = { openMenu(SongMenuRequest(song)) },
                                 )
                                 .padding(10.dp),

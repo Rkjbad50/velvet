@@ -347,10 +347,31 @@ class PlaybackService : MediaSessionService() {
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
                 queueGeneration++
             }
+            val transitionName = when (reason) {
+                Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> com.velvet.app.recommendation.events.EventRecorder.TRANSITION_AUTO
+                Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> com.velvet.app.recommendation.events.EventRecorder.TRANSITION_REPEAT
+                Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> com.velvet.app.recommendation.events.EventRecorder.TRANSITION_SEEK
+                Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> com.velvet.app.recommendation.events.EventRecorder.TRANSITION_PLAYLIST_CHANGED
+                else -> "OTHER"
+            }
+            val repeatLabel = when (exo.repeatMode) {
+                Player.REPEAT_MODE_ONE -> "ONE"
+                Player.REPEAT_MODE_ALL -> "ALL"
+                else -> "OFF"
+            }
+            val newSong = mediaItem.toSong()
+            VelvetApp.eventRecorderOrNull()?.onMediaItemTransitionInService(
+                newSong = newSong,
+                transitionReason = transitionName,
+                repeatModeLabel = repeatLabel,
+                outgoingPositionMs = exo.currentPosition.coerceAtLeast(0L),
+                outgoingDurationMs = exo.duration.coerceAtLeast(0L),
+                isPlayingNow = exo.isPlaying,
+            )
             if (mediaItem.mediaId != retriedId) retriedId = null
             failuresInARow = 0
-            VelvetApp.library.addRecent(mediaItem.toSong())
-            VelvetApp.sessionHistory.record(mediaItem.toSong())
+            VelvetApp.library.addRecent(newSong)
+            VelvetApp.sessionHistory.record(newSong)
             trimPlayedHistory()
             prefetchNext()
             exo.volume = 1.0f
@@ -360,6 +381,11 @@ class PlaybackService : MediaSessionService() {
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {}
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            VelvetApp.eventRecorderOrNull()?.onIsPlayingChanged(
+                isPlaying = isPlaying,
+                song = exo.currentMediaItem?.toSong(),
+                durationMs = exo.duration.coerceAtLeast(0L),
+            )
             if (isPlaying) {
                 failuresInARow = 0
                 exo.currentMediaItem?.mediaId?.let { id ->
@@ -391,6 +417,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun handleError(error: PlaybackException) {
         val id = exo.currentMediaItem?.mediaId ?: return
+        VelvetApp.eventRecorderOrNull()?.onTrackPlaybackError(id)
         healingLadder.selfHealingEnabled = VelvetApp.library.data.value.selfHealingEnabled
         failuresInARow++
         LastErrorTracker.record(error, videoId = id)

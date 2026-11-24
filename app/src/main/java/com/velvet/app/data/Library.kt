@@ -196,11 +196,22 @@ class LibraryStore(private val dir: File) {
     }
 }
 
+/** Internal callback actions forwarded to recommendation event instrumentation without blocking storage. */
+sealed interface LibraryActionHook {
+    data class LikeToggled(val song: Song, val isNowLiked: Boolean) : LibraryActionHook
+    data class PlaylistSongChanged(val playlistId: String, val song: Song, val added: Boolean) : LibraryActionHook
+    data object SearchesCleared : LibraryActionHook
+    data object ListenEventsCleared : LibraryActionHook
+}
+
 /** Everything the user saves. State changes are immediate; disk writes are batched in the background. */
 class Library(dir: File) {
     private val store = LibraryStore(dir)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val saveSignals = Channel<Unit>(Channel.CONFLATED)
+
+    @Volatile
+    var onRecommendationAction: ((LibraryActionHook) -> Unit)? = null
 
     val loadResult: LoadResult = store.load()
 
@@ -240,9 +251,15 @@ class Library(dir: File) {
 
     fun isLiked(id: String) = _data.value.liked.any { it.id == id }
 
-    fun toggleLike(song: Song) = update { d ->
-        if (d.liked.any { it.id == song.id }) d.copy(liked = d.liked.filterNot { it.id == song.id })
-        else d.copy(liked = listOf(song) + d.liked)
+    fun toggleLike(song: Song) {
+        var nowLiked = false
+        update { d ->
+            val exists = d.liked.any { it.id == song.id }
+            nowLiked = !exists
+            if (exists) d.copy(liked = d.liked.filterNot { it.id == song.id })
+            else d.copy(liked = listOf(song) + d.liked)
+        }
+        onRecommendationAction?.invoke(LibraryActionHook.LikeToggled(song, nowLiked))
     }
 
     // ---------------------------------------------------------------- playlists
@@ -276,6 +293,9 @@ class Library(dir: File) {
             sortDirection = SortDirection.ASC,
         )
         update { it.copy(playlists = listOf(playlist) + it.playlists) }
+        songs.forEach { song ->
+            onRecommendationAction?.invoke(LibraryActionHook.PlaylistSongChanged(id, song, added = true))
+        }
         return id
     }
 
@@ -390,20 +410,39 @@ class Library(dir: File) {
         })
     }
 
-    fun addToPlaylist(playlistId: String, song: Song) = updatePlaylist(playlistId) { p ->
-        val newEntry = PlaylistEntry(entryId = UUID.randomUUID().toString(), song = song, addedAt = now())
-        val entries = p.resolvedEntries() + newEntry
-        p.copy(entries = entries, songs = entries.map { it.song })
+    fun addToPlaylist(playlistId: String, song: Song) {
+        updatePlaylist(playlistId) { p ->
+            val newEntry = PlaylistEntry(entryId = UUID.randomUUID().toString(), song = song, addedAt = now())
+            val entries = p.resolvedEntries() + newEntry
+            p.copy(entries = entries, songs = entries.map { it.song })
+        }
+        onRecommendationAction?.invoke(LibraryActionHook.PlaylistSongChanged(playlistId, song, added = true))
     }
 
-    fun removeEntryFromPlaylist(playlistId: String, entryId: String) = updatePlaylist(playlistId) { p ->
-        val entries = p.resolvedEntries().filterNot { it.entryId == entryId }
-        p.copy(entries = entries, songs = entries.map { it.song })
+    fun removeEntryFromPlaylist(playlistId: String, entryId: String) {
+        var removedSong: Song? = null
+        updatePlaylist(playlistId) { p ->
+            val existing = p.resolvedEntries()
+            removedSong = existing.find { it.entryId == entryId }?.song
+            val entries = existing.filterNot { it.entryId == entryId }
+            p.copy(entries = entries, songs = entries.map { it.song })
+        }
+        removedSong?.let {
+            onRecommendationAction?.invoke(LibraryActionHook.PlaylistSongChanged(playlistId, it, added = false))
+        }
     }
 
-    fun removeFromPlaylist(playlistId: String, songId: String) = updatePlaylist(playlistId) { p ->
-        val entries = p.resolvedEntries().filterNot { it.song.id == songId }
-        p.copy(entries = entries, songs = entries.map { it.song })
+    fun removeFromPlaylist(playlistId: String, songId: String) {
+        var removedSong: Song? = null
+        updatePlaylist(playlistId) { p ->
+            val existing = p.resolvedEntries()
+            removedSong = existing.find { it.song.id == songId }?.song
+            val entries = existing.filterNot { it.song.id == songId }
+            p.copy(entries = entries, songs = entries.map { it.song })
+        }
+        removedSong?.let {
+            onRecommendationAction?.invoke(LibraryActionHook.PlaylistSongChanged(playlistId, it, added = false))
+        }
     }
 
     fun moveInPlaylist(playlistId: String, from: Int, to: Int) = updatePlaylist(playlistId) { p ->
@@ -493,7 +532,10 @@ class Library(dir: File) {
 
     fun removeSearch(query: String) = update { d -> d.copy(searches = d.searches - query) }
 
-    fun clearSearches() = update { it.copy(searches = emptyList()) }
+    fun clearSearches() {
+        update { it.copy(searches = emptyList()) }
+        onRecommendationAction?.invoke(LibraryActionHook.SearchesCleared)
+    }
 
     fun addPendingDownload(song: Song) = update { d ->
         if (d.pendingDownloads.any { it.id == song.id }) d else d.copy(pendingDownloads = d.pendingDownloads + song)
@@ -560,7 +602,10 @@ class Library(dir: File) {
         )
     }
 
-    fun clearListenEvents() = update { it.copy(listenEvents = emptyList(), playedGroupIds = emptyList()) }
+    fun clearListenEvents() {
+        update { it.copy(listenEvents = emptyList(), playedGroupIds = emptyList()) }
+        onRecommendationAction?.invoke(LibraryActionHook.ListenEventsCleared)
+    }
 
     fun setPlaylistSongs(playlistId: String, songs: List<Song>) = updatePlaylist(playlistId) { p ->
         val entries = songs.mapIndexed { i, s ->

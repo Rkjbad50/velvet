@@ -2357,6 +2357,9 @@ private fun QueueSheet(
                             )
                         }
                         itemsIndexed(displayUpNext, key = { _, item -> item.qid }) { index, item ->
+                            LaunchedEffect(item.song.id, index) {
+                                VelvetApp.eventRecorderOrNull()?.recordAutoplayCandidateImpression(item.song, index)
+                            }
                             val isDraggingThis = draggingQid == item.qid
                             val rowHeight = getItemHeightPx()
                             val visualOffset = if (isDraggingThis) {

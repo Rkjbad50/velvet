@@ -17,7 +17,11 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.velvet.app.VelvetApp
 import com.velvet.app.data.BrowseItem
 import com.velvet.app.data.PlaybackContext
+import com.velvet.app.data.RecentType
 import com.velvet.app.data.Song
+import com.velvet.app.recommendation.model.PlaybackAttribution
+import com.velvet.app.recommendation.model.RecommendationMode
+import com.velvet.app.recommendation.model.RecommendationSurface
 import com.velvet.app.data.StreamResolver
 import com.velvet.app.data.YouTube
 import com.velvet.app.data.isDuplicateOf
@@ -390,6 +394,9 @@ object PlayerConnection {
         repeatMode = p.repeatMode
         if (p.currentPosition > 0L) {
             savedInitialPositionMs = p.currentPosition
+            if (p.isPlaying && exoCurrent != null) {
+                VelvetApp.eventRecorderOrNull()?.onPlaybackProgress(exoCurrent.id, p.currentPosition, durationMs)
+            }
         }
         if (!p.isPlaying && p.currentPosition > 0L) {
             persistState()
@@ -468,6 +475,12 @@ object PlayerConnection {
 
     // ── Playback commands ────────────────────────────────────────────────────
 
+    private fun currentRepeatLabel(): String = when (queueManager.repeatMode) {
+        RepeatMode.ONE -> "ONE"
+        RepeatMode.ALL -> "ALL"
+        RepeatMode.OFF -> "OFF"
+    }
+
     fun play(
         songs: List<Song>,
         startIndex: Int = 0,
@@ -476,8 +489,11 @@ object PlayerConnection {
         isArtistRadio: Boolean = false,
         playlistId: String? = null,
         context: PlaybackContext? = null,
+        attribution: PlaybackAttribution = PlaybackAttribution(),
     ) {
         if (songs.isEmpty()) return
+        val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
+        val outgoingDur = durationMs
         if (current != null) {
             recordCurrentPlaybackEnd(endReason = null)
         }
@@ -500,6 +516,38 @@ object PlayerConnection {
         if (!isUserPlaylist && queueManager.shuffleMode == ShuffleMode.SMART) {
             queueManager.setShuffleMode(if (shuffled) ShuffleMode.STANDARD else ShuffleMode.OFF, allowSmartShuffle = false)
         }
+
+        val resolvedContextId = playlistId ?: context?.id
+        val effectiveSurface = when {
+            attribution.surface != RecommendationSurface.OTHER -> attribution.surface
+            playlistId != null || context?.type == RecentType.LOCAL_PLAYLIST || context?.type == RecentType.ALBUM || context?.type == RecentType.REMOTE_PLAYLIST ->
+                RecommendationSurface.LIBRARY
+            radio -> if (isArtistRadio) RecommendationSurface.ARTIST_RADIO else RecommendationSurface.SONG_RADIO
+            else -> RecommendationSurface.OTHER
+        }
+        val effectiveAttribution = attribution.copy(
+            surface = effectiveSurface,
+            playlistContextId = attribution.playlistContextId ?: resolvedContextId,
+            mode = attribution.mode ?: if (radio) {
+                if (isArtistRadio) RecommendationMode.ARTIST_RADIO else RecommendationMode.SONG_RADIO
+            } else null,
+        )
+        queueManager.current?.let { activeTrack ->
+            VelvetApp.eventRecorderOrNull()?.let { rec ->
+                if (playlistId != null || context?.type == RecentType.LOCAL_PLAYLIST || context?.type == RecentType.REMOTE_PLAYLIST || context?.type == RecentType.ALBUM) {
+                    rec.recordPlaylistStarted(resolvedContextId ?: activeTrack.id, effectiveSurface)
+                }
+                rec.onPlayRequested(
+                    song = activeTrack,
+                    attribution = effectiveAttribution,
+                    isRadioSession = radio,
+                    outgoingPositionMs = outgoingPos,
+                    outgoingDurationMs = outgoingDur,
+                    repeatModeLabel = currentRepeatLabel(),
+                )
+            }
+        }
+
         syncQueueState()
         syncToExoPlayer(playlistStart = start, isRadio = radio)
 
@@ -571,6 +619,12 @@ object PlayerConnection {
 
                 withContext(Dispatchers.Main) {
                     if (queueManager.shuffleMode == ShuffleMode.SMART && sorted.isNotEmpty()) {
+                        VelvetApp.eventRecorderOrNull()?.registerAutoplayCandidates(
+                            requestId = UUID.randomUUID().toString(),
+                            candidates = sorted,
+                            mode = RecommendationMode.AUTOPLAY_REFILL,
+                            sourceId = "smart_shuffle",
+                        )
                         queueManager.injectSmartRecommendations(sorted)
                         syncQueueState()
                         syncToExoPlayer()
@@ -582,7 +636,7 @@ object PlayerConnection {
     }
 
     /** Add song to play immediately after current. */
-    fun playNext(song: Song) {
+    fun playNext(song: Song, surface: RecommendationSurface = RecommendationSurface.PLAYER_NEXT) {
         val isAlreadyQueued = (listOfNotNull(current) + queueManager.upNext.map { it.song } + queueManager.userQueue.map { it.song })
             .any { it.id == song.id || com.velvet.app.playback.SongIdentity.isStrictMatch(it, song) }
         if (isAlreadyQueued) {
@@ -590,8 +644,9 @@ object PlayerConnection {
         }
 
         VelvetApp.sessionHistory.record(song)
+        VelvetApp.eventRecorderOrNull()?.recordQueuePlayNext(song, surface)
         if (controller?.mediaItemCount == 0 || current == null) {
-            play(listOf(song))
+            play(listOf(song), attribution = PlaybackAttribution(surface = surface))
             return
         }
         queueManager.playNext(song)
@@ -603,7 +658,7 @@ object PlayerConnection {
     }
 
     /** Add song to end of queue. */
-    fun enqueue(song: Song) {
+    fun enqueue(song: Song, surface: RecommendationSurface = RecommendationSurface.PLAYER_NEXT) {
         val isAlreadyQueued = (listOfNotNull(current) + queueManager.upNext.map { it.song } + queueManager.userQueue.map { it.song })
             .any { it.id == song.id || com.velvet.app.playback.SongIdentity.isStrictMatch(it, song) }
         if (isAlreadyQueued) {
@@ -611,8 +666,9 @@ object PlayerConnection {
         }
 
         VelvetApp.sessionHistory.record(song)
+        VelvetApp.eventRecorderOrNull()?.recordQueueAdded(song, surface)
         if (controller?.mediaItemCount == 0 || current == null) {
-            play(listOf(song))
+            play(listOf(song), attribution = PlaybackAttribution(surface = surface))
             return
         }
         val added = queueManager.enqueue(song)
@@ -640,12 +696,30 @@ object PlayerConnection {
     /** Remove a queue item by qid. */
     fun removeItem(qid: String) {
         if (isQueueLocked) return
+        val removingCurrent = (qid == "current" || qid == queueState.current?.qid)
+        val outgoing = current
+        val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
+        val outgoingDur = durationMs
         val itemToDismiss = queueManager.upNext.find { it.qid == qid } ?: queueManager.userQueue.find { it.qid == qid }
         if (itemToDismiss != null) {
             com.velvet.app.playback.DismissedTrackRegistry.recordDismissal(itemToDismiss)
+            VelvetApp.eventRecorderOrNull()?.recordQueueRemoved(
+                song = itemToDismiss.song,
+                wasModelRecommended = itemToDismiss.isSmartRecommended,
+            )
         }
         val removed = queueManager.removeItem(qid)
         if (removed) {
+            if (removingCurrent && outgoing != null) {
+                VelvetApp.eventRecorderOrNull()?.onExplicitTrackAdvance(
+                    outgoingSong = outgoing,
+                    nextSong = queueManager.current,
+                    positionMs = outgoingPos,
+                    durationMs = outgoingDur,
+                    repeatModeLabel = currentRepeatLabel(),
+                    transitionReason = "QUEUE_REMOVE_CURRENT",
+                )
+            }
             syncQueueState()
             syncToExoPlayer()
         }
@@ -667,8 +741,19 @@ object PlayerConnection {
 
     /** Jump to a specific queue item by qid. */
     fun jumpToQid(qid: String) {
+        val outgoing = current
+        val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
+        val outgoingDur = durationMs
         recordCurrentPlaybackEnd(endReason = null)
         val targetSong = queueManager.jumpToQid(qid) ?: return
+        VelvetApp.eventRecorderOrNull()?.onExplicitTrackAdvance(
+            outgoingSong = outgoing,
+            nextSong = targetSong,
+            positionMs = outgoingPos,
+            durationMs = outgoingDur,
+            repeatModeLabel = currentRepeatLabel(),
+            transitionReason = "JUMP_TO_QID",
+        )
         syncQueueState()
         syncToExoPlayer()
     }
@@ -688,12 +773,17 @@ object PlayerConnection {
         }
     }
 
-    fun startRadio(song: Song) {
+    fun startRadio(song: Song, attribution: PlaybackAttribution = PlaybackAttribution()) {
         radioSeedSong = song
         isRadioActive = true
         isArtistRadioActive = false
         currentPlaylistId = null
         triggerRadioBanner(song.title)
+        val radioSessionId = VelvetApp.eventRecorderOrNull()?.recordRadioStarted(
+            seed = song,
+            isArtistRadio = false,
+            attribution = attribution,
+        )
 
         if (current?.id == song.id) {
             com.velvet.app.playback.DismissedTrackRegistry.clear()
@@ -704,18 +794,41 @@ object PlayerConnection {
             checkAndExtendAutoplay(seedId = song.id, force = true)
         } else {
             VelvetApp.autoplayPipeline.clearCandidatePoolCache(song.id)
-            play(listOf(song), radio = true, isArtistRadio = false)
+            play(
+                listOf(song),
+                radio = true,
+                isArtistRadio = false,
+                attribution = attribution.copy(
+                    mode = RecommendationMode.SONG_RADIO,
+                    surface = if (attribution.surface != RecommendationSurface.OTHER) attribution.surface else RecommendationSurface.SONG_RADIO,
+                    recommendationSessionId = radioSessionId ?: attribution.recommendationSessionId,
+                ),
+            )
         }
     }
 
-    fun startArtistRadio(seed: Song) {
+    fun startArtistRadio(seed: Song, attribution: PlaybackAttribution = PlaybackAttribution()) {
         radioSeedSong = seed
         isRadioActive = true
         isArtistRadioActive = true
         currentPlaylistId = null
         triggerRadioBanner("${seed.artist} Radio")
+        val radioSessionId = VelvetApp.eventRecorderOrNull()?.recordRadioStarted(
+            seed = seed,
+            isArtistRadio = true,
+            attribution = attribution,
+        )
         VelvetApp.autoplayPipeline.clearCandidatePoolCache(seed.id)
-        play(listOf(seed), radio = true, isArtistRadio = true)
+        play(
+            listOf(seed),
+            radio = true,
+            isArtistRadio = true,
+            attribution = attribution.copy(
+                mode = RecommendationMode.ARTIST_RADIO,
+                surface = if (attribution.surface != RecommendationSurface.OTHER) attribution.surface else RecommendationSurface.ARTIST_RADIO,
+                recommendationSessionId = radioSessionId ?: attribution.recommendationSessionId,
+            ),
+        )
     }
 
     fun clearUpcoming() {
@@ -735,9 +848,20 @@ object PlayerConnection {
     }
 
     fun next() {
+        val outgoing = current
+        val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
+        val outgoingDur = durationMs
         recordCurrentPlaybackEnd(endReason = null)
-        val lastPlayingSong = current ?: queueManager.current ?: queueManager.history.lastOrNull()
+        val lastPlayingSong = outgoing ?: queueManager.current ?: queueManager.history.lastOrNull()
         val nextSong = queueManager.advance(manual = true)
+        VelvetApp.eventRecorderOrNull()?.onExplicitTrackAdvance(
+            outgoingSong = outgoing,
+            nextSong = nextSong,
+            positionMs = outgoingPos,
+            durationMs = outgoingDur,
+            repeatModeLabel = currentRepeatLabel(),
+            transitionReason = "MANUAL_NEXT",
+        )
         if (nextSong != null) {
             syncQueueState()
             syncToExoPlayer()
@@ -765,6 +889,12 @@ object PlayerConnection {
 
         val requestQueueVersion = queueManager.queueVersion
         val generation = ++currentAutoplayGeneration
+        val requestId = UUID.randomUUID().toString()
+        val requestMode = when {
+            isArtistRadioActive -> RecommendationMode.ARTIST_RADIO
+            isRadioActive -> RecommendationMode.SONG_RADIO
+            else -> RecommendationMode.AUTOPLAY_REFILL
+        }
         isExtendingAutoplay = true
         autoplayJob?.cancel()
         autoplayJob = CoroutineScope(Dispatchers.IO).launch {
@@ -797,6 +927,11 @@ object PlayerConnection {
                     }
                     val filteredRelated = related.filterNot { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) }
                     if (filteredRelated.isNotEmpty()) {
+                        VelvetApp.eventRecorderOrNull()?.registerAutoplayCandidates(
+                            requestId = requestId,
+                            candidates = filteredRelated,
+                            mode = requestMode,
+                        )
                         if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
                             val first = filteredRelated.first()
                             val rest = filteredRelated.drop(1)
@@ -821,14 +956,31 @@ object PlayerConnection {
 
     fun previous() {
         withController { c ->
-            if (c.currentPosition > 3000L) {
+            val pos = c.currentPosition.coerceAtLeast(0L)
+            val dur = durationMs
+            val outgoing = current
+            if (pos > 3000L) {
+                outgoing?.let {
+                    VelvetApp.eventRecorderOrNull()?.onManualReplayCurrent(it, pos, dur, currentRepeatLabel())
+                }
                 c.seekTo(0)
             } else {
-                val prevSong = queueManager.previous(c.currentPosition)
+                val prevSong = queueManager.previous(pos)
                 if (prevSong != null) {
+                    VelvetApp.eventRecorderOrNull()?.onExplicitTrackAdvance(
+                        outgoingSong = outgoing,
+                        nextSong = prevSong,
+                        positionMs = pos,
+                        durationMs = dur,
+                        repeatModeLabel = currentRepeatLabel(),
+                        transitionReason = "MANUAL_PREVIOUS",
+                    )
                     syncQueueState()
                     syncToExoPlayer()
                 } else {
+                    outgoing?.let {
+                        VelvetApp.eventRecorderOrNull()?.onManualReplayCurrent(it, pos, dur, currentRepeatLabel())
+                    }
                     c.seekTo(0)
                 }
             }
@@ -836,6 +988,12 @@ object PlayerConnection {
     }
 
     fun seekTo(ms: Long) {
+        val prevPos = controller?.currentPosition ?: savedInitialPositionMs
+        if (prevPos >= 30_000L && ms < 3_000L) {
+            current?.let {
+                VelvetApp.eventRecorderOrNull()?.onManualReplayCurrent(it, prevPos, durationMs, currentRepeatLabel())
+            }
+        }
         savedInitialPositionMs = ms
         withController { c ->
             if (c.mediaItemCount == 0 && current != null) {

@@ -36,6 +36,14 @@ class VelvetApp : Application(), ImageLoaderFactory {
         private set
 
     val sessionHistory = com.velvet.app.playback.SessionHistory(200)
+    val recommendationEventRepo by lazy {
+        com.velvet.app.recommendation.events.RecommendationEventRepository(
+            backend = com.velvet.app.recommendation.events.AndroidSqliteEventBackend(this),
+        )
+    }
+    val eventRecorder by lazy {
+        com.velvet.app.recommendation.events.EventRecorder(recommendationEventRepo)
+    }
     val autoplayPipeline by lazy {
         com.velvet.app.playback.AutoplayPipeline(
             sources = listOf(
@@ -102,8 +110,29 @@ class VelvetApp : Application(), ImageLoaderFactory {
             ContentCountry(locale.country.ifEmpty { "US" }),
         )
         library = Library(filesDir)
+        library.onRecommendationAction = { hook ->
+            when (hook) {
+                is com.velvet.app.data.LibraryActionHook.LikeToggled ->
+                    eventRecorder.recordLikeChanged(hook.song, hook.isNowLiked)
+                is com.velvet.app.data.LibraryActionHook.PlaylistSongChanged ->
+                    eventRecorder.recordPlaylistMembershipChanged(hook.playlistId, hook.song, hook.added)
+                com.velvet.app.data.LibraryActionHook.SearchesCleared ->
+                    eventRecorder.clearSearchIntentHistory()
+                com.velvet.app.data.LibraryActionHook.ListenEventsCleared ->
+                    eventRecorder.clearAllEvents()
+            }
+        }
         downloads = Downloads(this, http, library)
         backups = Backups(this, library)
+
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            if (library.loadedCleanly) {
+                runCatching {
+                    recommendationEventRepo.migrateLegacyListenEventsIfNeeded(library.data.value.listenEvents)
+                    recommendationEventRepo.pruneOldEvents()
+                }
+            }
+        }
 
         CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
             library.data.map { it.dataSaver }.distinctUntilChanged().collect { StreamResolver.dataSaver = it }
@@ -133,5 +162,12 @@ class VelvetApp : Application(), ImageLoaderFactory {
         val http: OkHttpClient get() = instance.http
         val sessionHistory: com.velvet.app.playback.SessionHistory get() = instance.sessionHistory
         val autoplayPipeline: com.velvet.app.playback.AutoplayPipeline get() = instance.autoplayPipeline
+        val recommendationEventRepo: com.velvet.app.recommendation.events.RecommendationEventRepository
+            get() = instance.recommendationEventRepo
+        val eventRecorder: com.velvet.app.recommendation.events.EventRecorder
+            get() = instance.eventRecorder
+
+        fun eventRecorderOrNull(): com.velvet.app.recommendation.events.EventRecorder? =
+            if (::instance.isInitialized) runCatching { instance.eventRecorder }.getOrNull() else null
     }
 }
