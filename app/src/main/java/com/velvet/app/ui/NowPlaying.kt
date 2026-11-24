@@ -2216,29 +2216,36 @@ private fun QueueSheet(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 10.dp, bottom = 6.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = {
-                                    coroutineScope.launch {
-                                        val target = if (sheetHeightAnim.value > peekHeightPx + 40f) peekHeightPx else expandedHeightPx
-                                        sheetHeightAnim.animateTo(
-                                            target,
-                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                                        )
-                                    }
-                                },
-                            ),
+                            .padding(top = 10.dp, bottom = 6.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Box(
                             modifier = Modifier
-                                .width(36.dp)
-                                .height(4.dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(velvetColors.muted.copy(alpha = 0.45f)),
-                        )
+                                .width(72.dp)
+                                .height(24.dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            val target = if (sheetHeightAnim.value > peekHeightPx + 40f) peekHeightPx else expandedHeightPx
+                                            sheetHeightAnim.animateTo(
+                                                target,
+                                                spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                                            )
+                                        }
+                                    },
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(36.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(velvetColors.muted.copy(alpha = 0.45f)),
+                            )
+                        }
                     }
 
                     Row(
