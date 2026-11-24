@@ -272,4 +272,5 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - Phase 5 (Normalised Mode Ranker & Shadow Eval): `checkpoint/phase-5-ranker` (`29b6148`)
   - Phase 6 (Bounded Beam Sequence Optimizer): `checkpoint/phase-6-sequencing` (`2f350a0`)
   - Phase 7 (Unified Engine, Refill Coordinator & Queue Wiring): `checkpoint/phase-7-engine-queue` (`1866f37`)
-  - Phases 8–9 (Radio Evolution, Home Composer, Inspector & Acceptance): `checkpoint/phase-8-modes-home` (`76e0140` + docs commit)
+  - Phases 8–9 (Radio Evolution, Home Composer, Inspector & Acceptance): `checkpoint/phase-8-modes-home` (`04032de`)
+  - Release Merge (`v2.7.6`): User-authorized promotion onto `main` with `versionName = "2.7.6"` and cleaned `README.md`.
