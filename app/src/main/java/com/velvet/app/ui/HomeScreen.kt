@@ -430,7 +430,7 @@ fun HomeScreen(vm: HomeViewModel) {
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(mixes, key = { "mix-" + it.id }) { seed ->
                         MixCard("${seed.artist} Radio", seed.thumb) {
-                            PlayerConnection.startRadio(seed)
+                            PlayerConnection.startArtistRadio(seed)
                         }
                     }
                 }

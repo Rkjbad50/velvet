@@ -77,6 +77,20 @@ object PlayerConnection {
         private set
     var isRadioActive by mutableStateOf(false)
         private set
+    var isArtistRadioActive by mutableStateOf(false)
+        private set
+    var radioSeedSong by mutableStateOf<Song?>(null)
+        private set
+    var radioBannerState by mutableStateOf<RadioBannerState?>(null)
+        private set
+
+    fun triggerRadioBanner(title: String) {
+        radioBannerState = RadioBannerState(title = title, token = System.currentTimeMillis())
+    }
+
+    fun dismissRadioBanner() {
+        radioBannerState = null
+    }
     private var isExtendingAutoplay = false
     private var autoplayJob: Job? = null
     private var currentAutoplayGeneration = 0L
@@ -414,6 +428,8 @@ object PlayerConnection {
         current = song
         currentPlaylistId = saved.playlistId
         isRadioActive = saved.isRadio
+        isArtistRadioActive = false
+        radioSeedSong = if (saved.isRadio) song else null
         savedInitialPositionMs = saved.positionMs
         durationMs = if (saved.durationMs > 0L) saved.durationMs else (song.durationSec * 1000L)
 
@@ -457,6 +473,7 @@ object PlayerConnection {
         startIndex: Int = 0,
         shuffled: Boolean = false,
         radio: Boolean = false,
+        isArtistRadio: Boolean = false,
         playlistId: String? = null,
         context: PlaybackContext? = null,
     ) {
@@ -469,6 +486,8 @@ object PlayerConnection {
         }
         currentPlaylistId = playlistId
         isRadioActive = radio
+        isArtistRadioActive = if (radio) isArtistRadio else false
+        radioSeedSong = if (radio) (songs.getOrNull(startIndex) ?: songs.firstOrNull()) else null
         val isUserPlaylist = playlistId != null && VelvetApp.library.data.value.playlists.any { it.id == playlistId }
         val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
 
@@ -666,7 +685,35 @@ object PlayerConnection {
         }
     }
 
-    fun startRadio(song: Song) = play(listOf(song), radio = true)
+    fun startRadio(song: Song) {
+        radioSeedSong = song
+        isRadioActive = true
+        isArtistRadioActive = false
+        currentPlaylistId = null
+        triggerRadioBanner(song.title)
+
+        if (current?.id == song.id) {
+            com.velvet.app.playback.DismissedTrackRegistry.clear()
+            VelvetApp.autoplayPipeline.clearCandidatePoolCache(song.id)
+            queueManager.clearUpcoming()
+            syncQueueState()
+            syncToExoPlayer(isRadio = true)
+            checkAndExtendAutoplay(seedId = song.id, force = true)
+        } else {
+            VelvetApp.autoplayPipeline.clearCandidatePoolCache(song.id)
+            play(listOf(song), radio = true, isArtistRadio = false)
+        }
+    }
+
+    fun startArtistRadio(seed: Song) {
+        radioSeedSong = seed
+        isRadioActive = true
+        isArtistRadioActive = true
+        currentPlaylistId = null
+        triggerRadioBanner("${seed.artist} Radio")
+        VelvetApp.autoplayPipeline.clearCandidatePoolCache(seed.id)
+        play(listOf(seed), radio = true, isArtistRadio = true)
+    }
 
     fun clearUpcoming() {
         queueManager.clearUpcoming()
@@ -700,7 +747,7 @@ object PlayerConnection {
         }
     }
 
-    fun checkAndExtendAutoplay(seedId: String? = null, autoPlayNext: Boolean = false) {
+    fun checkAndExtendAutoplay(seedId: String? = null, autoPlayNext: Boolean = false, force: Boolean = false) {
         val currentSong = current ?: queueManager.history.lastOrNull() ?: return
         val targetSeed = if (seedId != null) {
             queueManager.upNext.find { it.song.id == seedId }?.song
@@ -710,8 +757,8 @@ object PlayerConnection {
         } else currentSong
         val isAutoplayEnabled = VelvetApp.library.data.value.autoplay || isRadioActive
         if (!isAutoplayEnabled) return
-        if (queueManager.upNext.size >= 6 && !autoPlayNext) return
-        if (isExtendingAutoplay) return
+        if (queueManager.upNext.size >= 6 && !autoPlayNext && !force) return
+        if (isExtendingAutoplay && !force) return
 
         val requestQueueVersion = queueManager.queueVersion
         val generation = ++currentAutoplayGeneration
@@ -733,7 +780,7 @@ object PlayerConnection {
                     current = targetSeed,
                     recentSongs = recentSongs,
                     contextName = contextTitle,
-                    isArtistRadio = isRadioActive,
+                    isArtistRadio = isArtistRadioActive,
                 )
                 val related = VelvetApp.autoplayPipeline.next(seedProfile, snapshot, n = 10)
 

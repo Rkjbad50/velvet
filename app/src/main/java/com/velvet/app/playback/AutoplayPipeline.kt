@@ -595,6 +595,14 @@ class AutoplayPipeline(
 
     fun getCachedPool(seedId: String): List<CandidatePoolItem>? = candidatePoolCache[seedId]
 
+    fun clearCandidatePoolCache(seedId: String? = null) {
+        if (seedId != null) {
+            candidatePoolCache.remove(seedId)
+        } else {
+            candidatePoolCache.clear()
+        }
+    }
+
     /**
      * Multi-source candidate pool generator (G1..G7) executed in parallel with a 1500ms timebox.
      * Caches pool per seed for the session and merges source tags and rank positions.
@@ -639,11 +647,12 @@ class AutoplayPipeline(
                 withTimeoutOrNull(timeboxMs) {
                     runCatching {
                         val tracks = artistTracksProvider?.invoke(primaryArtist) ?: emptyList()
-                        if (isDevotionalSeed) {
+                        val filtered = if (isDevotionalSeed) {
                             tracks.filter { detectCluster(it) == MusicCluster.DEVOTIONAL }
                         } else {
                             tracks
                         }
+                        if (!seedProfile.isArtistRadio) filtered.take(3) else filtered
                     }.getOrDefault(emptyList())
                 } ?: emptyList()
             } else emptyList()
@@ -656,8 +665,10 @@ class AutoplayPipeline(
                 withTimeoutOrNull(timeboxMs) {
                     runCatching {
                         val list = mutableListOf<Song>()
-                        for (co in coArtists.take(3)) {
-                            artistTracksProvider?.invoke(co)?.let { list.addAll(it.take(5)) }
+                        val maxPerCo = if (!seedProfile.isArtistRadio) 2 else 5
+                        val coLimit = if (!seedProfile.isArtistRadio) 2 else 3
+                        for (co in coArtists.take(coLimit)) {
+                            artistTracksProvider?.invoke(co)?.let { list.addAll(it.take(maxPerCo)) }
                         }
                         if (isDevotionalSeed) {
                             list.filter { detectCluster(it) == MusicCluster.DEVOTIONAL }

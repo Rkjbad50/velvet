@@ -499,9 +499,17 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                         )
                     }
 
-                    // Center: "Now Playing" + Theme Accent Indicator
+                    val radioSubtitle = remember(PlayerConnection.isRadioActive, PlayerConnection.radioSeedSong, song) {
+                        if (PlayerConnection.isRadioActive) {
+                            (PlayerConnection.radioSeedSong?.title ?: song.title).trim()
+                        } else null
+                    }
+
+                    // Center: "Now Playing" + Radio Subtitle + Theme Accent Indicator
                     Column(
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 48.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
@@ -509,15 +517,28 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             "Now Playing",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp,
+                                fontSize = if (radioSubtitle != null) 14.sp else 16.sp,
                             ),
                             color = velvetColors.text,
+                            maxLines = 1,
                         )
+                        if (radioSubtitle != null) {
+                            Text(
+                                text = "$radioSubtitle Radio",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                ),
+                                color = accent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         Spacer(Modifier.height(3.dp))
                         Box(
                             modifier = Modifier
-                                .width(36.dp)
-                                .height(3.dp)
+                                .width(if (radioSubtitle != null) 30.dp else 36.dp)
+                                .height(2.5.dp)
                                 .clip(RoundedCornerShape(2.dp))
                                 .background(accent),
                         )

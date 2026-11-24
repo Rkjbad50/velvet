@@ -845,6 +845,32 @@ class AutoplayPipelineTest {
             "c1", scored.first().id)
     }
 
+    @Test
+    fun testSongRadio_zeroArtistBonusAndGenreMatchOutranks() {
+        val pipeline = AutoplayPipeline(emptyList(), SessionHistory(20))
+        val seed = makeSong("s_bhajan", "He Dukhbhanjan Marutnandan - Lofi Hanuman Bhajan", "Sanatan Bharat")
+        val candDiffArtistBhajan = makeSong("c_wadkar", "Dharti Gagan Mein Hoti Hai", "Suresh Wadkar")
+        val candSameArtistPop = makeSong("c_pop", "Party Night EDM Song", "Sanatan Bharat")
+
+        val breakdowns = mutableMapOf<String, Map<String, Double>>()
+        val scored = pipeline.scoreCandidates(
+            candidates = listOf(candSameArtistPop, candDiffArtistBhajan),
+            seedProfile = SeedProfile(current = seed, isArtistRadio = false),
+            scoreBreakdownOut = breakdowns,
+        )
+
+        val sameArtistBreakdown = breakdowns["c_pop"] ?: emptyMap()
+        assertEquals("In Song Radio (isArtistRadio=false), same artist must receive 0.0 similarity bonus",
+            0.0, sameArtistBreakdown["w3_artistSimilarity"] ?: -1.0, 0.001)
+
+        assertEquals("Compatible genre/bhajan candidate from different artist must outrank genre mismatch by same artist",
+            "c_wadkar", scored.first().id)
+
+        // Verify clearCandidatePoolCache executes without exception
+        pipeline.clearCandidatePoolCache("s_bhajan")
+        pipeline.clearCandidatePoolCache(null)
+    }
+
     // ── Offline Evaluation Harness (R5) ──────────────────────────────────────
 
     private val json = Json { ignoreUnknownKeys = true }

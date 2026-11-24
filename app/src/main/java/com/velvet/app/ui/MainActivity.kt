@@ -312,6 +312,12 @@ private fun AppRoot() {
             ) {
                 NowPlayingScreen(onClose = { nav.nowPlayingOpen = false })
             }
+
+            RadioNotificationBanner(
+                bannerState = PlayerConnection.radioBannerState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                onDismiss = { PlayerConnection.dismissRadioBanner() },
+            )
         }
 
         menu?.let { request -> SongActionsSheet(request) { menu = null } }
