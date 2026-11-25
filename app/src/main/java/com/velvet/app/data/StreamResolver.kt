@@ -115,15 +115,22 @@ object StreamResolver {
             synchronized(locks.getOrPut(k) { Any() }) {
                 peek(videoId, saver)?.let { return it }
                 val isFastAllowed = fastPathAllowed(videoId)
+                var fullError: Throwable? = null
                 val resolved = (if (isFastAllowed) {
                     clientName = "VisionOS (Fast)"
                     fetchFastOrNull(videoId, saver)
                 } else null) ?: run {
                     clientName = "NewPipeExtractor (Full)"
-                    runCatching { fetchFull(videoId, saver) }.getOrNull()
+                    runCatching { fetchFull(videoId, saver) }
+                        .onFailure { fullError = it }
+                        .getOrNull()
                 } ?: run {
                     clientName = "InnerTube (AndroidVR Fallback)"
-                    fetchInnertubeFallback(videoId, saver)
+                    runCatching { fetchInnertubeFallback(videoId, saver) }.getOrElse { innerErr ->
+                        // Preserve NewPipe's specific ExtractionException / bot-check diagnosis when both paths fail.
+                        val primaryError = fullError
+                        if (primaryError != null) throw primaryError else throw innerErr
+                    }
                 }
                 cache[k] = resolved
                 val duration = System.currentTimeMillis() - startTime
