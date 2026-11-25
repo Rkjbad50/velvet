@@ -112,8 +112,15 @@ import com.velvet.app.data.CoverMode
 import com.velvet.app.data.Playlist
 import com.velvet.app.data.PlaylistNameValidator
 import java.io.File
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -946,13 +953,11 @@ fun CollectionHeader(
             ) {
                 actions()
                 Spacer(Modifier.weight(1f))
-                PanelIconButton(
-                    icon = AppIcons.Shuffle,
-                    contentDescription = if (isShuffled) "Shuffle is on (tap to reshuffle)" else "Shuffle play",
+                ShuffleActionButton(
+                    isShuffled = isShuffled,
+                    enabled = playEnabled,
                     size = 48.dp,
-                    tint = if (isShuffled) velvetColors.accentText else velvetColors.text,
-                    fill = if (isShuffled) velvetColors.accent.copy(alpha = 0.20f) else velvetColors.surface,
-                    onClick = { if (playEnabled) onShuffle() },
+                    onClick = onShuffle,
                 )
                 PlayCircle(
                     enabled = playEnabled,
@@ -960,6 +965,138 @@ fun CollectionHeader(
                     onClick = onPlay,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Animated Shuffle button shared across Playlist, Album, Liked, Downloads, and Artist headers.
+ * Provides fluid GPU-driven press/pop spring motion, click rotation impulse, active dot badge,
+ * and crossfading border/fill/tint between Shuffle OFF and ON.
+ */
+@Composable
+fun ShuffleActionButton(
+    isShuffled: Boolean,
+    enabled: Boolean = true,
+    size: Dp = 48.dp,
+    onClick: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val haptic = LocalHapticFeedback.current
+
+    var previousShuffled by remember { mutableStateOf(isShuffled) }
+    var spinCount by remember { mutableFloatStateOf(0f) }
+    val pulseScale = remember { Animatable(1f) }
+
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed && enabled) 0.88f else 1.0f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 540f),
+        label = "shufflePressScale",
+    )
+    val iconRotation by animateFloatAsState(
+        targetValue = spinCount * 360f,
+        animationSpec = spring(dampingRatio = 0.80f, stiffness = 360f),
+        label = "shuffleIconSpin",
+    )
+    val dotProgress by animateFloatAsState(
+        targetValue = if (isShuffled && enabled) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f),
+        label = "shuffleActiveDot",
+    )
+    val containerColor by animateColorAsState(
+        targetValue = if (isShuffled && enabled) velvetColors.accent.copy(alpha = 0.22f) else velvetColors.surface,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "shuffleFill",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (isShuffled && enabled) velvetColors.accent.copy(alpha = 0.85f) else velvetColors.glassBorder,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "shuffleBorder",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = when {
+            !enabled -> velvetColors.muted.copy(alpha = 0.45f)
+            isShuffled -> velvetColors.accentText
+            else -> velvetColors.text
+        },
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        label = "shuffleTint",
+    )
+
+    LaunchedEffect(isShuffled) {
+        if (previousShuffled != isShuffled) {
+            previousShuffled = isShuffled
+            if (!pulseScale.isRunning) {
+                pulseScale.animateTo(1.10f, spring(dampingRatio = 0.65f, stiffness = 560f))
+                pulseScale.animateTo(1.0f, spring(dampingRatio = 0.76f, stiffness = 420f))
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(size)
+            .captureOriginOnPress(cornerRadiusDp = size.value * 0.5f)
+            .graphicsLayer {
+                val combinedScale = pressScale * pulseScale.value
+                scaleX = combinedScale
+                scaleY = combinedScale
+            }
+            .clip(RoundedCornerShape(14.dp))
+            .background(containerColor)
+            .border(
+                width = if (isShuffled && enabled) 1.35.dp else 1.dp,
+                color = borderColor,
+                shape = RoundedCornerShape(14.dp),
+            )
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = {
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    } catch (_: Exception) {}
+                    spinCount += 1f
+                    scope.launch {
+                        pulseScale.animateTo(1.13f, spring(dampingRatio = 0.58f, stiffness = 620f))
+                        pulseScale.animateTo(1.0f, spring(dampingRatio = 0.74f, stiffness = 440f))
+                    }
+                    onClick()
+                },
+            )
+            .semantics {
+                this.contentDescription = if (isShuffled) "Shuffle is on (tap to reshuffle)" else "Shuffle play"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = AppIcons.Shuffle,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier
+                .size(size * 0.48f)
+                .graphicsLayer {
+                    rotationZ = iconRotation
+                },
+        )
+        if (dotProgress > 0.02f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 5.dp)
+                    .size(5.dp)
+                    .graphicsLayer {
+                        alpha = dotProgress
+                        scaleX = dotProgress
+                        scaleY = dotProgress
+                    }
+                    .clip(CircleShape)
+                    .background(velvetColors.accentText),
+            )
         }
     }
 }

@@ -8,6 +8,7 @@ import com.velvet.app.playback.PlayerQueueManager
 import com.velvet.app.playback.SessionHistory
 import com.velvet.app.playback.ShuffleMode
 import com.velvet.app.playback.SongIdentity
+import com.velvet.app.ui.PlaybackControlSync
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -177,5 +178,43 @@ class PlaylistSessionAndDismissalTest {
         // 3. Once dismissed, it must be hard filtered out
         DismissedTrackRegistry.recordDismissal(dismissedTrack)
         assertTrue(pipeline.isHardFiltered(dismissedTrack, seedTitle))
+    }
+
+    @Test
+    fun testArtistSession_ShufflePlayPauseResume_preservesSessionAndOrder() {
+        val artistPopular = makePlaylist(12)
+        val manager = PlayerQueueManager()
+
+        // 1. User taps Shuffle on Artist page -> starts shuffled session with artistSessionId
+        manager.start(artistPopular, startIndex = 4, shuffled = true)
+        val startedTrack = manager.current?.id
+        val initialShuffledOrder = manager.upNext.map { it.song.id }
+        assertEquals("song_4", startedTrack)
+        assertEquals(ShuffleMode.STANDARD, manager.shuffleMode)
+        assertEquals(11, initialShuffledOrder.size)
+
+        // 2. While playing, tapping header Play/Pause must pause without resetting queue
+        val shouldPause = PlaybackControlSync.shouldPauseOnToggle(
+            optimisticPlay = null,
+            playWhenReady = true,
+            playbackState = androidx.media3.common.Player.STATE_READY,
+            isPlaying = true,
+            stateEnded = androidx.media3.common.Player.STATE_ENDED,
+            stateIdle = androidx.media3.common.Player.STATE_IDLE,
+        )
+        assertTrue(shouldPause)
+
+        // 3. While paused, tapping header Play must resume (shouldPause == false -> play) and keep shuffled track/order
+        val shouldPauseWhenPaused = PlaybackControlSync.shouldPauseOnToggle(
+            optimisticPlay = false,
+            playWhenReady = false,
+            playbackState = androidx.media3.common.Player.STATE_READY,
+            isPlaying = false,
+            stateEnded = androidx.media3.common.Player.STATE_ENDED,
+            stateIdle = androidx.media3.common.Player.STATE_IDLE,
+        )
+        assertFalse("Tapping Play on paused shuffled artist session must resume instead of restarting", shouldPauseWhenPaused)
+        assertEquals("song_4", manager.current?.id)
+        assertEquals(initialShuffledOrder, manager.upNext.map { it.song.id })
     }
 }

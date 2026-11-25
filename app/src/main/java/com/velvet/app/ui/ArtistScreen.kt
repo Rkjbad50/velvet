@@ -162,17 +162,21 @@ fun ArtistScreen(artist: ArtistRef, onBack: () -> Unit) {
                     subtitle = "Artist",
                     artworkUrl = info.thumb,
                 )
+                val artistSessionId = "artist:${artist.url}"
                 val popular = page?.popular.orEmpty()
-                val isPlayingArtist = PlayerConnection.isPlaying && popular.any { it.id == PlayerConnection.current?.id }
-                PanelIconButton(AppIcons.Shuffle, "Shuffle", size = 48.dp) {
-                    if (popular.isNotEmpty()) PlayerConnection.play(popular, 0, shuffled = true, context = playbackContext)
-                }
+                val isPlayingArtist = PlayerConnection.isPlaylistSessionPlaying(artistSessionId)
+                val isShuffledArtist = PlayerConnection.isPlaylistSessionActive(artistSessionId) && PlayerConnection.shuffle
+                ShuffleActionButton(
+                    isShuffled = isShuffledArtist,
+                    enabled = popular.isNotEmpty(),
+                    size = 48.dp,
+                    onClick = { PlayerConnection.shufflePlayOrToggle(artistSessionId, popular, playbackContext) },
+                )
                 PlayCircle(
                     enabled = popular.isNotEmpty(),
                     icon = if (isPlayingArtist) AppIcons.Pause else AppIcons.Play,
                 ) {
-                    if (isPlayingArtist) PlayerConnection.togglePlay()
-                    else PlayerConnection.play(popular, context = playbackContext)
+                    PlayerConnection.playOrResumePlaylist(artistSessionId, popular, playbackContext)
                 }
             }
         }
@@ -188,10 +192,15 @@ fun ArtistScreen(artist: ArtistRef, onBack: () -> Unit) {
                     subtitle = "Artist",
                     artworkUrl = info.thumb,
                 )
+                val artistSessionId = "artist:${artist.url}"
                 if (page.popular.isNotEmpty()) {
                     item { SectionTitle("Popular") }
                     itemsIndexed(page.popular, key = { _, s -> "p-" + s.id }) { i, song ->
-                        SongRow(song, onClick = { PlayerConnection.play(page.popular, i, context = playbackContext) }, trackNumber = i + 1)
+                        SongRow(
+                            song,
+                            onClick = { PlayerConnection.play(page.popular, i, playlistId = artistSessionId, context = playbackContext) },
+                            trackNumber = i + 1,
+                        )
                     }
                 }
                 if (page.albums.isNotEmpty()) {

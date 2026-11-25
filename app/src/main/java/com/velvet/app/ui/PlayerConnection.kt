@@ -157,7 +157,7 @@ object PlayerConnection {
             togglePlay()
         } else if (isPlaylistSessionPaused(playlistId)) {
             val currentSong = current
-            if (currentSong != null && songs.any { it.id == currentSong.id }) {
+            if (currentSong != null && (songs.any { it.id == currentSong.id } || currentPlaylistId == playlistId)) {
                 togglePlay()
             } else {
                 play(songs, startIndex = 0, shuffled = false, playlistId = playlistId, context = context)
@@ -184,7 +184,7 @@ object PlayerConnection {
 
         if (isPlaylistSessionActive(playlistId)) {
             val currentSong = current
-            if (currentSong != null && songs.any { it.id == currentSong.id }) {
+            if (currentSong != null && (songs.any { it.id == currentSong.id } || currentPlaylistId == playlistId)) {
                 val allowSmart = isUserPlaylistActive
                 if (queueManager.shuffleMode == ShuffleMode.OFF) {
                     queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = allowSmart)
