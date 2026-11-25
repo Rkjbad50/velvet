@@ -161,4 +161,48 @@ class Phase8ModesAndHomeTest {
         val mix = composer.composePersonalizedMix(recent = emptyList(), liked = emptyList(), fallbackTrending = onlyBadTrending)
         assertTrue(mix.songs.isEmpty())
     }
+
+    @Test
+    fun speedDialFillsAll9CellsWhenVerifiedSongsExistAndAdaptsToListeningHabits() = runBlocking {
+        val recentHistory = listOf(
+            topicSong("r_old", "Purani Yaad", "Kishore Kumar"),
+            topicSong("r_fav", "Tum Hi Ho", "Arijit Singh"),
+            topicSong("r_fav", "Tum Hi Ho", "Arijit Singh"),
+        )
+        val liked = listOf(topicSong("lk_1", "Agar Tum Saath Ho", "Alka Yagnik"))
+        val trendingCatalog = (1..10).map { i ->
+            topicSong("tr_$i", "Studio Track $i", "Artist $i")
+        }
+
+        val composer = HomeRecommendationComposer()
+        val dial = composer.composeSpeedDial(
+            recent = recentHistory,
+            liked = liked,
+            quickPicks = emptyList(),
+            trending = trendingCatalog,
+            limit = 9,
+        )
+
+        assertEquals("Speed Dial must fill all 9 cells cleanly", 9, dial.size)
+        assertEquals(9, dial.map { it.id }.distinct().size)
+        // Highest habit engagement ("r_fav" repeated + "lk_1" liked) appear before cold tracks
+        val dialIds = dial.map { it.id }.toSet()
+        assertTrue("r_fav" in dialIds)
+        assertTrue("lk_1" in dialIds)
+
+        // When user listens heavily to a new track + likes it, Speed Dial updates dynamically
+        val newHistory = listOf(
+            topicSong("new_obs", "Apna Bana Le", "Sachin-Jigar"),
+            topicSong("new_obs", "Apna Bana Le", "Sachin-Jigar"),
+        ) + recentHistory
+        val updatedDial = composer.composeSpeedDial(
+            recent = newHistory,
+            liked = liked + topicSong("new_obs", "Apna Bana Le", "Sachin-Jigar"),
+            quickPicks = emptyList(),
+            trending = trendingCatalog,
+            limit = 9,
+        )
+        assertEquals(9, updatedDial.size)
+        assertTrue("new_obs" in updatedDial.take(4).map { it.id })
+    }
 }

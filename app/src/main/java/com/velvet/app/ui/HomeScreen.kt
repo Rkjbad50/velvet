@@ -116,31 +116,51 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private var lastDerivedKey: String? = null
     private var quickPicksJob: Job? = null
     private var derivedJob: Job? = null
+    private val feedPrefs by lazy {
+        application.getSharedPreferences("home_feed", Context.MODE_PRIVATE)
+    }
 
     init {
         viewModelScope.launch {
             val locale = Locale.getDefault().toLanguageTag()
-            val cache = withContext(Dispatchers.IO) {
-                application.getSharedPreferences("home_feed", Context.MODE_PRIVATE)
-            }
-            val (cached, fetchedAt) = withContext(Dispatchers.IO) {
+            val cache = withContext(Dispatchers.IO) { feedPrefs }
+            val (cached, cachedSpeedDial, fetchedAt) = withContext(Dispatchers.IO) {
                 val snapshot = cache.all
-                val songs = if (snapshot["locale"] == locale) {
+                val sameLocale = snapshot["locale"] == locale
+                val songs = if (sameLocale) {
                     (snapshot["songs"] as? String)?.let { encoded ->
                         runCatching { feedJson.decodeFromString(songList, encoded) }.getOrNull()
                     }.orEmpty()
-                } else {
-                    emptyList()
-                }
-                songs to (snapshot["fetched_at"] as? Long ?: 0L)
+                } else emptyList()
+                val sd = if (sameLocale) {
+                    (snapshot["speed_dial_songs"] as? String)?.let { encoded ->
+                        runCatching { feedJson.decodeFromString(songList, encoded) }.getOrNull()
+                    }.orEmpty()
+                } else emptyList()
+                Triple(songs, sd, snapshot["fetched_at"] as? Long ?: 0L)
             }
             trending = cached
+            if (cachedSpeedDial.isNotEmpty()) {
+                speedDial = cachedSpeedDial.take(9)
+            }
+
+            // Immediately populate derived shelves from cached trending + local library on startup
+            val libSnapshot = VelvetApp.library.data.value
+            updateDerivedShelves(
+                recent = libSnapshot.recent,
+                liked = libSnapshot.liked,
+                playlistsSongs = libSnapshot.playlists.flatMap { it.songs },
+                eventCount = libSnapshot.listenEvents.size,
+            )
 
             // Fetch YouTube Music pre-made albums and playlists for "More for you"
-            loadMoreForYou(emptyList())
+            loadMoreForYou(libSnapshot.musicLanguages)
 
+            val verifiedCachedCount = cached.count {
+                it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
+            }
             val age = System.currentTimeMillis() - fetchedAt
-            if (cached.isNotEmpty() && age in 0 until feedMaxAge) return@launch
+            if (cached.size >= 12 && verifiedCachedCount >= 9 && age in 0 until feedMaxAge) return@launch
 
             val latest = withContext(Dispatchers.IO) {
                 val rawSongs = try {
@@ -151,11 +171,36 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     emptyList()
                 }
                 val composer = VelvetApp.homeRecommendationComposerOrNull()
-                val langs = VelvetApp.library.data.value.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
-                val songs = if (composer != null) {
+                val currentLib = VelvetApp.library.data.value
+                val langs = currentLib.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
+                val langNames = currentLib.musicLanguages.ifEmpty { listOf("Hindi", "English") }
+
+                val initialVerified = if (composer != null) {
                     composer.rankAndFilterTrending(rawSongs, preferredLanguageIds = langs, limit = 20)
                 } else {
                     rawSongs.rankMusic().take(20)
+                }
+
+                // Supplement via YouTube Music FILTER_SONGS catalog so Speed Dial & Trending always
+                // have >= 15 strict verified studio tracks ready for instant 9/9 display.
+                val supplementedRaw = if (initialVerified.size < 12) {
+                    val catalogSongs = langNames.take(2).flatMap { langName ->
+                        runCatching {
+                            YouTube.Search("$langName top hit songs", YouTube.FILTER_SONGS)
+                                .loadNext()
+                                .filterIsInstance<BrowseItem.SongItem>()
+                                .map { it.song }
+                        }.getOrDefault(emptyList())
+                    }
+                    (rawSongs + catalogSongs).distinctBy { it.id }
+                } else {
+                    rawSongs
+                }
+
+                val songs = if (composer != null) {
+                    composer.rankAndFilterTrending(supplementedRaw, preferredLanguageIds = langs, limit = 20)
+                } else {
+                    supplementedRaw.rankMusic().take(20)
                 }
                 if (songs.isNotEmpty()) {
                     cache.edit()
@@ -166,7 +211,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 songs
             }
-            if (latest.isNotEmpty()) trending = latest
+            if (latest.isNotEmpty()) {
+                trending = latest
+                val libNow = VelvetApp.library.data.value
+                updateDerivedShelves(
+                    recent = libNow.recent,
+                    liked = libNow.liked,
+                    playlistsSongs = libNow.playlists.flatMap { it.songs },
+                    eventCount = libNow.listenEvents.size,
+                )
+            }
         }
     }
 
@@ -211,7 +265,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                                 .filterIsInstance<BrowseItem.SongItem>()
                                 .map { it.song }
                         },
-                        limit = 10,
+                        fallbackCatalog = trending,
+                        limit = 15,
                     )
                 } else {
                     emptyList()
@@ -261,14 +316,24 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Compute Speed Dial and Made For You mix seeds off the Main UI thread to keep Home transitions 120Hz smooth. */
-    fun updateDerivedShelves(recent: List<Song>, liked: List<Song>) {
+    /** Compute Speed Dial (all 9 cells atomically) and Made For You mix seeds dynamically from listening habits & history. */
+    fun updateDerivedShelves(
+        recent: List<Song>,
+        liked: List<Song>,
+        playlistsSongs: List<Song> = emptyList(),
+        eventCount: Int = 0,
+    ) {
         val qPicks = quickPicks
         val trend = trending
+        val libData = VelvetApp.library.data.value
         val key = buildString {
             recent.take(30).forEach { append(it.id).append(',') }
             append('|')
             liked.take(30).forEach { append(it.id).append(',') }
+            append('|')
+            playlistsSongs.take(30).forEach { append(it.id).append(',') }
+            append('|')
+            append(eventCount)
             append('|')
             qPicks.take(20).forEach { append(it.id).append(',') }
             append('|')
@@ -280,21 +345,42 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         derivedJob?.cancel()
         derivedJob = viewModelScope.launch {
             val composer = VelvetApp.homeRecommendationComposerOrNull()
+            val langs = libData.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
             val (computedMixes, computedSpeedDial) = withContext(Dispatchers.Default) {
+                val tasteProfile = runCatching { VelvetApp.userProfileRepository.getSnapshot() }.getOrNull()
                 val m = composer?.composeMadeForYouMixSeeds(recent, liked, limit = 8)
                     ?: (recent + liked).distinctBy { it.artist.lowercase() }.take(8)
-                val sd = composer?.composeSpeedDial(recent, liked, qPicks, trend, limit = 9)
-                    ?: run {
-                        val userPicks = (recent + liked).distinctBy { it.id }.filter { it.isPureMusic() }.take(3)
-                        val freshDiscovery = (qPicks + trend).distinctBy { it.id }
-                            .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
-                            .take(6)
-                        (userPicks + freshDiscovery).take(9)
-                    }
+                val sd = composer?.composeSpeedDial(
+                    recent = recent,
+                    liked = liked,
+                    quickPicks = qPicks,
+                    trending = trend,
+                    limit = 9,
+                    playlistsSongs = playlistsSongs,
+                    preferredLanguageIds = langs,
+                    tasteProfile = tasteProfile,
+                ) ?: run {
+                    val userPicks = (recent + liked + playlistsSongs).distinctBy { it.id }.filter { it.isPureMusic() }.take(4)
+                    val freshDiscovery = (qPicks + trend).distinctBy { it.id }
+                        .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
+                    (userPicks + freshDiscovery).distinctBy { it.id }.take(9)
+                }
                 m to sd
             }
             mixSeeds = computedMixes
-            speedDial = computedSpeedDial
+            // Publish atomically so a complete 9/9 grid isn't temporarily replaced by a smaller partial grid mid-fetch
+            if (computedSpeedDial.size >= minOf(9, speedDial.size) || speedDial.isEmpty()) {
+                speedDial = computedSpeedDial
+                if (computedSpeedDial.size >= 9) {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            feedPrefs.edit()
+                                .putString("speed_dial_songs", feedJson.encodeToString(songList, computedSpeedDial))
+                                .apply()
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -320,10 +406,13 @@ fun HomeScreen(vm: HomeViewModel) {
     val languages = data.musicLanguages
     val openMenu = LocalSongMenu.current
 
+    val playlistSongs = remember(data.playlists) { data.playlists.flatMap { it.songs } }
+    val eventCount = data.listenEvents.size
+
     LaunchedEffect(recent) { vm.loadFor(recent) }
     LaunchedEffect(languages) { vm.loadMoreForYou(languages) }
-    LaunchedEffect(recent, data.liked, quickPicks, trending) {
-        vm.updateDerivedShelves(recent, data.liked)
+    LaunchedEffect(recent, data.liked, playlistSongs, eventCount, quickPicks, trending) {
+        vm.updateDerivedShelves(recent, data.liked, playlistSongs, eventCount)
     }
 
     val filteredRecents = remember(data.contextRecents, data.playlists) {

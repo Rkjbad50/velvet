@@ -11,6 +11,7 @@ import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationRequest
 import com.velvet.app.recommendation.model.VersionKind
 import com.velvet.app.recommendation.profile.UserProfileRepository
+import com.velvet.app.recommendation.profile.UserTasteSnapshot
 import java.util.UUID
 
 data class PersonalizedMix(
@@ -160,8 +161,9 @@ class HomeRecommendationComposer(
     }
 
     /**
-     * Builds "Speed Dial" mixing up to 3 verified user favorites/recents with up to 6 verified
-     * fresh discovery songs, excluding duplicates across shelves.
+     * Builds "Speed Dial" filling all [limit] (9) cells whenever verified studio audio exists,
+     * dynamically adapting to listening habits (frequency, completion, likes, active genre/mood,
+     * preferred languages, and fatigue/skips) blended with fresh discovery tracks.
      */
     fun composeSpeedDial(
         recent: List<Song>,
@@ -169,16 +171,124 @@ class HomeRecommendationComposer(
         quickPicks: List<Song>,
         trending: List<Song>,
         limit: Int = 9,
+        playlistsSongs: List<Song> = emptyList(),
+        preferredLanguageIds: Set<String> = emptySet(),
+        tasteProfile: UserTasteSnapshot? = null,
     ): List<Song> {
-        val familiarPool = filterStrictOriginalAudio(recent + liked)
-        val userPicks = capArtists(familiarPool, maxPerArtist = 1, limit = 3)
-        val usedRecs = userPicks.mapTo(mutableSetOf()) { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
+        if (limit <= 0) return emptyList()
 
-        val freshPool = filterStrictOriginalAudio(quickPicks + trending).filterNot { song ->
-            RecordingIdentityResolver.resolve(song).canonicalRecordingId in usedRecs
+        val recentIndexMap = linkedMapOf<String, Int>()
+        val historyFrequency = mutableMapOf<String, Int>()
+        recent.forEachIndexed { idx, s ->
+            val recId = RecordingIdentityResolver.resolve(s).canonicalRecordingId
+            if (recId !in recentIndexMap) recentIndexMap[recId] = idx
+            historyFrequency[recId] = (historyFrequency[recId] ?: 0) + 1
         }
-        val freshPicks = capArtists(freshPool, maxPerArtist = 2, limit = maxOf(0, limit - userPicks.size))
-        return (userPicks + freshPicks).take(limit)
+        val likedRecIds = liked.mapTo(mutableSetOf()) { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
+        val playlistRecIds = playlistsSongs.mapTo(mutableSetOf()) { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
+
+        fun habitScore(song: Song, recId: String, isFamiliar: Boolean): Double {
+            if (tasteProfile?.isExplicitlyDisliked(song) == true) return Double.NEGATIVE_INFINITY
+            val feat = featureRepository.getCachedOrExtract(song)
+            var score = 0.0
+
+            val recencyIdx = recentIndexMap[recId]
+            if (recencyIdx != null) {
+                score += 0.45 * (1.0 - (recencyIdx / 25.0).coerceAtMost(0.90))
+            }
+            val repeatCount = historyFrequency[recId] ?: 0
+            if (repeatCount > 1) {
+                score += minOf(0.30, (repeatCount - 1) * 0.12)
+            }
+            if (recId in likedRecIds) score += 0.30
+            if (recId in playlistRecIds) score += 0.14
+
+            if (tasteProfile != null) {
+                score += (tasteProfile.longTerm.recordingWeights[recId] ?: 0.0) * 0.45
+                score += (tasteProfile.mediumTerm.recordingWeights[recId] ?: 0.0) * 0.35
+                score += (tasteProfile.shortTerm.recordingWeights[recId] ?: 0.0) * 0.25
+
+                val genreFit = feat.genreIds.entries.maxOfOrNull { (g, c) ->
+                    ((tasteProfile.mediumTerm.genreWeights[g] ?: 0.0) * 0.55 +
+                        (tasteProfile.longTerm.genreWeights[g] ?: 0.0) * 0.45) * c
+                } ?: 0.0
+                val moodFit = feat.moodIds.entries.maxOfOrNull { (m, c) ->
+                    ((tasteProfile.shortTerm.moodWeights[m] ?: 0.0) * 0.55 +
+                        (tasteProfile.mediumTerm.moodWeights[m] ?: 0.0) * 0.45) * c
+                } ?: 0.0
+                score += 0.28 * genreFit + 0.20 * moodFit
+
+                val skipPenalty = tasteProfile.fatigue.singleSkipPenalties[recId] ?: 0.0
+                score -= (skipPenalty * 0.50).coerceAtMost(0.45)
+                if (recId in tasteProfile.fatigue.dailyOverplayedRecordingIds) {
+                    score -= 0.18
+                }
+            }
+
+            if (preferredLanguageIds.isNotEmpty() && feat.languageIds.keys.any { it in preferredLanguageIds }) {
+                score += 0.15
+            }
+            val tierBonus = RecordingIdentityResolver.resolve(song).releaseClassification.audioClass.qualityTier * 0.03
+            if (!isFamiliar) score += tierBonus
+            return score
+        }
+
+        val familiarFiltered = filterStrictOriginalAudio(recent + liked + playlistsSongs)
+        val familiarScored = familiarFiltered
+            .map { it to habitScore(it, RecordingIdentityResolver.resolve(it).canonicalRecordingId, isFamiliar = true) }
+            .filter { it.second > Double.NEGATIVE_INFINITY }
+            .sortedByDescending { it.second }
+            .map { it.first }
+
+        val freshFiltered = filterStrictOriginalAudio(quickPicks + trending)
+        val freshScored = freshFiltered
+            .map { it to habitScore(it, RecordingIdentityResolver.resolve(it).canonicalRecordingId, isFamiliar = false) }
+            .filter { it.second > Double.NEGATIVE_INFINITY }
+            .sortedByDescending { it.second }
+            .map { it.first }
+
+        val selected = mutableListOf<Song>()
+        val selectedRecIds = mutableSetOf<String>()
+        val artistCounts = mutableMapOf<String, Int>()
+
+        fun tryAdd(song: Song, maxPerArtist: Int): Boolean {
+            if (selected.size >= limit) return false
+            val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
+            if (recId in selectedRecIds) return false
+            val artistKey = normalizePrimaryArtist(song.artist).ifBlank { song.artist.lowercase() }
+            val count = artistCounts[artistKey] ?: 0
+            if (count >= maxPerArtist) return false
+            selectedRecIds.add(recId)
+            artistCounts[artistKey] = count + 1
+            selected.add(song)
+            return true
+        }
+
+        // Phase 1: Balanced mix — up to 4 habit/history tracks (diverse artists) + fresh discovery
+        val familiarTarget = if (freshScored.isEmpty()) limit else minOf(4, familiarScored.size)
+        for (song in familiarScored) {
+            if (selected.size >= familiarTarget) break
+            tryAdd(song, maxPerArtist = 1)
+        }
+        for (song in freshScored) {
+            if (selected.size >= limit) break
+            tryAdd(song, maxPerArtist = 2)
+        }
+
+        // Phase 2: Backfill remaining slots cleanly so all 9/9 Speed Dial cells fill whenever available
+        if (selected.size < limit) {
+            val remainder = familiarScored + freshScored
+            for (song in remainder) {
+                if (selected.size >= limit) break
+                tryAdd(song, maxPerArtist = 2)
+            }
+            for (song in remainder) {
+                if (selected.size >= limit) break
+                tryAdd(song, maxPerArtist = Int.MAX_VALUE)
+            }
+        }
+
+        return selected.take(limit)
     }
 
     /**

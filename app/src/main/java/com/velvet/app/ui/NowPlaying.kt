@@ -8,6 +8,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.IconButton
@@ -474,29 +475,34 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                // Top Bar - Mathematically Centered
-                Box(
+                // Top Bar - Non-overlapping symmetric layout keeping Radio title centered cleanly between controls
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Left: Close Button
+                    // Left slot mirrors the right action cluster (92.dp) so center text never overlaps icons
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
-                            .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
-                            .clickable(onClick = onClose),
-                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.width(92.dp),
+                        contentAlignment = Alignment.CenterStart,
                     ) {
-                        Icon(
-                            Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Close",
-                            tint = velvetColors.text,
-                            modifier = Modifier.size(26.dp),
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
+                                .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
+                                .clickable(onClick = onClose),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Close",
+                                tint = velvetColors.text,
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
                     }
 
                     val radioSubtitle = remember(PlayerConnection.isRadioActive, PlayerConnection.radioSeedSong, song) {
@@ -508,8 +514,8 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                     // Center: "Now Playing" + Radio Subtitle + Theme Accent Indicator
                     Column(
                         modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 48.dp),
+                            .weight(1f)
+                            .padding(horizontal = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
@@ -532,6 +538,10 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 color = accent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .basicMarquee(iterations = Int.MAX_VALUE),
                             )
                         }
                         Spacer(Modifier.height(3.dp))
@@ -546,8 +556,8 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
                     // Right: Lyrics & MoreVert Menu
                     Row(
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.width(92.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
@@ -556,37 +566,37 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                                 .clip(CircleShape)
                                 .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
                                 .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
-                            .clickable {
-                                showLyrics = true
-                                if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            AppIcons.Lyrics,
-                            contentDescription = "Lyrics",
-                            tint = if (showLyrics) accent else velvetColors.text,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
-                            .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
-                            .clickable { openMenu(SongMenuRequest(song, null)) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Default.MoreVert,
-                            contentDescription = "More",
-                            tint = velvetColors.text,
-                            modifier = Modifier.size(20.dp),
-                        )
+                                .clickable {
+                                    showLyrics = true
+                                    if (lyrics == LyricsState.NotRequested || lyrics == LyricsState.Failed) requestLyrics()
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                AppIcons.Lyrics,
+                                contentDescription = "Lyrics",
+                                tint = if (showLyrics) accent else velvetColors.text,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
+                                .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
+                                .clickable { openMenu(SongMenuRequest(song, null)) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "More",
+                                tint = velvetColors.text,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 }
-            }
 
                 Spacer(Modifier.height(gap))
 
@@ -817,15 +827,15 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             modifier = Modifier.align(Alignment.CenterStart),
                         )
 
-                        // Streaming resolution tag: locked to true center with absolute zero horizontal jitter
+                        // Streaming resolution tag: slimmer weight than surrounding font, locked cleanly at true center
                         Text(
                             quality.uppercase(),
                             style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.5.sp,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Light,
+                                letterSpacing = 0.85.sp,
                             ),
-                            color = accent,
+                            color = accent.copy(alpha = 0.88f),
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .clickable { PlayerConnection.setHiRes(!hiRes) },

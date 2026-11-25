@@ -188,6 +188,7 @@ private fun variableFont(resource: Int, weight: FontWeight) =
     Font(resource, weight, variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))
 
 internal val EditorialSerif = FontFamily(
+    variableFont(R.font.source_serif_4, FontWeight.Light),
     variableFont(R.font.source_serif_4, FontWeight.Normal),
     variableFont(R.font.source_serif_4, FontWeight.Bold),
 )
@@ -198,6 +199,7 @@ internal val SacrificeFont = FontFamily(
 )
 
 private val SpaceGrotesk = FontFamily(
+    variableFont(R.font.space_grotesk, FontWeight.Light),
     variableFont(R.font.space_grotesk, FontWeight.Normal),
     variableFont(R.font.space_grotesk, FontWeight.Bold),
 )
