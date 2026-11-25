@@ -318,14 +318,14 @@ class Phase8DiversityAndInnertubeTest {
             album = "Sacred Echoes",
         )
         val relatedBatch = listOf(
-            "Gayatri Mantra", "Achyutam Keshavam", "Om Jai Jagdish Hare", "Mahamrityunjaya Mantra",
-            "Govind Bolo Hari", "Raghupati Raghav", "Karpur Gauram", "Ambe Tu Hai Jagdambe",
+            "Gayatri Mantra", "Ganesh Aarti", "Durga Chalisa", "Mahamrityunjaya Mantra",
+            "Krishna Kirtan", "Saraswati Stotram", "Achyutam Bhajan", "Karpur Gauram Aarti",
         ).mapIndexed { i, title ->
             topic("rel_${i + 1}", title, "Singer A$i", durationSec = 240L + i, album = "Devotion $i")
         }
         val genreBatch = listOf(
-            "Aigiri Nandini", "Sukh Karta Dukh Harta", "Radhe Radhe Govinda", "Payoji Maine Ram Ratan",
-            "Vaishnav Jana To", "Madhurashtakam", "Namami Shamishan", "Hanuman Ashtak",
+            "Sai Baba Bhajan", "Kali Chalisa", "Lakshmi Aarti", "Surya Mantra",
+            "Aigiri Nandini Stotram", "Radha Kirtan", "Meera Bhajan", "Narasimha Mantra",
         ).mapIndexed { i, title ->
             topic("gen_${i + 1}", title, "Singer B$i", durationSec = 250L + i, album = "Temple Vol $i")
         }
