@@ -34,7 +34,9 @@ internal fun BrowseSection(title: String, action: String? = null, onAction: () -
     ) {
         Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge)
         HorizontalDivider(Modifier.weight(1f), color = velvetColors.rule)
-        if (action != null) TextButton(onClick = onAction) { Text(action) }
+        if (action != null) {
+            TextButton(onClick = onAction, modifier = Modifier.captureOriginOnPress(cornerRadiusDp = 16f)) { Text(action) }
+        }
     }
 }
 
@@ -45,6 +47,7 @@ internal fun BrowseChip(text: String, selected: Boolean? = null, onClick: () -> 
     else Modifier.selectable(selected, role = Role.Tab, onClick = onClick)
     Box(
         Modifier.heightIn(min = 48.dp)
+            .captureOriginOnPress(cornerRadiusDp = 10f)
             .panel(RoundedCornerShape(10.dp), fill = if (highlighted) velvetColors.accent else velvetColors.surface)
             .then(action)
             .padding(horizontal = 13.dp, vertical = 8.dp),

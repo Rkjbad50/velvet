@@ -464,6 +464,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .captureOriginOnPress(cornerRadiusDp = 14f)
                         .clickable(enabled = !checkingVersion) {
                             checkingVersion = true
                             scope.launch {
@@ -539,7 +540,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                             },
                             modifier = Modifier
                                 .padding(start = 12.dp)
-                                .defaultMinSize(minHeight = 36.dp),
+                                .defaultMinSize(minHeight = 36.dp)
+                                .captureOriginOnPress(cornerRadiusDp = 10f),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = velvetColors.accent,
@@ -615,7 +617,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             ActionRow(
                 title = "Version",
-                subtitle = "Velvet for Android",
+                subtitle = "Velvet for Android • Build ${BuildConfig.VERSION_CODE}",
                 readout = version,
             ) {
                 // Developer options unlock: tap version text 7 times
@@ -956,7 +958,15 @@ private fun ActionRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick) else Modifier)
+            .then(
+                if (onClick != null) {
+                    Modifier
+                        .captureOriginOnPress(cornerRadiusDp = 16f)
+                        .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

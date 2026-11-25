@@ -34,9 +34,10 @@ val gitCommit = try {
 }
 val buildTime = Instant.now().toString()
 
-// CI passes the build number so every build installs as an update over the previous one
-val buildNumber = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 2
-val upstreamBuildNumber = System.getenv("VELVET_UPSTREAM_BUILD")?.toIntOrNull() ?: 51
+// CI passes the build number so every build installs as an update over the previous one.
+// Local/repo floor upgraded within v2.7.6 so all builds stay strictly above earlier v2.7.6 releases.
+val buildNumber = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 220
+val upstreamBuildNumber = System.getenv("VELVET_UPSTREAM_BUILD")?.toIntOrNull() ?: 220
 val keystorePath: String? = System.getenv("VELVET_KEYSTORE")
 val releaseUrl = System.getenv("VELVET_RELEASES_URL")
     ?: System.getenv("GITHUB_REPOSITORY")?.let { "https://github.com/$it/releases/latest" }

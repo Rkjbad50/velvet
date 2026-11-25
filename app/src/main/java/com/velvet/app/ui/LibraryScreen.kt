@@ -632,6 +632,7 @@ fun LibraryScreen() {
                             .aspectRatio(1f)
                             .shadow(8.dp, RoundedCornerShape(20.dp))
                             .clip(RoundedCornerShape(20.dp))
+                            .captureOriginOnPress(cornerRadiusDp = 20f)
                             .background(
                                 Brush.verticalGradient(
                                     listOf(
@@ -689,6 +690,7 @@ fun LibraryScreen() {
                             .weight(1f)
                             .aspectRatio(1f)
                             .clip(RoundedCornerShape(20.dp))
+                            .captureOriginOnPress(cornerRadiusDp = 20f)
                             .background(velvetColors.raised)
                             .border(1.dp, velvetColors.rule, RoundedCornerShape(20.dp))
                             .clickable { nav.open(Route.Downloads) }
@@ -869,6 +871,7 @@ fun LibraryScreen() {
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .captureOriginOnPress(cornerRadiusDp = 14f)
                                                 .combinedClickable(
                                                     onClick = { nav.open(Route.LocalPlaylist(p.id)) },
                                                     onLongClick = { playlistToManage = p },
@@ -907,6 +910,7 @@ fun LibraryScreen() {
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .captureOriginOnPress(cornerRadiusDp = 14f)
                                                 .clickable { nav.open(Route.Album(a)) },
                                         ) {
                                             Column {
@@ -935,6 +939,7 @@ fun LibraryScreen() {
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .captureOriginOnPress(cornerRadiusDp = 70f)
                                                 .clickable { nav.open(Route.Artist(r)) },
                                         ) {
                                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -960,6 +965,7 @@ fun LibraryScreen() {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .captureOriginOnPress(cornerRadiusDp = 14f)
                                 .combinedClickable(
                                     onClick = { nav.open(Route.LocalPlaylist(p.id)) },
                                     onLongClick = { playlistToManage = p },
@@ -993,6 +999,7 @@ fun LibraryScreen() {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .captureOriginOnPress(cornerRadiusDp = 14f)
                                 .clickable { nav.open(Route.Album(a)) }
                                 .padding(horizontal = 20.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -1016,6 +1023,7 @@ fun LibraryScreen() {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .captureOriginOnPress(cornerRadiusDp = 28f)
                                 .clickable { nav.open(Route.Artist(r)) }
                                 .padding(horizontal = 20.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,

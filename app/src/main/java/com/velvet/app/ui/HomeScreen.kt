@@ -539,6 +539,21 @@ fun HomeScreen(vm: HomeViewModel) {
             }
         }
 
+        // 1. Trending now
+        if (trending.isNotEmpty()) {
+            item(key = "home-trending-now") {
+                TrendingRail(trending, homeVisitRequestId)
+            }
+        }
+
+        // 2. Speed Dial
+        if (speedDialSongs.isNotEmpty()) {
+            item(key = "speed-dial") {
+                SpeedDialSection(speedDialSongs, homeVisitRequestId)
+            }
+        }
+
+        // 3. Recently played
         if (filteredRecents.isNotEmpty()) {
             item(key = "home-recently-played") {
                 BrowseSection("Recently played", action = "See all") { nav.open(Route.Recent) }
@@ -585,16 +600,28 @@ fun HomeScreen(vm: HomeViewModel) {
             }
         }
 
-        // YouTube Music Speed Dial section right between Now Playing / Spotlight and Made for you
-        if (speedDialSongs.isNotEmpty()) {
-            item(key = "speed-dial") {
-                SpeedDialSection(speedDialSongs, homeVisitRequestId)
+        // 4. Quick picks
+        if (quickPicks.isNotEmpty()) {
+            item(key = "home-quick-picks") {
+                QuickPicksRail(quickPicks, homeVisitRequestId) { index ->
+                    PlayerConnection.startRadio(
+                        song = quickPicks[index],
+                        attribution = PlaybackAttribution(
+                            surface = RecommendationSurface.HOME_SONG_RAIL,
+                            mode = RecommendationMode.SONG_RADIO,
+                            requestId = homeVisitRequestId,
+                            shelfId = "quick_picks",
+                            resultPosition = index,
+                        ),
+                    )
+                }
             }
         }
 
+        // 5. Made for you
         if (mixes.isNotEmpty()) {
-            item { BrowseSection("Made for you") }
-            item {
+            item(key = "home-made-for-you-header") { BrowseSection("Made for you") }
+            item(key = "home-made-for-you-rail") {
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     itemsIndexed(mixes, key = { _, seed -> "mix-" + seed.id }) { index, seed ->
                         LaunchedEffect(homeVisitRequestId, seed.id, index) {
@@ -624,42 +651,10 @@ fun HomeScreen(vm: HomeViewModel) {
             }
         }
 
-        if (quickPicks.isNotEmpty()) {
-            item {
-                QuickPicksRail(quickPicks, homeVisitRequestId) { index ->
-                    PlayerConnection.startRadio(
-                        song = quickPicks[index],
-                        attribution = PlaybackAttribution(
-                            surface = RecommendationSurface.HOME_SONG_RAIL,
-                            mode = RecommendationMode.SONG_RADIO,
-                            requestId = homeVisitRequestId,
-                            shelfId = "quick_picks",
-                            resultPosition = index,
-                        ),
-                    )
-                }
-            }
-        }
-
-        if (trending.isNotEmpty()) {
-            item {
-                TrendingRail(trending, homeVisitRequestId)
-            }
-        }
-
-        if (data.artists.isNotEmpty()) {
-            item { BrowseSection("Your artists") }
-            item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    items(data.artists, key = { it.url }) { a -> ArtistCircle(a, 112.dp) { nav.open(Route.Artist(a)) } }
-                }
-            }
-        }
-
-        // YouTube Music pre-made albums and playlists recommendation section
+        // 6. More for you (YouTube Music pre-made albums and playlists recommendation section)
         if (moreForYou.isNotEmpty()) {
-            item { BrowseSection("More for you") }
-            item {
+            item(key = "home-more-for-you-header") { BrowseSection("More for you") }
+            item(key = "home-more-for-you-rail") {
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     itemsIndexed(moreForYou, key = { _, album -> album.url }) { index, album ->
                         LaunchedEffect(homeVisitRequestId, album.url, index) {
@@ -674,6 +669,15 @@ fun HomeScreen(vm: HomeViewModel) {
                         }
                         AlbumCard(album) { nav.open(Route.Album(album)) }
                     }
+                }
+            }
+        }
+
+        if (data.artists.isNotEmpty()) {
+            item(key = "home-your-artists-header") { BrowseSection("Your artists") }
+            item(key = "home-your-artists-rail") {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    items(data.artists, key = { it.url }) { a -> ArtistCircle(a, 112.dp) { nav.open(Route.Artist(a)) } }
                 }
             }
         }
@@ -772,6 +776,7 @@ private fun SpeedDialSquareTile(
     Box(
         modifier = modifier
             .aspectRatio(1f)
+            .captureOriginOnPress(cornerRadiusDp = 16f)
             .clip(RoundedCornerShape(16.dp))
             .background(velvetColors.raised)
             .border(1.dp, velvetColors.glassBorder, RoundedCornerShape(16.dp))
@@ -1109,6 +1114,7 @@ private fun ShortcutTile(s: Shortcut, modifier: Modifier) {
     GlassSurface(
         modifier = modifier
             .height(70.dp)
+            .captureOriginOnPress(cornerRadiusDp = 20f)
             .clickable(onClick = s.open),
         shape = RoundedCornerShape(20.dp),
         color = velvetColors.surface,
@@ -1279,6 +1285,7 @@ private fun RecentContextTile(
     Column(
         Modifier
             .width(130.dp)
+            .captureOriginOnPress(cornerRadiusDp = if (isArtist) 60f else 22f)
             .clickable(onClick = onClick),
         horizontalAlignment = if (isArtist) Alignment.CenterHorizontally else Alignment.Start,
     ) {

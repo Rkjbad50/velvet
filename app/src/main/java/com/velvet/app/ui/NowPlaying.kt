@@ -148,6 +148,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -215,7 +217,10 @@ private const val SWIPE_THRESHOLD = 140f
 // ------------------------------------------------------------------ mini player
 
 @Composable
-fun MiniPlayer(onOpen: () -> Unit) {
+fun MiniPlayer(
+    onOpen: () -> Unit,
+    onBoundsInRoot: (NavOrigin) -> Unit = {},
+) {
     val song = PlayerConnection.current ?: return
     val position = rememberPosition()
     val duration = PlayerConnection.durationMs
@@ -263,6 +268,11 @@ fun MiniPlayer(onOpen: () -> Unit) {
         Modifier
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .fillMaxWidth()
+            .onGloballyPositioned { coords ->
+                if (coords.isAttached) {
+                    onBoundsInRoot(NavOrigin.fromRect(coords.boundsInRoot(), cornerRadiusDp = 16f))
+                }
+            }
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
@@ -431,6 +441,18 @@ fun NowPlayingScreen(
     var showQueue by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    var lyricsButtonOrigin by remember { mutableStateOf<NavOrigin?>(null) }
+    val lyricsAnim = remember { Animatable(0f) }
+    var renderLyrics by remember { mutableStateOf(false) }
+    LaunchedEffect(showLyrics) {
+        if (showLyrics) {
+            renderLyrics = true
+            lyricsAnim.animateTo(1f, OriginTransformCalculator.windowOpenSpring)
+        } else if (renderLyrics) {
+            lyricsAnim.animateTo(0f, OriginTransformCalculator.windowCloseSpring)
+            renderLyrics = false
+        }
+    }
     var artDrag by remember { mutableFloatStateOf(0f) }
     val smoothArtDrag by animateFloatAsState(
         targetValue = artDrag,
@@ -645,6 +667,10 @@ fun NowPlayingScreen(
                         Box(
                             modifier = Modifier
                                 .size(42.dp)
+                                .onGloballyPositioned { c ->
+                                    if (c.isAttached) lyricsButtonOrigin = NavOrigin.fromRect(c.boundsInRoot(), 21f)
+                                }
+                                .captureOriginOnPress(cornerRadiusDp = 21f)
                                 .clip(CircleShape)
                                 .background(if (isDark) Color(0x24FFFFFF) else velvetColors.surface)
                                 .border(1.dp, if (isDark) Color(0x1AFFFFFF) else velvetColors.glassBorder, CircleShape)
@@ -953,20 +979,18 @@ fun NowPlayingScreen(
                 )
             }
 
-            // Back closes the full-screen lyrics before it closes Now Playing
+            // Back closes the full-screen lyrics, submerging back into the top-right Lyrics button
             BackHandler(enabled = showLyrics) { showLyrics = false }
-            AnimatedVisibility(
-                showLyrics,
-                enter = slideInVertically(
-                    initialOffsetY = { it / 12 },
-                    animationSpec = spring(dampingRatio = 0.84f, stiffness = 520f),
-                ) + fadeIn(tween(180)),
-                exit = slideOutVertically(
-                    targetOffsetY = { it / 12 },
-                    animationSpec = tween(150, easing = FastOutSlowInEasing),
-                ) + fadeOut(tween(130)),
-            ) {
-                FullLyrics(lyrics, position, onRequest = requestLyrics, onClose = { showLyrics = false })
+            if (renderLyrics) {
+                OriginTransformBox(
+                    origin = lyricsButtonOrigin,
+                    progress = lyricsAnim.value,
+                    isExiting = !showLyrics,
+                    containerBackground = velvetColors.background,
+                    showScrim = true,
+                ) {
+                    FullLyrics(lyrics, position, onRequest = requestLyrics, onClose = { showLyrics = false })
+                }
             }
 
             if (showQueue) {
@@ -1670,6 +1694,7 @@ private fun PlayerBottomCards(
         Box(
             modifier = Modifier
                 .weight(1f)
+                .captureOriginOnPress(cornerRadiusDp = 16f)
                 .scale(queueScale)
                 .height(64.dp)
                 .clip(RoundedCornerShape(16.dp))
@@ -1713,6 +1738,7 @@ private fun PlayerBottomCards(
         Box(
             modifier = Modifier
                 .weight(1f)
+                .captureOriginOnPress(cornerRadiusDp = 16f)
                 .scale(sleepScale)
                 .height(64.dp)
                 .clip(RoundedCornerShape(16.dp))

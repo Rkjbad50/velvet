@@ -76,6 +76,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -84,12 +85,16 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -605,9 +610,11 @@ fun SongActionsSheet(request: SongMenuRequest, onDismiss: () -> Unit) {
                         else -> SheetAction(AppIcons.Download, "Download") { sheet.dismissThen { downloads.download(song) } }
                     }
                     if (song.artistUrl != null) {
+                        val originRegistry = LocalOriginRegistry.current
                         SheetAction(Icons.Default.Person, "Go to artist") {
+                            val artistOrigin = originRegistry?.peekBestOrigin()
                             sheet.dismissThen {
-                                nav.open(Route.Artist(ArtistRef(song.artistUrl, song.artist)))
+                                nav.open(Route.Artist(ArtistRef(song.artistUrl, song.artist)), origin = artistOrigin)
                             }
                         }
                     }
@@ -690,6 +697,7 @@ private fun SheetAction(
     Row(
         Modifier
             .fillMaxWidth()
+            .captureOriginOnPress(cornerRadiusDp = 16f)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -724,6 +732,7 @@ fun AlbumCard(album: AlbumRef, size: Dp = 150.dp, onClick: () -> Unit) {
     Column(
         Modifier
             .width(size)
+            .captureOriginOnPress(cornerRadiusDp = 26f)
             .clickable(onClick = onClick),
     ) {
         Artwork(album.thumb, size, corner = 26.dp, placeholder = AppIcons.Album)
@@ -751,6 +760,7 @@ fun ArtistCircle(artist: ArtistRef, size: Dp = 128.dp, onClick: () -> Unit) {
     Column(
         Modifier
             .width(size)
+            .captureOriginOnPress(cornerRadiusDp = size.value * 0.5f)
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -789,6 +799,7 @@ fun BrowseRow(
     Row(
         Modifier
             .fillMaxWidth()
+            .captureOriginOnPress(cornerRadiusDp = 16f)
             .clickable(onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1201,7 +1212,9 @@ class VelvetSheetScope internal constructor(
 
 @Composable
 private fun VelvetDialogOverlayShell(
+    origin: NavOrigin?,
     progress: Float,
+    isExiting: Boolean,
     canDismiss: Boolean,
     onRequestClose: () -> Unit,
     content: @Composable () -> Unit,
@@ -1214,11 +1227,33 @@ private fun VelvetDialogOverlayShell(
     BackHandler(enabled = true) {
         if (canDismiss) onRequestClose()
     }
-    val clampedAlpha = progress.coerceIn(0f, 1f)
+    var overlayW by remember { mutableFloatStateOf(0f) }
+    var overlayH by remember { mutableFloatStateOf(0f) }
+    var overlayTopLeftInRoot by remember { mutableStateOf(Offset.Zero) }
+    val densityPx = LocalDensity.current.density
+    val spec = OriginTransformCalculator.compute(
+        origin = origin,
+        containerWidth = overlayW,
+        containerHeight = overlayH,
+        progress = progress,
+        isExiting = isExiting,
+        targetCenterX = overlayTopLeftInRoot.x + overlayW * 0.5f,
+        targetCenterY = overlayTopLeftInRoot.y + overlayH * 0.5f,
+        minStartScale = 0.28f,
+        maxStartScale = 0.78f,
+        targetCornerDp = 24f,
+        targetScrimAlpha = 0.56f,
+        fallbackOffsetYPx = 24f * densityPx,
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = clampedAlpha * 0.56f))
+            .onGloballyPositioned { c -> if (c.isAttached) overlayTopLeftInRoot = c.positionInRoot() }
+            .onSizeChanged { s ->
+                overlayW = s.width.toFloat()
+                overlayH = s.height.toFloat()
+            }
+            .background(Color.Black.copy(alpha = spec.scrimAlpha))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1234,12 +1269,15 @@ private fun VelvetDialogOverlayShell(
                 .widthIn(min = 280.dp, max = 420.dp)
                 .fillMaxWidth()
                 .graphicsLayer {
-                    val p = progress.coerceAtLeast(0f)
-                    val s = 0.90f + 0.10f * p
-                    scaleX = s
-                    scaleY = s
-                    alpha = p.coerceIn(0f, 1f)
-                    translationY = (1f - p) * 18.dp.toPx()
+                    translationX = spec.translationX
+                    translationY = spec.translationY
+                    scaleX = spec.scale
+                    scaleY = spec.scale
+                    alpha = spec.shellAlpha
+                    if (spec.cornerDp > 0.25f) {
+                        shape = RoundedCornerShape(spec.cornerDp.dp)
+                        clip = true
+                    }
                 }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -1259,18 +1297,20 @@ fun VelvetAnimatedDialog(
     content: @Composable VelvetDialogScope.() -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val registry = LocalOriginRegistry.current
+    val origin = remember { registry?.consumeBestOrigin() }
     val progress = remember { Animatable(0f) }
     var isClosing by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        progress.animateTo(1f, VelvetPopupMotion.enterSpring)
+        progress.animateTo(1f, OriginTransformCalculator.windowOpenSpring)
     }
 
     val closeAndRun: (() -> Unit) -> Unit = { afterAction ->
         if (!isClosing) {
             isClosing = true
             scope.launch {
-                progress.animateTo(0f, VelvetPopupMotion.exitTween)
+                progress.animateTo(0f, OriginTransformCalculator.windowCloseSpring)
                 afterAction()
             }
         }
@@ -1287,7 +1327,9 @@ fun VelvetAnimatedDialog(
     ) {
         val dialogScope = remember(closeAndRun) { VelvetDialogScope(closeAndRun) }
         VelvetDialogOverlayShell(
+            origin = origin,
             progress = progress.value,
+            isExiting = isClosing,
             canDismiss = canDismiss,
             onRequestClose = { closeAndRun(onDismissRequest) },
         ) {
@@ -1304,16 +1346,25 @@ fun <T> VelvetDialogHost(
     canDismiss: Boolean = true,
     content: @Composable VelvetDialogScope.(T) -> Unit,
 ) {
+    val registry = LocalOriginRegistry.current
     var active by remember { mutableStateOf(target) }
+    var activeOrigin by remember { mutableStateOf<NavOrigin?>(null) }
+    var isExiting by remember { mutableStateOf(false) }
     val progress = remember { Animatable(0f) }
 
     LaunchedEffect(target) {
         if (target != null) {
+            if (active == null) {
+                activeOrigin = registry?.consumeBestOrigin()
+            }
             active = target
-            progress.animateTo(1f, VelvetPopupMotion.enterSpring)
+            isExiting = false
+            progress.animateTo(1f, OriginTransformCalculator.windowOpenSpring)
         } else if (active != null) {
-            progress.animateTo(0f, VelvetPopupMotion.exitTween)
+            isExiting = true
+            progress.animateTo(0f, OriginTransformCalculator.windowCloseSpring)
             active = null
+            activeOrigin = null
         }
     }
 
@@ -1334,7 +1385,9 @@ fun <T> VelvetDialogHost(
     ) {
         val dialogScope = remember(onDismissRequest) { VelvetDialogScope(closeAndRun) }
         VelvetDialogOverlayShell(
+            origin = activeOrigin,
             progress = progress.value,
+            isExiting = isExiting,
             canDismiss = canDismiss,
             onRequestClose = onDismissRequest,
         ) {
@@ -1430,9 +1483,11 @@ fun VelvetModalSheet(
         }
     }
     val sheetScope = remember { VelvetSheetScope(hideAndRun) }
+    val origin = remember { LocalOriginRegistry.current?.consumeBestOrigin() }
+    var sheetW by remember { mutableFloatStateOf(0f) }
     val reveal = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        reveal.animateTo(1f, tween(durationMillis = 190, easing = FastOutSlowInEasing))
+        reveal.animateTo(1f, VelvetPopupMotion.enterSpring)
     }
 
     ModalBottomSheet(
@@ -1455,10 +1510,18 @@ fun VelvetModalSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .onSizeChanged { sheetW = it.width.toFloat() }
                 .graphicsLayer {
-                    val p = reveal.value.coerceIn(0f, 1f)
-                    alpha = 0.86f + 0.14f * p
-                    translationY = (1f - p) * 10.dp.toPx()
+                    val p = reveal.value.coerceIn(0f, 1.04f)
+                    val clamped = p.coerceIn(0f, 1f)
+                    alpha = 0.72f + 0.28f * clamped
+                    translationY = (1f - p) * 14.dp.toPx()
+                    if (origin != null && origin.isValid && sheetW > 0f) {
+                        translationX = (origin.centerX - sheetW * 0.5f) * 0.10f * (1f - clamped)
+                    }
+                    val s = 0.96f + 0.04f * p
+                    scaleX = s
+                    scaleY = s
                 },
         ) {
             content(sheetScope)

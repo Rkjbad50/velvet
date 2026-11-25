@@ -36,24 +36,45 @@ data class NavState(
     val nowPlayingOpen: Boolean = false,
 )
 
+/** Runtime stack entry binding each open screen to its launching UI origin bounds. */
+data class RouteStackEntry(
+    val uid: Long,
+    val route: Route,
+    val origin: NavOrigin? = null,
+)
+
 /** Each bottom tab keeps its own back stack, like most music apps. */
 class Navigator(initial: NavState = NavState()) {
     var tab by mutableIntStateOf(initial.tab.coerceIn(0, TAB_COUNT - 1))
         private set
     var nowPlayingOpen by mutableStateOf(initial.nowPlayingOpen)
-    private val stacks = List(TAB_COUNT) { i -> mutableStateListOf<Route>().apply { addAll(initial.stacks.getOrNull(i).orEmpty()) } }
+    var originProvider: (() -> NavOrigin?)? = null
+    private var uidCounter = 0L
+    private val stacks = List(TAB_COUNT) { i ->
+        mutableStateListOf<RouteStackEntry>().apply {
+            initial.stacks.getOrNull(i).orEmpty().forEach { r ->
+                add(RouteStackEntry(uid = ++uidCounter, route = r, origin = null))
+            }
+        }
+    }
 
-    val current: Route? get() = stacks[tab].lastOrNull()
+    val currentEntries: List<RouteStackEntry> get() = stacks[tab]
+    val current: Route? get() = stacks[tab].lastOrNull()?.route
     val canGoBack: Boolean get() = nowPlayingOpen || stacks[tab].isNotEmpty() || tab != 0
 
-    fun open(route: Route) {
+    fun open(route: Route, origin: NavOrigin? = null) {
         nowPlayingOpen = false
-        stacks[tab].add(route)
+        val currentTop = stacks[tab].lastOrNull()?.route
+        if (currentTop == route && (route is Route.Settings || route is Route.Equalizer || route is Route.History || route is Route.Developer)) {
+            return
+        }
+        val resolvedOrigin = origin ?: originProvider?.invoke()
+        stacks[tab].add(RouteStackEntry(uid = ++uidCounter, route = route, origin = resolvedOrigin))
     }
 
     fun selectTab(i: Int) {
         // Modal / utility routes (Settings, Equalizer, Import, Developer) should never stick as persistent tab destinations
-        stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import || r is Route.Developer } }
+        stacks.forEach { it.removeAll { e -> e.route is Route.Settings || e.route is Route.Equalizer || e.route is Route.Import || e.route is Route.Developer } }
         // tapping the current tab again pops back to its root
         if (i == tab) stacks[i].clear() else tab = i
     }
@@ -63,13 +84,13 @@ class Navigator(initial: NavState = NavState()) {
             nowPlayingOpen -> nowPlayingOpen = false
             stacks[tab].isNotEmpty() -> stacks[tab].removeAt(stacks[tab].lastIndex)
             else -> {
-                stacks.forEach { it.removeAll { r -> r is Route.Settings || r is Route.Equalizer || r is Route.Import || r is Route.Developer } }
+                stacks.forEach { it.removeAll { e -> e.route is Route.Settings || e.route is Route.Equalizer || e.route is Route.Import || e.route is Route.Developer } }
                 tab = 0
             }
         }
     }
 
-    fun state() = NavState(tab, stacks.map { it.toList() }, nowPlayingOpen)
+    fun state() = NavState(tab, stacks.map { list -> list.map { it.route } }, nowPlayingOpen)
 
     companion object {
         const val TAB_COUNT = 3

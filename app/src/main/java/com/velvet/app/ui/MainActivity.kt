@@ -12,6 +12,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
@@ -20,9 +21,7 @@ import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -58,10 +57,13 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,11 +72,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.Job
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -217,11 +223,15 @@ private fun AppRoot() {
         }
     }
 
+    val originRegistry = remember { OriginRegistry() }
+    SideEffect { nav.originProvider = originRegistry::consumeBestOrigin }
+
     BackHandler(enabled = nav.canGoBack) { nav.back() }
 
     // no Scaffold/Surface any more, so set the default text and icon color for every screen here
     CompositionLocalProvider(
         LocalNav provides nav,
+        LocalOriginRegistry provides originRegistry,
         LocalSongMenu provides { menu = it },
         LocalContentColor provides velvetColors.text,
     ) {
@@ -229,20 +239,22 @@ private fun AppRoot() {
         val playerOpenAnim = remember { Animatable(if (isPlayerOpen) 1f else 0f) }
         var renderNowPlaying by remember { mutableStateOf(isPlayerOpen) }
         var interactiveMinimize by remember { mutableFloatStateOf(0f) }
+        var rootWidthPx by remember { mutableFloatStateOf(0f) }
         var rootHeightPx by remember { mutableFloatStateOf(0f) }
+        var miniPlayerOrigin by remember { mutableStateOf<NavOrigin?>(null) }
 
         LaunchedEffect(isPlayerOpen) {
             if (isPlayerOpen) {
                 renderNowPlaying = true
                 interactiveMinimize = 0f
-                playerOpenAnim.animateTo(1f, spring(dampingRatio = 0.84f, stiffness = 500f))
+                playerOpenAnim.animateTo(1f, OriginTransformCalculator.windowOpenSpring)
             } else {
                 if (interactiveMinimize > 0f) {
                     val remaining = (1f - interactiveMinimize).coerceIn(0f, 1f)
                     playerOpenAnim.snapTo(remaining * playerOpenAnim.value)
                     interactiveMinimize = 0f
                 }
-                playerOpenAnim.animateTo(0f, spring(dampingRatio = 0.88f, stiffness = 560f))
+                playerOpenAnim.animateTo(0f, OriginTransformCalculator.windowCloseSpring)
                 renderNowPlaying = false
             }
         }
@@ -252,7 +264,20 @@ private fun AppRoot() {
         Box(
             Modifier
                 .fillMaxSize()
-                .onSizeChanged { rootHeightPx = it.height.toFloat() },
+                .onSizeChanged {
+                    rootWidthPx = it.width.toFloat()
+                    rootHeightPx = it.height.toFloat()
+                }
+                .pointerInput(originRegistry) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type == PointerEventType.Press) {
+                                event.changes.firstOrNull()?.position?.let(originRegistry::recordPointerDown)
+                            }
+                        }
+                    }
+                },
         ) {
             PaperBackground()
 
@@ -301,84 +326,13 @@ private fun AppRoot() {
                 }
 
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    val detailTransition = updateTransition(targetState = nav.current, label = "detailScreenTransition")
-                    val keepRootMeasured = detailTransition.currentState == null || detailTransition.targetState == null
-
-                    // Keep Home/Search/Library hot in the Compose slot table so switching back to Home
-                    // takes <1ms with zero remount delay/jerk, while gliding with crisp jelly spring physics.
-                    PersistentRootTabs(
+                    RouteOverlayHost(
                         activeTab = nav.tab,
-                        isRootVisible = keepRootMeasured,
+                        entries = nav.currentEntries,
+                        nav = nav,
                         homeVm = homeVm,
                         searchVm = searchVm,
                     )
-
-                    @OptIn(ExperimentalAnimationApi::class)
-                    detailTransition.AnimatedContent(
-                        transitionSpec = {
-                            if (targetState != null && initialState == null) {
-                                // Detail push: crisp jelly-smooth horizontal slide + quick fade
-                                (slideInHorizontally(
-                                    initialOffsetX = { (it * 0.28f).toInt() },
-                                    animationSpec = spring(dampingRatio = 0.80f, stiffness = 580f),
-                                ) + fadeIn(animationSpec = tween(140, easing = FastOutSlowInEasing)))
-                                    .togetherWith(
-                                        fadeOut(animationSpec = tween(110, easing = FastOutSlowInEasing)) +
-                                            slideOutHorizontally(
-                                                targetOffsetX = { -(it * 0.08f).toInt() },
-                                                animationSpec = spring(dampingRatio = 0.85f, stiffness = 620f),
-                                            ),
-                                    )
-                            } else if (targetState == null && initialState != null) {
-                                // Detail pop back to root tabs: fast jelly glide retreat
-                                fadeIn(animationSpec = tween(120, easing = FastOutSlowInEasing))
-                                    .togetherWith(
-                                        fadeOut(animationSpec = tween(130, easing = FastOutSlowInEasing)) +
-                                            slideOutHorizontally(
-                                                targetOffsetX = { (it * 0.30f).toInt() },
-                                                animationSpec = spring(dampingRatio = 0.82f, stiffness = 620f),
-                                            ),
-                                    )
-                            } else {
-                                // Detail-to-detail transition
-                                (slideInHorizontally(
-                                    initialOffsetX = { (it * 0.24f).toInt() },
-                                    animationSpec = spring(dampingRatio = 0.80f, stiffness = 600f),
-                                ) + fadeIn(animationSpec = tween(140)))
-                                    .togetherWith(
-                                        fadeOut(animationSpec = tween(110)) +
-                                            slideOutHorizontally(
-                                                targetOffsetX = { -(it * 0.08f).toInt() },
-                                                animationSpec = spring(dampingRatio = 0.85f, stiffness = 620f),
-                                            ),
-                                    )
-                            }
-                        },
-                    ) { currentRoute ->
-                        if (currentRoute != null) {
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    .background(velvetColors.background)
-                                    .pointerInput(Unit) { detectTapGestures { } },
-                            ) {
-                                when (currentRoute) {
-                                    Route.Liked -> LikedScreen(onBack = nav::back)
-                                    Route.Recent -> RecentScreen(onBack = nav::back)
-                                    Route.History -> HistoryScreen(onBack = nav::back)
-                                    Route.Downloads -> DownloadsScreen(onBack = nav::back)
-                                    Route.Settings -> SettingsScreen(onBack = nav::back)
-                                    Route.Equalizer -> EqualizerScreen(onBack = nav::back)
-                                    Route.Import -> ImportScreen(onBack = nav::back)
-                                    Route.Developer -> DeveloperScreen(onBack = nav::back)
-                                    is Route.LocalPlaylist -> LocalPlaylistScreen(currentRoute.id, onBack = nav::back)
-                                    is Route.Album -> AlbumScreen(currentRoute.album, onBack = nav::back)
-                                    is Route.Artist -> ArtistScreen(currentRoute.artist, onBack = nav::back)
-                                    is Route.Genre -> GenreScreen(currentRoute.name, onBack = nav::back)
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -400,7 +354,14 @@ private fun AppRoot() {
                     Modifier.onSizeChanged { size -> dockHeight = with(density) { size.height.toDp() } },
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    MiniPlayer(onOpen = { nav.nowPlayingOpen = true })
+                    MiniPlayer(
+                        onOpen = { nav.nowPlayingOpen = true },
+                        onBoundsInRoot = { bounds ->
+                            if (playerExpandFraction < 0.05f) {
+                                miniPlayerOrigin = bounds
+                            }
+                        },
+                    )
                     BottomTabs(
                         selected = nav.tab,
                         onSelect = { i ->
@@ -412,36 +373,50 @@ private fun AppRoot() {
             }
 
             if (renderNowPlaying && hasPlayer) {
-                if (playerExpandFraction > 0.01f) {
+                val playerSpec = OriginTransformCalculator.compute(
+                    origin = miniPlayerOrigin,
+                    containerWidth = rootWidthPx,
+                    containerHeight = rootHeightPx,
+                    progress = playerExpandFraction,
+                    isExiting = !isPlayerOpen,
+                    minStartScale = 0.86f,
+                    maxStartScale = 0.94f,
+                    targetCornerDp = 0f,
+                    targetScrimAlpha = 0.44f,
+                    fallbackOffsetYPx = (if (rootHeightPx > 0f) rootHeightPx * 0.85f else 1200f),
+                )
+                if (playerSpec.scrimAlpha > 0.005f) {
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.44f * playerExpandFraction)),
+                            .background(Color.Black.copy(alpha = playerSpec.scrimAlpha)),
                     )
                 }
                 Box(
                     Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            val p = playerExpandFraction
-                            val travel = (if (rootHeightPx > 0f) rootHeightPx else size.height) * 0.86f
-                            translationY = (1f - p) * travel
-                            val sX = 0.93f + 0.07f * p
-                            val sY = 0.95f + 0.05f * p
-                            scaleX = sX
-                            scaleY = sY
-                            alpha = (p * 3.2f).coerceIn(0f, 1f)
-                            val radius = ((1f - p) * 28f).dp
-                            if (radius > 0.dp) {
-                                shape = RoundedCornerShape(radius)
+                            translationX = playerSpec.translationX
+                            translationY = playerSpec.translationY
+                            scaleX = playerSpec.scale
+                            scaleY = playerSpec.scale
+                            alpha = playerSpec.shellAlpha
+                            if (playerSpec.cornerDp > 0.25f) {
+                                shape = RoundedCornerShape(playerSpec.cornerDp.dp)
                                 clip = true
                             }
                         },
                 ) {
-                    NowPlayingScreen(
-                        onMinimizeDrag = { fraction -> interactiveMinimize = fraction },
-                        onClose = { nav.nowPlayingOpen = false },
-                    )
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = if (isPlayerOpen) 1f else playerSpec.contentAlpha },
+                    ) {
+                        NowPlayingScreen(
+                            onMinimizeDrag = { fraction -> interactiveMinimize = fraction },
+                            onClose = { nav.nowPlayingOpen = false },
+                        )
+                    }
                 }
             }
 
@@ -453,6 +428,146 @@ private fun AppRoot() {
         }
 
         menu?.let { request -> SongActionsSheet(request) { menu = null } }
+    }
+}
+
+private class DisplayedRouteEntry(
+    val entry: RouteStackEntry,
+    val anim: Animatable<Float, AnimationVector1D>,
+) {
+    var isExiting by mutableStateOf(false)
+    var job: Job? = null
+}
+
+@Composable
+private fun RouteOverlayHost(
+    activeTab: Int,
+    entries: List<RouteStackEntry>,
+    nav: Navigator,
+    homeVm: HomeViewModel,
+    searchVm: SearchViewModel,
+) {
+    val scope = rememberCoroutineScope()
+    val displayed = remember { mutableStateListOf<DisplayedRouteEntry>() }
+    var renderedTab by remember { mutableIntStateOf(activeTab) }
+    val entryUids = entries.map { it.uid }
+
+    LaunchedEffect(activeTab, entryUids) {
+        if (activeTab != renderedTab) {
+            renderedTab = activeTab
+            displayed.forEach { it.job?.cancel() }
+            displayed.clear()
+            entries.forEach { e ->
+                displayed.add(DisplayedRouteEntry(e, Animatable(1f)))
+            }
+            return@LaunchedEffect
+        }
+
+        val targetUidSet = entryUids.toSet()
+        // 1. Submerge routes that were popped cleanly back into their origin anchors
+        displayed.forEach { item ->
+            if (item.entry.uid !in targetUidSet && !item.isExiting) {
+                item.isExiting = true
+                item.job?.cancel()
+                item.job = scope.launch {
+                    item.anim.animateTo(0f, OriginTransformCalculator.windowCloseSpring)
+                    displayed.removeAll { it.entry.uid == item.entry.uid }
+                }
+            }
+        }
+
+        // 2. Bloom newly pushed routes directly out of their source button/card origin
+        val existingUids = displayed.mapTo(HashSet()) { it.entry.uid }
+        entries.forEach { entry ->
+            if (entry.uid !in existingUids) {
+                val created = DisplayedRouteEntry(entry, Animatable(0f))
+                val insertAt = displayed.indexOfFirst { it.isExiting }.let { idx ->
+                    if (idx >= 0) idx else displayed.size
+                }
+                displayed.add(insertAt, created)
+                created.job = scope.launch {
+                    created.anim.animateTo(1f, OriginTransformCalculator.windowOpenSpring)
+                }
+            }
+        }
+    }
+
+    val topActiveProgress = displayed.lastOrNull()?.anim?.value ?: 0f
+    val isRootCovered = displayed.any { !it.isExiting && it.anim.value >= 0.995f }
+
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val depthScale = 1f - 0.03f * topActiveProgress.coerceIn(0f, 1f)
+                    scaleX = depthScale
+                    scaleY = depthScale
+                },
+        ) {
+            PersistentRootTabs(
+                activeTab = activeTab,
+                isRootVisible = !isRootCovered,
+                homeVm = homeVm,
+                searchVm = searchVm,
+            )
+        }
+
+        displayed.forEachIndexed { index, item ->
+            val coveredByAbove = (index + 1 until displayed.size).any { aboveIdx ->
+                val above = displayed[aboveIdx]
+                !above.isExiting && above.anim.value >= 0.995f
+            }
+            key(item.entry.uid) {
+                val progress = item.anim.value
+                OriginTransformBox(
+                    origin = item.entry.origin,
+                    progress = progress,
+                    isExiting = item.isExiting,
+                    containerBackground = velvetColors.background,
+                    showScrim = true,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .layout { measurable, constraints ->
+                            if (coveredByAbove) {
+                                layout(0, 0) {}
+                            } else {
+                                val placeable = measurable.measure(constraints)
+                                layout(placeable.width, placeable.height) {
+                                    placeable.place(0, 0)
+                                }
+                            }
+                        }
+                        .then(
+                            if (!item.isExiting) {
+                                Modifier.pointerInput(Unit) { detectTapGestures { } }
+                            } else {
+                                Modifier
+                            },
+                        ),
+                ) {
+                    RenderDetailRoute(item.entry.route, nav)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderDetailRoute(route: Route, nav: Navigator) {
+    when (route) {
+        Route.Liked -> LikedScreen(onBack = nav::back)
+        Route.Recent -> RecentScreen(onBack = nav::back)
+        Route.History -> HistoryScreen(onBack = nav::back)
+        Route.Downloads -> DownloadsScreen(onBack = nav::back)
+        Route.Settings -> SettingsScreen(onBack = nav::back)
+        Route.Equalizer -> EqualizerScreen(onBack = nav::back)
+        Route.Import -> ImportScreen(onBack = nav::back)
+        Route.Developer -> DeveloperScreen(onBack = nav::back)
+        is Route.LocalPlaylist -> LocalPlaylistScreen(route.id, onBack = nav::back)
+        is Route.Album -> AlbumScreen(route.album, onBack = nav::back)
+        is Route.Artist -> ArtistScreen(route.artist, onBack = nav::back)
+        is Route.Genre -> GenreScreen(route.name, onBack = nav::back)
     }
 }
 

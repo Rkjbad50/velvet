@@ -99,6 +99,7 @@ fun PanelIconButton(
     Box(
         modifier
             .size(size)
+            .captureOriginOnPress(cornerRadiusDp = size.value * 0.5f)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -147,6 +148,7 @@ fun AccentCircleButton(
     Box(
         modifier
             .size(size)
+            .captureOriginOnPress(cornerRadiusDp = size.value * 0.5f)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
