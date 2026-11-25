@@ -151,9 +151,12 @@ object RecordingIdentityResolver {
         if (kA.isBlank() || kB.isBlank()) return false
         if (kA == kB) return true
 
-        val tokensA = kA.split(' ').filter { it.length >= 3 && it !in HONORIFIC_NOISE_WORDS }.toSet()
-        val tokensB = kB.split(' ').filter { it.length >= 3 && it !in HONORIFIC_NOISE_WORDS }.toSet()
-        if (tokensA.isNotEmpty() && tokensA == tokensB) return true
+        val cleanA = kA.split(' ').filter { it.isNotBlank() && it !in HONORIFIC_NOISE_WORDS }.toSet()
+        val cleanB = kB.split(' ').filter { it.isNotBlank() && it !in HONORIFIC_NOISE_WORDS }.toSet()
+        if (cleanA.isNotEmpty() && cleanA == cleanB) return true
+
+        val tokensA = cleanA.filter { it.length >= 3 }.toSet()
+        val tokensB = cleanB.filter { it.length >= 3 }.toSet()
         if (tokensA.size >= 2 && tokensB.size >= 2) {
             val smaller = minOf(tokensA.size, tokensB.size)
             val overlap = tokensA.intersect(tokensB).size

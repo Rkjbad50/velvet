@@ -317,11 +317,17 @@ class Phase8DiversityAndInnertubeTest {
             durationSec = 310L,
             album = "Sacred Echoes",
         )
-        val relatedBatch = (1..8).map { i ->
-            topic("rel_$i", "Om Namah Chant $i", "Singer A$i", durationSec = 240L + i, album = "Devotion $i")
+        val relatedBatch = listOf(
+            "Gayatri Mantra", "Achyutam Keshavam", "Om Jai Jagdish Hare", "Mahamrityunjaya Mantra",
+            "Govind Bolo Hari", "Raghupati Raghav", "Karpur Gauram", "Ambe Tu Hai Jagdambe",
+        ).mapIndexed { i, title ->
+            topic("rel_${i + 1}", title, "Singer A$i", durationSec = 240L + i, album = "Devotion $i")
         }
-        val genreBatch = (1..8).map { i ->
-            topic("gen_$i", "Sacred Aarti Stotram $i", "Singer B$i", durationSec = 250L + i, album = "Temple Vol $i")
+        val genreBatch = listOf(
+            "Aigiri Nandini", "Sukh Karta Dukh Harta", "Radhe Radhe Govinda", "Payoji Maine Ram Ratan",
+            "Vaishnav Jana To", "Madhurashtakam", "Namami Shamishan", "Hanuman Ashtak",
+        ).mapIndexed { i, title ->
+            topic("gen_${i + 1}", title, "Singer B$i", durationSec = 250L + i, album = "Temple Vol $i")
         }
         val pool = CandidatePoolBuilder(
             sources = listOf(
@@ -402,8 +408,11 @@ class Phase8DiversityAndInnertubeTest {
         val bare = topic("single_b", "Shiva", "Singer Beta")
         val differentA = topic("diff_a", "Kesariya", "Arijit Singh")
         val differentB = topic("diff_b", "Baarish", "Atif Aslam")
+        val shortHindiA = topic("short_a", "Tu Hi Hai", "Arijit Singh")
+        val shortHindiB = topic("short_b", "Jo Hai", "Atif Aslam")
 
         assertTrue(RecordingIdentityResolver.isSameCompositionTitle(honorific, bare))
         assertFalse(RecordingIdentityResolver.isSameCompositionTitle(differentA, differentB))
+        assertFalse(RecordingIdentityResolver.isSameCompositionTitle(shortHindiA, shortHindiB))
     }
 }
