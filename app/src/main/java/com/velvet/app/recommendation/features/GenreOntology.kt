@@ -90,6 +90,7 @@ object GenreOntology {
         "rap" to HIP_HOP,
         "hip-hop & rap" to HIP_HOP,
         "hip hop & rap" to HIP_HOP,
+        "indian indie" to INDIAN_INDIE,
         "indian_indie" to INDIAN_INDIE,
         "western pop" to WESTERN_POP,
         "indian classical" to INDIAN_CLASSICAL,
