@@ -206,14 +206,14 @@ class HomeRecommendationComposer(
             if (tasteProfile != null) {
                 score += (tasteProfile.longTerm.recordingWeights[recId] ?: 0.0) * 0.45
                 score += (tasteProfile.mediumTerm.recordingWeights[recId] ?: 0.0) * 0.35
-                score += (tasteProfile.shortTerm.recordingWeights[recId] ?: 0.0) * 0.25
+                score += (tasteProfile.session.recordingWeights[recId] ?: 0.0) * 0.25
 
                 val genreFit = feat.genreIds.entries.maxOfOrNull { (g, c) ->
                     ((tasteProfile.mediumTerm.genreWeights[g] ?: 0.0) * 0.55 +
                         (tasteProfile.longTerm.genreWeights[g] ?: 0.0) * 0.45) * c
                 } ?: 0.0
                 val moodFit = feat.moodIds.entries.maxOfOrNull { (m, c) ->
-                    ((tasteProfile.shortTerm.moodWeights[m] ?: 0.0) * 0.55 +
+                    ((tasteProfile.session.moodWeights[m] ?: 0.0) * 0.55 +
                         (tasteProfile.mediumTerm.moodWeights[m] ?: 0.0) * 0.45) * c
                 } ?: 0.0
                 score += 0.28 * genreFit + 0.20 * moodFit
