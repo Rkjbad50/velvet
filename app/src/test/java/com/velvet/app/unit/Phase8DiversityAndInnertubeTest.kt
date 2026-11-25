@@ -1,6 +1,7 @@
 package com.velvet.app.unit
 
 import com.grack.nanojson.JsonParser
+import com.velvet.app.data.LibraryData
 import com.velvet.app.data.Song
 import com.velvet.app.data.YouTubeMusicInnertube
 import com.velvet.app.recommendation.candidates.CandidatePoolBuilder
@@ -52,6 +53,7 @@ class Phase8DiversityAndInnertubeTest {
         )
         val profileRepo = DefaultUserProfileRepository(
             eventRepository = RecommendationEventRepository(backend = InMemoryEventBackend()),
+            libraryDataProvider = { LibraryData() },
         )
         return DefaultRecommendationEngine(pool, profileRepo)
     }
@@ -229,7 +231,7 @@ class Phase8DiversityAndInnertubeTest {
         assertEquals("Sacred Chants", accepted.album)
         assertEquals(405L, accepted.durationSec)
         assertTrue(accepted.isYouTubeMusicCatalog)
-        assertTrue(accepted.thumb.contains("=w544-h544"))
+        assertTrue(accepted.thumb?.contains("=w544-h544") == true)
     }
 
     @Test
