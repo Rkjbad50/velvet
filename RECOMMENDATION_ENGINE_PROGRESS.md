@@ -396,7 +396,7 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
 - **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`9f2b5ca`).
 
 ### v1.1 Production Release — Sub-Millisecond Autoplay Queue, Resilient Live Radio & Safe-Area Dialog Layout
-- **Status:** **Code Ready — Pending CI Verification & Release Publish**
+- **Status:** **Code & CI Verification Complete** (`main` @ `5fdeefc`)
 - **Scope Implemented:**
   - **Instant Sub-Millisecond Autoplay Queue Population (`InstantTrackCatalog.kt`, `PlayerConnection.kt`, `HomeScreen.kt`, `SearchScreen.kt`, `CollectionScreens.kt`, `VelvetApp.kt`):**
     - Introduced `InstantTrackCatalog` (`MAX_ENTRIES = 500`, synced passively across Home shelves, Search results/pagination, Album views, Library tracks, Playback start, and cached Related responses) plus `InstantTrackCatalogCandidateSource` (`g0_instant_catalog`).
@@ -404,5 +404,11 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
     - Exposed `PlayerConnection.isAutoplayLoading`, added interactive **Retry** recovery in `NowPlaying.kt`'s `QueueSheet`, relaxed stale `queueVersion` drops for active-seed refills, added `StreamResolver.peekRelated` and direct InnerTube/Related rescue fallback when `AutoplayRefillCoordinator` hits transient `SafeEmpty`/`EXHAUSTED`, and ensured `MUSIC_VIDEO_TYPE_ATV` items in `YouTubeMusicInnertube` retain verified catalog status even when thumbnail JSON lacks explicit dimensions.
   - **Safe-Area Bounded Settings & Modal Dialogs (`Components.kt`, `SettingsScreen.kt`):**
     - Added `.systemBarsPadding()`, `.displayCutoutPadding()`, `.imePadding()`, and conservative `(maxHeight * 0.88f - 28.dp).coerceIn(220.dp, 640.dp)` bounds inside `VelvetDialogOverlayShell`, paired with compact `heightIn(max = 320.dp)` scroll framing in `MusicLanguagesDialog` so dialog bottom borders and action buttons never clip behind navigation bars on compact OEM devices.
-  - **Repo & Release Hygiene (`app/build.gradle.kts`, `README.md`):**
-    - Promoted `versionName` to `"1.1"`, cleaned `README.md` for official release `v1.1`, preserved `v2.7.5` as `v1.0-beta`, and retired earlier `v2.x` releases/tags.
+  - **Repo & Release Hygiene (`app/build.gradle.kts`, `README.md`, `docs/`):**
+    - Promoted `versionName` to `"1.1"`, cleaned `README.md` & docs for official release `v1.1`, preserved `v2.7.5` (`01a7777`) as `v1.0-beta`, and retired obsolete `v2.x` releases/tags.
+- **CI/CD Verification (`main` @ `5fdeefc`):**
+  - **Run ID:** `45606632824` (`Build & Verify (CI)` job `139179071793`, `BUILD_NUMBER=243`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 5m 7s**, `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **321 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest > streamFetch`), **0 FAILED** — including new suites in `Phase8DiversityAndInnertubeTest.kt` and `OriginMotionAndNavTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; physical OEM device dialog insets and live carrier network speeds await on-device confirmation.
+- **Beta Baseline Tag:** `v1.0-beta` (`01a7777`, originally `v2.7.5`).
