@@ -1483,7 +1483,8 @@ fun VelvetModalSheet(
         }
     }
     val sheetScope = remember { VelvetSheetScope(hideAndRun) }
-    val origin = remember { LocalOriginRegistry.current?.consumeBestOrigin() }
+    val registry = LocalOriginRegistry.current
+    val origin = remember { registry?.consumeBestOrigin() }
     var sheetW by remember { mutableFloatStateOf(0f) }
     val reveal = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
