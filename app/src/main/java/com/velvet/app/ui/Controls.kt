@@ -1,20 +1,18 @@
 package com.velvet.app.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -32,10 +30,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,10 +87,10 @@ fun PanelIconButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.88f else 1.0f,
+        targetValue = if (isPressed) 0.90f else 1.0f,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow,
+            dampingRatio = 0.88f,
+            stiffness = 480f,
         ),
         label = "panelIconScale",
     )
@@ -136,10 +136,10 @@ fun AccentCircleButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) 0.88f else 1.0f,
+        targetValue = if (isPressed && enabled) 0.90f else 1.0f,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow,
+            dampingRatio = 0.88f,
+            stiffness = 480f,
         ),
         label = "accentCircleScale",
     )
@@ -203,18 +203,93 @@ private fun rememberSmoothSeekFraction(
     progress: Float,
     dragFraction: Float?,
 ): Float {
-    val target = (dragFraction ?: progress).coerceIn(0f, 1f)
-    val smooth = remember(songId) { Animatable(target) }
-    LaunchedEffect(songId, dragFraction, target) {
+    val clampedProgress = SeekbarMath.clampFraction(progress)
+    val smooth = remember(songId) { Animatable(clampedProgress) }
+    LaunchedEffect(songId, clampedProgress, dragFraction) {
         if (dragFraction != null) {
-            smooth.snapTo(target)
-        } else if (kotlin.math.abs(target - smooth.value) > 0.04f) {
-            smooth.animateTo(target, spring(dampingRatio = 0.84f, stiffness = 560f))
+            smooth.snapTo(SeekbarMath.clampFraction(dragFraction))
         } else {
-            smooth.animateTo(target, tween(durationMillis = 240, easing = LinearEasing))
+            val delta = kotlin.math.abs(clampedProgress - smooth.value)
+            when {
+                delta > 0.03f -> smooth.animateTo(
+                    clampedProgress,
+                    spring(dampingRatio = 0.92f, stiffness = 460f),
+                )
+                delta > 0.0005f -> smooth.animateTo(
+                    clampedProgress,
+                    tween(durationMillis = 110, easing = LinearEasing),
+                )
+                else -> smooth.snapTo(clampedProgress)
+            }
         }
     }
-    return smooth.value.coerceIn(0f, 1f)
+    return dragFraction?.let(SeekbarMath::clampFraction) ?: smooth.value.coerceIn(0f, 1f)
+}
+
+@Composable
+private fun Modifier.seekBarPointerInput(
+    songId: String,
+    onDragFraction: (Float?) -> Unit,
+    onSeekPreview: (Float?) -> Unit,
+    onSeekCommit: (Float) -> Unit,
+): Modifier {
+    val latestDrag by rememberUpdatedState(onDragFraction)
+    val latestPreview by rememberUpdatedState(onSeekPreview)
+    val latestCommit by rememberUpdatedState(onSeekCommit)
+    return pointerInput(songId) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val widthPx = size.width.toFloat().coerceAtLeast(1f)
+            fun frac(x: Float) = (x / widthPx).coerceIn(0f, 1f)
+
+            val slop = viewConfiguration.touchSlop * 0.65f
+            var dragActive = false
+            var latestFraction = frac(down.position.x)
+
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id }
+                if (change == null) {
+                    latestDrag(null)
+                    latestPreview(null)
+                    break
+                }
+                if (!change.pressed) {
+                    latestDrag(null)
+                    latestPreview(null)
+                    latestCommit(latestFraction)
+                    break
+                }
+                if (change.isConsumed) {
+                    latestDrag(null)
+                    latestPreview(null)
+                    break
+                }
+
+                val dx = kotlin.math.abs(change.position.x - down.position.x)
+                val dy = kotlin.math.abs(change.position.y - down.position.y)
+                if (!dragActive) {
+                    if (dy > slop * 1.4f && dy > dx * 1.6f) {
+                        latestDrag(null)
+                        latestPreview(null)
+                        break
+                    }
+                    if (dx >= slop * 0.45f) {
+                        dragActive = true
+                        latestFraction = frac(change.position.x)
+                        latestDrag(latestFraction)
+                        latestPreview(latestFraction)
+                        change.consume()
+                    }
+                } else {
+                    latestFraction = frac(change.position.x)
+                    latestDrag(latestFraction)
+                    latestPreview(latestFraction)
+                    change.consume()
+                }
+            }
+        }
+    }
 }
 
 /** OneUI-style wavy / squiggly seekbar with smooth 120Hz playhead glide and circular handle. */
@@ -232,33 +307,34 @@ fun WavySeekBar(
     onSeekPreview: (Float?) -> Unit = {},
 ) {
     val currentOnSeek by rememberUpdatedState(onSeek)
-    val currentOnPreview by rememberUpdatedState(onSeekPreview)
     var dragFraction by remember(songId) { mutableStateOf<Float?>(null) }
     val shown = rememberSmoothSeekFraction(songId, progress, dragFraction)
     val isDragging = dragFraction != null
     val thumbScale by animateFloatAsState(
-        targetValue = if (isDragging) 1.32f else 1f,
+        targetValue = if (isDragging) 1.30f else 1f,
         animationSpec = VelvetPopupMotion.sliderSpring,
         label = "seekThumbScale",
     )
     val haloAlpha by animateFloatAsState(
         targetValue = if (isDragging) 0.44f else 0.28f,
-        animationSpec = tween(durationMillis = 140),
+        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
         label = "seekHaloAlpha",
     )
-
-    val transition = rememberInfiniteTransition(label = "wave")
-    val phase by if (isPlaying) {
-        transition.animateFloat(
-            initialValue = 0f,
-            targetValue = (2 * Math.PI).toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1400, easing = LinearEasing)
-            ),
-            label = "wavePhase"
-        )
-    } else {
-        remember { mutableStateOf(0f) }
+    val activePulse by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+        label = "seekDotActivePulse",
+    )
+    var phase by remember(songId) { mutableFloatStateOf(0f) }
+    LaunchedEffect(songId, isPlaying) {
+        if (!isPlaying) return@LaunchedEffect
+        var lastNs = withFrameNanos { it }
+        while (true) {
+            val nowNs = withFrameNanos { it }
+            val dtSec = ((nowNs - lastNs).coerceIn(0L, 64_000_000L)) / 1_000_000_000f
+            lastNs = nowNs
+            phase = ((phase + dtSec * ((2f * Math.PI.toFloat()) / 1.4f)) % (2f * Math.PI.toFloat()))
+        }
     }
 
     Canvas(
@@ -272,27 +348,12 @@ fun WavySeekBar(
                     true
                 }
             }
-            .pointerInput(songId) {
-                detectTapGestures { offset -> currentOnSeek((offset.x / size.width).coerceIn(0f, 1f)) }
-            }
-            .pointerInput(songId) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        dragFraction?.let(currentOnSeek)
-                        dragFraction = null
-                        currentOnPreview(null)
-                    },
-                    onDragCancel = {
-                        dragFraction = null
-                        currentOnPreview(null)
-                    },
-                ) { change, _ ->
-                    change.consume()
-                    val f = (change.position.x / size.width).coerceIn(0f, 1f)
-                    dragFraction = f
-                    currentOnPreview(f)
-                }
-            },
+            .seekBarPointerInput(
+                songId = songId,
+                onDragFraction = { dragFraction = it },
+                onSeekPreview = onSeekPreview,
+                onSeekCommit = onSeek,
+            ),
     ) {
         val width = size.width
         val height = size.height
@@ -361,7 +422,7 @@ fun WavySeekBar(
                             center = Offset(dotX, centerY),
                         )
                         if (isNearest) {
-                            val pulse = if (isPlaying) (1f + 0.35f * kotlin.math.sin(phase.toDouble()).toFloat()) else 1.2f
+                            val pulse = 1.08f + (0.28f * kotlin.math.sin(phase.toDouble()).toFloat()) * activePulse
                             drawCircle(
                                 color = Color.White,
                                 radius = dotRadius * pulse * 0.8f,
@@ -434,9 +495,7 @@ fun SegmentedSeekBar(
     onSeek: (Float) -> Unit,
     onSeekPreview: (Float?) -> Unit = {},
 ) {
-    // the gesture handlers live across recompositions: always call the latest callbacks
     val currentOnSeek by rememberUpdatedState(onSeek)
-    val currentOnPreview by rememberUpdatedState(onSeekPreview)
     var dragFraction by remember(songId) { mutableStateOf<Float?>(null) }
     val shown = rememberSmoothSeekFraction(songId, progress, dragFraction)
     val activeHeightBoost by animateFloatAsState(
@@ -456,27 +515,12 @@ fun SegmentedSeekBar(
                     true
                 }
             }
-            .pointerInput(songId) {
-                detectTapGestures { offset -> currentOnSeek((offset.x / size.width).coerceIn(0f, 1f)) }
-            }
-            .pointerInput(songId) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        dragFraction?.let(currentOnSeek)
-                        dragFraction = null
-                        currentOnPreview(null)
-                    },
-                    onDragCancel = {
-                        dragFraction = null
-                        currentOnPreview(null)
-                    },
-                ) { change, _ ->
-                    change.consume()
-                    val f = (change.position.x / size.width).coerceIn(0f, 1f)
-                    dragFraction = f
-                    currentOnPreview(f)
-                }
-            },
+            .seekBarPointerInput(
+                songId = songId,
+                onDragFraction = { dragFraction = it },
+                onSeekPreview = onSeekPreview,
+                onSeekCommit = onSeek,
+            ),
     ) {
         val segments = 20
         val filled = (shown * segments).roundToInt().coerceIn(0, segments)

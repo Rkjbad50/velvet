@@ -61,6 +61,8 @@ object PlayerConnection {
         private set
     var isPlaying by mutableStateOf(false)
         private set
+    var playWhenReady by mutableStateOf(false)
+        private set
     var isBuffering by mutableStateOf(false)
         private set
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
@@ -69,6 +71,11 @@ object PlayerConnection {
         private set
     var savedInitialPositionMs by mutableLongStateOf(0L)
         private set
+    private var optimisticPlayState: Boolean? = null
+    private var optimisticPlayUntilMs: Long = 0L
+    private var pendingSeekTargetMs: Long? = null
+    private var pendingSeekUntilMs: Long = 0L
+    private fun monoNowMs(): Long = System.nanoTime() / 1_000_000L
     var error by mutableStateOf<String?>(null)
     var brokenStreamingBanner by mutableStateOf<String?>(null)
         private set
@@ -232,12 +239,19 @@ object PlayerConnection {
     /** Always 0: the current item is always the first element of [queue]. */
     val index: Int get() = 0
 
-    private fun syncQueueState() {
+    private fun syncQueueState(resetPositionOnTrackChange: Boolean = true) {
+        val previousId = current?.id
         queueState = queueManager.state
         current = queueManager.current
         shuffle = queueManager.shuffle
         shuffleMode = queueManager.shuffleMode
         queue = queueManager.visibleQueue
+        if (resetPositionOnTrackChange && current?.id != previousId) {
+            savedInitialPositionMs = 0L
+            pendingSeekTargetMs = null
+            pendingSeekUntilMs = 0L
+            durationMs = (current?.durationSec?.times(1000L)?.coerceAtLeast(0L) ?: 0L)
+        }
     }
 
     private fun syncToExoPlayer(
@@ -389,37 +403,80 @@ object PlayerConnection {
     private fun syncBasicState(p: Player) {
         val exoCurrent = p.currentMediaItem?.toSong()
         if (exoCurrent != null && exoCurrent.id != current?.id) {
-            trackStartedAt = System.currentTimeMillis()
-            lastRecordedEventSongId = null
-            if (queueManager.current?.id != exoCurrent.id) {
+            if (queueManager.current == null) {
+                trackStartedAt = System.currentTimeMillis()
+                lastRecordedEventSongId = null
+                savedInitialPositionMs = 0L
+                pendingSeekTargetMs = null
+                pendingSeekUntilMs = 0L
+                current = exoCurrent
+            } else if (queueManager.current?.id != exoCurrent.id) {
                 if (queueManager.userQueue.firstOrNull()?.song?.id == exoCurrent.id ||
                     queueManager.upNext.firstOrNull()?.song?.id == exoCurrent.id) {
+                    trackStartedAt = System.currentTimeMillis()
+                    lastRecordedEventSongId = null
                     queueManager.advance()
                     syncQueueState()
                     syncToExoPlayer()
-                } else {
-                    current = exoCurrent
                 }
+                // Otherwise ignore stale pre-transition events while ExoPlayer catches up to queueManager.current
             }
             if (queueManager.upNext.size <= 4) {
-                StreamResolver.prefetchRelated(queueManager.upNext.lastOrNull()?.song ?: exoCurrent)
+                StreamResolver.prefetchRelated(queueManager.upNext.lastOrNull()?.song ?: (queueManager.current ?: exoCurrent))
             }
         }
         val isAutoplayOn = VelvetApp.library.data.value.autoplay || isRadioActive
         if (isAutoplayOn && queueManager.upNext.size < 4) {
             checkAndExtendAutoplay()
         }
-        isPlaying = p.isPlaying
-        isBuffering = p.playbackState == Player.STATE_BUFFERING
-        durationMs = if (p.duration > 0L) p.duration else (current?.durationSec?.times(1000L)?.coerceAtLeast(0L) ?: 0L)
-        repeatMode = p.repeatMode
-        if (p.currentPosition > 0L) {
-            savedInitialPositionMs = p.currentPosition
-            if (p.isPlaying && exoCurrent != null) {
-                VelvetApp.eventRecorderOrNull()?.onPlaybackProgress(exoCurrent.id, p.currentPosition, durationMs)
-            }
+
+        val nowMs = monoNowMs()
+        val exoPlayIntended = p.playWhenReady && p.playbackState != Player.STATE_ENDED
+        val activeOpt = optimisticPlayState?.takeIf { nowMs < optimisticPlayUntilMs }
+        if (optimisticPlayState != null && (nowMs >= optimisticPlayUntilMs || exoPlayIntended == optimisticPlayState)) {
+            optimisticPlayState = null
         }
-        if (!p.isPlaying && p.currentPosition > 0L) {
+        val effectiveOpt = if (optimisticPlayState != null && nowMs < optimisticPlayUntilMs) optimisticPlayState else activeOpt
+        val displayedPlaying = PlaybackControlSync.resolveDisplayedPlaying(
+            exoIsPlaying = p.isPlaying,
+            exoPlayWhenReady = p.playWhenReady,
+            exoPlaybackState = p.playbackState,
+            stateEnded = Player.STATE_ENDED,
+            stateBuffering = Player.STATE_BUFFERING,
+            optimisticPlay = effectiveOpt,
+        )
+        playWhenReady = effectiveOpt ?: exoPlayIntended
+        isPlaying = displayedPlaying
+        isBuffering = PlaybackControlSync.resolveDisplayedBuffering(
+            exoPlaybackState = p.playbackState,
+            stateBuffering = Player.STATE_BUFFERING,
+            displayedPlaying = displayedPlaying,
+            exoIsPlaying = p.isPlaying,
+        )
+
+        val liveDur = p.duration
+        if (liveDur > 0L) {
+            durationMs = liveDur
+        } else if (durationMs <= 0L) {
+            durationMs = current?.durationSec?.times(1000L)?.coerceAtLeast(0L) ?: 0L
+        }
+        repeatMode = p.repeatMode
+
+        val posSync = PlaybackControlSync.reconcilePositionMs(
+            rawPosMs = p.currentPosition,
+            pendingSeekMs = pendingSeekTargetMs,
+            pendingUntilMs = pendingSeekUntilMs,
+            nowMs = nowMs,
+            savedPosMs = savedInitialPositionMs,
+            hasMediaItems = p.mediaItemCount > 0,
+            isPlayActive = p.isPlaying || exoPlayIntended,
+        )
+        if (posSync.clearPendingSeek) pendingSeekTargetMs = null
+        savedInitialPositionMs = posSync.savedPositionMs
+        if (p.isPlaying && exoCurrent != null && exoCurrent.id == current?.id && posSync.positionMs > 0L) {
+            VelvetApp.eventRecorderOrNull()?.onPlaybackProgress(exoCurrent.id, posSync.positionMs, durationMs)
+        }
+        if (!p.isPlaying && !exoPlayIntended && posSync.positionMs > 0L) {
             persistState()
         }
     }
@@ -472,7 +529,7 @@ object PlayerConnection {
         } else if (saved.shuffleMode == ShuffleMode.SMART && isUserPlaylistActive) {
             queueManager.setShuffleMode(ShuffleMode.SMART, allowSmartShuffle = true)
         }
-        syncQueueState()
+        syncQueueState(resetPositionOnTrackChange = false)
 
         c?.let { controller ->
             QueueExoAdapter.syncToExoPlayer(
@@ -572,6 +629,14 @@ object PlayerConnection {
                 )
             }
         }
+
+        savedInitialPositionMs = 0L
+        pendingSeekTargetMs = null
+        pendingSeekUntilMs = 0L
+        optimisticPlayState = true
+        optimisticPlayUntilMs = monoNowMs() + 750L
+        playWhenReady = true
+        isPlaying = true
 
         syncQueueState()
         syncToExoPlayer(playlistStart = start, isRadio = radio)
@@ -826,15 +891,39 @@ object PlayerConnection {
     }
 
     fun togglePlay() = withController { c ->
-        if (c.isPlaying) {
+        val nowMs = monoNowMs()
+        val activeOpt = optimisticPlayState?.takeIf { nowMs < optimisticPlayUntilMs }
+        val shouldPause = PlaybackControlSync.shouldPauseOnToggle(
+            optimisticPlay = activeOpt,
+            playWhenReady = c.playWhenReady,
+            playbackState = c.playbackState,
+            isPlaying = c.isPlaying,
+            stateEnded = Player.STATE_ENDED,
+            stateIdle = Player.STATE_IDLE,
+        )
+        if (shouldPause) {
+            optimisticPlayState = false
+            optimisticPlayUntilMs = nowMs + 450L
+            playWhenReady = false
+            isPlaying = false
+            isBuffering = false
             c.pause()
             persistState()
         } else {
+            optimisticPlayState = true
+            optimisticPlayUntilMs = nowMs + 650L
+            playWhenReady = true
+            isPlaying = true
             if (c.mediaItemCount == 0 && current != null) {
                 syncToExoPlayer(autoPlay = true, startPositionMs = savedInitialPositionMs)
             } else {
                 if (c.playbackState == Player.STATE_IDLE) c.prepare()
-                if (c.playbackState == Player.STATE_ENDED) c.seekToDefaultPosition()
+                if (c.playbackState == Player.STATE_ENDED) {
+                    c.seekToDefaultPosition()
+                    savedInitialPositionMs = 0L
+                    pendingSeekTargetMs = 0L
+                    pendingSeekUntilMs = nowMs + 800L
+                }
                 c.play()
             }
         }
@@ -1156,6 +1245,9 @@ object PlayerConnection {
                     outgoing?.let {
                         VelvetApp.eventRecorderOrNull()?.onManualReplayCurrent(it, pos, dur, currentRepeatLabel())
                     }
+                    savedInitialPositionMs = 0L
+                    pendingSeekTargetMs = 0L
+                    pendingSeekUntilMs = monoNowMs() + 900L
                     c.seekTo(0)
                 }
             }
@@ -1163,18 +1255,22 @@ object PlayerConnection {
     }
 
     fun seekTo(ms: Long) {
+        val clampedMs = ms.coerceAtLeast(0L)
+        val nowMs = monoNowMs()
         val prevPos = controller?.currentPosition ?: savedInitialPositionMs
-        if (prevPos >= 30_000L && ms < 3_000L) {
+        if (prevPos >= 30_000L && clampedMs < 3_000L) {
             current?.let {
                 VelvetApp.eventRecorderOrNull()?.onManualReplayCurrent(it, prevPos, durationMs, currentRepeatLabel())
             }
         }
-        savedInitialPositionMs = ms
+        savedInitialPositionMs = clampedMs
+        pendingSeekTargetMs = clampedMs
+        pendingSeekUntilMs = nowMs + 1_400L
         withController { c ->
             if (c.mediaItemCount == 0 && current != null) {
-                syncToExoPlayer(autoPlay = false, startPositionMs = ms)
+                syncToExoPlayer(autoPlay = isPlaying || playWhenReady, startPositionMs = clampedMs)
             } else {
-                c.seekTo(ms)
+                c.seekTo(clampedMs)
             }
             persistState()
         }
@@ -1211,7 +1307,49 @@ object PlayerConnection {
     }
 
     fun positionMs(): Long {
-        val pos = controller?.currentPosition ?: 0L
-        return if (pos > 0L) pos else savedInitialPositionMs
+        val c = controller
+        val nowMs = monoNowMs()
+        if (c != null) {
+            val liveDur = c.duration
+            if (liveDur > 0L && liveDur != durationMs) {
+                durationMs = liveDur
+            }
+            val exoPlayIntended = c.playWhenReady && c.playbackState != Player.STATE_ENDED
+            val activeOpt = optimisticPlayState?.takeIf { nowMs < optimisticPlayUntilMs }
+            if (optimisticPlayState != null && (nowMs >= optimisticPlayUntilMs || exoPlayIntended == optimisticPlayState)) {
+                optimisticPlayState = null
+            }
+            if (activeOpt == null) {
+                val livePlaying = PlaybackControlSync.resolveDisplayedPlaying(
+                    exoIsPlaying = c.isPlaying,
+                    exoPlayWhenReady = c.playWhenReady,
+                    exoPlaybackState = c.playbackState,
+                    stateEnded = Player.STATE_ENDED,
+                    stateBuffering = Player.STATE_BUFFERING,
+                    optimisticPlay = null,
+                )
+                if (livePlaying != isPlaying) isPlaying = livePlaying
+                playWhenReady = exoPlayIntended
+                val liveBuffering = PlaybackControlSync.resolveDisplayedBuffering(
+                    exoPlaybackState = c.playbackState,
+                    stateBuffering = Player.STATE_BUFFERING,
+                    displayedPlaying = livePlaying,
+                    exoIsPlaying = c.isPlaying,
+                )
+                if (liveBuffering != isBuffering) isBuffering = liveBuffering
+            }
+        }
+        val sync = PlaybackControlSync.reconcilePositionMs(
+            rawPosMs = c?.currentPosition,
+            pendingSeekMs = pendingSeekTargetMs,
+            pendingUntilMs = pendingSeekUntilMs,
+            nowMs = nowMs,
+            savedPosMs = savedInitialPositionMs,
+            hasMediaItems = (c?.mediaItemCount ?: 0) > 0,
+            isPlayActive = (c?.isPlaying == true) || (c?.playWhenReady == true && c.playbackState != Player.STATE_ENDED),
+        )
+        if (sync.clearPendingSeek) pendingSeekTargetMs = null
+        savedInitialPositionMs = sync.savedPositionMs
+        return sync.positionMs
     }
 }

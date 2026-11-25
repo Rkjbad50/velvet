@@ -576,11 +576,11 @@ fun SongActionsSheet(request: SongMenuRequest, onDismiss: () -> Unit) {
         AnimatedContent(
             targetState = pickingPlaylist,
             transitionSpec = {
-                (slideInVertically(initialOffsetY = { it / 8 }, animationSpec = tween(180, easing = FastOutSlowInEasing)) +
-                    fadeIn(tween(160)))
+                (slideInVertically(initialOffsetY = { it / 10 }, animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                    fadeIn(tween(200, easing = FastOutSlowInEasing)))
                     .togetherWith(
-                        slideOutVertically(targetOffsetY = { -it / 10 }, animationSpec = tween(120, easing = FastOutSlowInEasing)) +
-                            fadeOut(tween(110)),
+                        slideOutVertically(targetOffsetY = { -it / 12 }, animationSpec = tween(180, easing = FastOutSlowInEasing)) +
+                            fadeOut(tween(160, easing = FastOutSlowInEasing)),
                     )
             },
             label = "songSheetContent",
@@ -1187,9 +1187,9 @@ object VelvetPopupMotion {
     val DialogShape = RoundedCornerShape(24.dp)
     val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val MenuShape = RoundedCornerShape(16.dp)
-    val enterSpring = spring<Float>(dampingRatio = 0.80f, stiffness = 540f)
-    val exitTween = tween<Float>(durationMillis = 150, easing = FastOutSlowInEasing)
-    val sliderSpring = spring<Float>(dampingRatio = 0.76f, stiffness = 620f)
+    val enterSpring = spring<Float>(dampingRatio = 0.90f, stiffness = 380f)
+    val exitTween = tween<Float>(durationMillis = 210, easing = FastOutSlowInEasing)
+    val sliderSpring = spring<Float>(dampingRatio = 0.88f, stiffness = 460f)
 }
 
 class VelvetDialogScope internal constructor(
@@ -1515,10 +1515,10 @@ fun VelvetModalSheet(
                 .graphicsLayer {
                     val p = reveal.value.coerceIn(0f, 1.04f)
                     val clamped = p.coerceIn(0f, 1f)
-                    alpha = 0.72f + 0.28f * clamped
-                    translationY = (1f - p) * 14.dp.toPx()
+                    alpha = 0.35f + 0.65f * clamped
+                    translationY = (1f - p) * 18.dp.toPx()
                     if (origin != null && origin.isValid && sheetW > 0f) {
-                        translationX = (origin.centerX - sheetW * 0.5f) * 0.10f * (1f - clamped)
+                        translationX = (origin.centerX - sheetW * 0.5f) * 0.08f * (1f - clamped)
                     }
                     val s = 0.96f + 0.04f * p
                     scaleX = s

@@ -247,14 +247,14 @@ private fun AppRoot() {
             if (isPlayerOpen) {
                 renderNowPlaying = true
                 interactiveMinimize = 0f
-                playerOpenAnim.animateTo(1f, OriginTransformCalculator.windowOpenSpring)
+                playerOpenAnim.animateTo(1f, spring(dampingRatio = 0.92f, stiffness = 360f))
             } else {
                 if (interactiveMinimize > 0f) {
                     val remaining = (1f - interactiveMinimize).coerceIn(0f, 1f)
                     playerOpenAnim.snapTo(remaining * playerOpenAnim.value)
                     interactiveMinimize = 0f
                 }
-                playerOpenAnim.animateTo(0f, OriginTransformCalculator.windowCloseSpring)
+                playerOpenAnim.animateTo(0f, spring(dampingRatio = 0.95f, stiffness = 380f))
                 renderNowPlaying = false
             }
         }
@@ -341,11 +341,11 @@ private fun AppRoot() {
                     .align(Alignment.BottomCenter)
                     .graphicsLayer {
                         val p = playerExpandFraction
-                        val scale = 1f - 0.05f * p
+                        val scale = 1f - 0.04f * p
                         scaleX = scale
                         scaleY = scale
-                        translationY = -12.dp.toPx() * p
-                        alpha = (1f - p * 1.55f).coerceIn(0f, 1f)
+                        translationY = -10.dp.toPx() * p
+                        alpha = (1f - p * 1.35f).coerceIn(0f, 1f)
                     }
                     .background(velvetColors.background)
                     .navigationBarsPadding(),
@@ -591,8 +591,8 @@ private fun PersistentRootTabs(
             glideAnim.snapTo(0f)
             glideAnim.animateTo(
                 targetValue = 1f,
-                // Crisp jelly-smooth gliding spring: snappy settle (~180ms), silky motion, zero sluggishness
-                animationSpec = spring(dampingRatio = 0.78f, stiffness = 620f),
+                // Critically-damped fluid gliding spring: silky transition without brittle bounce
+                animationSpec = spring(dampingRatio = 0.92f, stiffness = 420f),
             )
             outgoingTab = activeTab
         }
@@ -608,22 +608,22 @@ private fun PersistentRootTabs(
                 val isIncoming = tabIndex == settledTab
                 val isOutgoing = isTransitioning && tabIndex == outgoingTab
                 val slotAlpha = when {
-                    isIncoming && isTransitioning -> (0.25f + 0.75f * p).coerceIn(0f, 1f)
+                    isIncoming && isTransitioning -> p.coerceIn(0f, 1f)
                     isIncoming -> 1f
                     isOutgoing -> (1f - p * 1.15f).coerceIn(0f, 1f)
                     else -> 0f
                 }
                 val slotScale = when {
-                    isIncoming && isTransitioning -> 0.968f + 0.032f * p
+                    isIncoming && isTransitioning -> 0.976f + 0.024f * p
                     isIncoming -> 1f
-                    isOutgoing -> 1f - 0.032f * p
+                    isOutgoing -> 1f - 0.024f * p
                     else -> 1f
                 }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            val travelPx = size.width * 0.32f
+                            val travelPx = size.width * 0.20f
                             translationX = when {
                                 isIncoming && isTransitioning -> directionSign * travelPx * (1f - p)
                                 isOutgoing -> -directionSign * travelPx * 0.55f * p
@@ -676,12 +676,12 @@ private fun BottomTabs(selected: Int, onSelect: (Int) -> Unit) {
             val active = i == selected
             val background by animateColorAsState(
                 if (active) velvetColors.surface else velvetColors.background,
-                tween(160),
+                tween(220, easing = FastOutSlowInEasing),
                 label = "tabBackground",
             )
             val tint by animateColorAsState(
                 if (active) velvetColors.accentText else velvetColors.muted,
-                tween(160),
+                tween(220, easing = FastOutSlowInEasing),
                 label = "tabContent",
             )
             Column(

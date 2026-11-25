@@ -90,13 +90,15 @@ fun RadioNotificationBanner(
     AnimatedVisibility(
         visible = bannerState != null,
         enter = slideInVertically(
-            initialOffsetY = { -it - 60 },
-            animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f)
-        ) + fadeIn(tween(200)) + scaleIn(initialScale = 0.90f, animationSpec = spring(dampingRatio = 0.80f, stiffness = 500f)),
+            initialOffsetY = { -it - 48 },
+            animationSpec = spring(dampingRatio = 0.88f, stiffness = 380f),
+        ) + fadeIn(tween(240, easing = FastOutSlowInEasing)) +
+            scaleIn(initialScale = 0.94f, animationSpec = spring(dampingRatio = 0.90f, stiffness = 400f)),
         exit = slideOutVertically(
-            targetOffsetY = { -it - 60 },
-            animationSpec = tween(180, easing = FastOutSlowInEasing)
-        ) + fadeOut(tween(160)) + scaleOut(targetScale = 0.92f, animationSpec = tween(160)),
+            targetOffsetY = { -it - 48 },
+            animationSpec = tween(220, easing = FastOutSlowInEasing),
+        ) + fadeOut(tween(200, easing = FastOutSlowInEasing)) +
+            scaleOut(targetScale = 0.95f, animationSpec = tween(200, easing = FastOutSlowInEasing)),
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()

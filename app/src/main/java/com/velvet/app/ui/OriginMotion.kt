@@ -118,8 +118,9 @@ data class OriginTransformSpec(
 
 object OriginTransformCalculator {
 
-    val windowOpenSpring = spring<Float>(dampingRatio = 0.85f, stiffness = 460f)
-    val windowCloseSpring = spring<Float>(dampingRatio = 0.92f, stiffness = 540f)
+    // Silky critically-damped fluid springs: smooth organic glide without sharp snap or overshoot jerk
+    val windowOpenSpring = spring<Float>(dampingRatio = 0.92f, stiffness = 360f)
+    val windowCloseSpring = spring<Float>(dampingRatio = 0.95f, stiffness = 400f)
 
     fun compute(
         origin: NavOrigin?,
@@ -166,11 +167,11 @@ object OriginTransformCalculator {
         val startCornerDp = (visualOriginCorner / startScale.coerceAtLeast(0.18f)).coerceIn(24f, 120f)
         val cornerDp = targetCornerDp + (startCornerDp - targetCornerDp) * rem
 
-        val shellAlpha = (clamped / 0.14f).coerceIn(0f, 1f)
+        val shellAlpha = (clamped / 0.16f).coerceIn(0f, 1f)
         val contentAlpha = if (isExiting) {
-            ((clamped - 0.24f) / 0.56f).coerceIn(0f, 1f)
+            ((clamped - 0.22f) / 0.62f).coerceIn(0f, 1f)
         } else {
-            ((clamped - 0.05f) / 0.34f).coerceIn(0f, 1f)
+            ((clamped - 0.04f) / 0.34f).coerceIn(0f, 1f)
         }
 
         return OriginTransformSpec(

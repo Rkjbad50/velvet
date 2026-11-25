@@ -119,6 +119,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -183,14 +184,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
-/** Polls the player position while something on screen shows it. */
+/** Polls the live player position smoothly whenever playback controls are visible. */
 @Composable
-private fun rememberPosition(intervalMs: Long = 500): Long {
-    var position by remember { mutableLongStateOf(PlayerConnection.positionMs()) }
-    LaunchedEffect(PlayerConnection.controller, intervalMs) {
+private fun rememberPosition(intervalMs: Long = 140): Long {
+    val songId = PlayerConnection.current?.id
+    val isPlaying = PlayerConnection.isPlaying
+    val controller = PlayerConnection.controller
+    var position by remember(songId) { mutableLongStateOf(PlayerConnection.positionMs()) }
+    LaunchedEffect(controller, songId, isPlaying, intervalMs) {
         while (true) {
             position = PlayerConnection.positionMs()
-            delay(intervalMs)
+            delay(if (isPlaying) intervalMs else maxOf(intervalMs, 240L))
         }
     }
     return position
@@ -222,16 +226,8 @@ fun MiniPlayer(
     onBoundsInRoot: (NavOrigin) -> Unit = {},
 ) {
     val song = PlayerConnection.current ?: return
-    val position = rememberPosition()
-    val duration = PlayerConnection.durationMs
     var dragX by remember { mutableFloatStateOf(0f) }
     var dragUpY by remember { mutableFloatStateOf(0f) }
-    val progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
-    val smoothProgress by animateFloatAsState(
-        targetValue = progress,
-        animationSpec = tween(durationMillis = 220, easing = LinearEasing),
-        label = "miniProgressSmooth",
-    )
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -312,7 +308,7 @@ fun MiniPlayer(
             Crossfade(
                 targetState = song,
                 modifier = Modifier.weight(1f).padding(start = 12.dp),
-                animationSpec = tween(160),
+                animationSpec = tween(220, easing = FastOutSlowInEasing),
                 label = "miniPlayerTrack",
             ) {
                 Column {
@@ -324,35 +320,73 @@ fun MiniPlayer(
             PlayPauseButton(size = 48)
             DockButton(AppIcons.SkipNext, "Next track", iconSize = 22, tint = velvetColors.muted, onClick = PlayerConnection::next)
         }
-        Box(
-            Modifier
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 6.dp)
-                .fillMaxWidth()
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(velvetColors.muted.copy(alpha = 0.2f)),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth(smoothProgress)
-                    .height(3.dp)
-                    .background(Brush.horizontalGradient(listOf(velvetColors.accent, artColor))),
-            )
-        }
+        MiniPlayerProgressBar(artColor = artColor)
     }
 }
 
-/** Shows a spinner while the stream buffers. */
+@Composable
+private fun MiniPlayerProgressBar(artColor: Color) {
+    val songId = PlayerConnection.current?.id.orEmpty()
+    val position = rememberPosition(160)
+    val duration = PlayerConnection.durationMs
+    val targetProgress = SeekbarMath.fractionForPosition(position, duration)
+    val smooth = remember(songId) { Animatable(targetProgress) }
+    LaunchedEffect(songId, targetProgress) {
+        val delta = kotlin.math.abs(targetProgress - smooth.value)
+        if (delta > 0.03f) {
+            smooth.animateTo(targetProgress, spring(dampingRatio = 0.92f, stiffness = 460f))
+        } else if (delta > 0.0005f) {
+            smooth.animateTo(targetProgress, tween(durationMillis = 150, easing = LinearEasing))
+        } else {
+            smooth.snapTo(targetProgress)
+        }
+    }
+    Box(
+        Modifier
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 6.dp)
+            .fillMaxWidth()
+            .height(3.dp)
+            .clip(RoundedCornerShape(2.dp))
+            .background(velvetColors.muted.copy(alpha = 0.2f)),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(smooth.value.coerceIn(0f, 1f))
+                .height(3.dp)
+                .background(Brush.horizontalGradient(listOf(velvetColors.accent, artColor))),
+        )
+    }
+}
+
+/** Shows a subtle spinner when initial buffering stalls, while keeping Play/Pause smoothly animated. */
 @Composable
 private fun PlayPauseButton(size: Int) {
+    val visualState = when {
+        PlayerConnection.isBuffering -> 2
+        PlayerConnection.isPlaying -> 1
+        else -> 0
+    }
     AccentCircleButton(
         if (PlayerConnection.isPlaying) AppIcons.Pause else AppIcons.Play,
         if (PlayerConnection.isPlaying) "Pause" else "Play",
         size = size.dp,
-        content = if (PlayerConnection.isBuffering) {
-            { CircularProgressIndicator(Modifier.size((size * 0.42f).dp), color = velvetColors.onAccent, strokeWidth = 2.5.dp) }
-        } else null,
+        content = {
+            AnimatedContent(
+                targetState = visualState,
+                transitionSpec = {
+                    (fadeIn(tween(150, easing = FastOutSlowInEasing)) + scaleIn(initialScale = 0.85f, animationSpec = tween(160)))
+                        .togetherWith(fadeOut(tween(110, easing = FastOutSlowInEasing)) + scaleOut(targetScale = 0.85f, animationSpec = tween(110)))
+                },
+                label = "miniPlayPauseMorph",
+            ) { state ->
+                when (state) {
+                    2 -> CircularProgressIndicator(Modifier.size((size * 0.42f).dp), color = velvetColors.onAccent, strokeWidth = 2.5.dp)
+                    1 -> Icon(AppIcons.Pause, null, tint = velvetColors.onAccent, modifier = Modifier.size((size * 0.45f).dp))
+                    else -> Icon(AppIcons.Play, null, tint = velvetColors.onAccent, modifier = Modifier.size((size * 0.45f).dp))
+                }
+            }
+        },
         onClick = PlayerConnection::togglePlay,
     )
 }
@@ -431,13 +465,10 @@ fun NowPlayingScreen(
     val hiRes = !settings.dataSaver
     val ultra = settings.eq.ultra
     val quality = rememberQuality(song, hiRes)
-    val position = rememberPosition(250)
-    val duration = PlayerConnection.durationMs
     var lyricsAttempt by remember(song.id) { mutableIntStateOf(0) }
     val lyrics = key(song.id) { rememberLyrics(song, settings.autoLyrics, lyricsAttempt) }
     val requestLyrics: () -> Unit = { lyricsAttempt++ }
 
-    var seekPreview by remember(song.id) { mutableStateOf<Float?>(null) }
     var showQueue by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
@@ -462,7 +493,6 @@ fun NowPlayingScreen(
     val scope = rememberCoroutineScope()
     val pullAnim = remember { Animatable(0f) }
     val dragRangePx = with(LocalDensity.current) { 420.dp.toPx() }.coerceAtLeast(1f)
-    val progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
 
     val openArtist: (() -> Unit)? = song.artistUrl?.let { url ->
         { nav.open(Route.Artist(ArtistRef(url, song.artist))) }
@@ -482,21 +512,24 @@ fun NowPlayingScreen(
             val artColor = rememberArtColor(song.thumb, fallback = accent)
             val isPlaying = PlayerConnection.isPlaying
 
-            // 1. Dynamic Breathing Gradient driven by Cover Art Palette (artColor)
-            val breathTransition = rememberInfiniteTransition(label = "npBreathTransition")
-            val breathPulse by if (isPlaying) {
-                breathTransition.animateFloat(
-                    initialValue = 0.85f,
-                    targetValue = 1.25f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(durationMillis = 2800, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Reverse,
-                    ),
-                    label = "artBreathPulse",
-                )
-            } else {
-                remember { mutableFloatStateOf(1.0f) }
+            // 1. Continuous monotonic breathing bloom (never snaps/resets on pause/play)
+            var breathPhase by remember { mutableFloatStateOf(0f) }
+            LaunchedEffect(isPlaying) {
+                if (!isPlaying) return@LaunchedEffect
+                var lastNs = withFrameNanos { it }
+                while (true) {
+                    val nowNs = withFrameNanos { it }
+                    val dtSec = ((nowNs - lastNs).coerceIn(0L, 64_000_000L)) / 1_000_000_000f
+                    lastNs = nowNs
+                    breathPhase = (breathPhase + dtSec * ((2f * Math.PI.toFloat()) / 5.2f)) % (2f * Math.PI.toFloat())
+                }
             }
+            val breathActive by animateFloatAsState(
+                targetValue = if (isPlaying) 1f else 0f,
+                animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+                label = "artBreathActive",
+            )
+            val breathPulse = 1f + 0.18f * breathActive * kotlin.math.sin(breathPhase.toDouble()).toFloat()
 
             val breathAlpha = (if (isDark) 0.36f else 0.20f) * breathPulse
 
@@ -901,65 +934,14 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(gap))
 
-                // Dynamic Seekbar & Timers (with Plain Text Streaming Resolution Tag in Center)
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
-                ) {
-                    WavySeekBar(
-                        songId = song.id,
-                        progress = progress,
-                        isPlaying = isPlaying,
-                        modifier = Modifier.fillMaxWidth().height(28.dp),
-                        playedColor = accent,
-                        playheadColor = accent,
-                        unplayedColor = accent.copy(alpha = 0.22f),
-                        style = settings.seekbarStyle,
-                        onSeek = { f -> if (duration > 0) PlayerConnection.seekTo((f * duration).toLong()) },
-                        onSeekPreview = { seekPreview = it },
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 2.dp, vertical = 2.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        // Elapsed Time (left)
-                        Text(
-                            formatDuration((seekPreview?.let { (it * duration).toLong() } ?: position) / 1000),
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 12.sp,
-                            ),
-                            color = velvetColors.muted,
-                            modifier = Modifier.align(Alignment.CenterStart),
-                        )
-
-                        // Streaming resolution tag: slimmer weight than surrounding font, locked cleanly at true center
-                        Text(
-                            quality.uppercase(),
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Light,
-                                letterSpacing = 0.85.sp,
-                            ),
-                            color = accent.copy(alpha = 0.88f),
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .clickable { PlayerConnection.setHiRes(!hiRes) },
-                        )
-
-                        // Duration (right)
-                        Text(
-                            formatDuration(duration / 1000),
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 12.sp,
-                            ),
-                            color = velvetColors.muted,
-                            modifier = Modifier.align(Alignment.CenterEnd),
-                        )
-                    }
-                }
+                // Dynamic Seekbar & Timers (decoupled composable so live ticks never recompose full player)
+                SeekbarTimelineSection(
+                    song = song,
+                    quality = quality,
+                    hiRes = hiRes,
+                    accent = accent,
+                    seekbarStyle = settings.seekbarStyle,
+                )
 
                 Spacer(Modifier.height(gap))
 
@@ -989,7 +971,7 @@ fun NowPlayingScreen(
                     containerBackground = velvetColors.background,
                     showScrim = true,
                 ) {
-                    FullLyrics(lyrics, position, onRequest = requestLyrics, onClose = { showLyrics = false })
+                    SyncedLyricsOverlay(lyrics, onRequest = requestLyrics, onClose = { showLyrics = false })
                 }
             }
 
@@ -1003,27 +985,106 @@ fun NowPlayingScreen(
 }
 
 @Composable
+private fun SeekbarTimelineSection(
+    song: Song,
+    quality: String,
+    hiRes: Boolean,
+    accent: Color,
+    seekbarStyle: String,
+) {
+    val position = rememberPosition(120)
+    val duration = PlayerConnection.durationMs
+    val isPlaying = PlayerConnection.isPlaying
+    var seekPreview by remember(song.id) { mutableStateOf<Float?>(null) }
+    val progress = SeekbarMath.fractionForPosition(position, duration)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+    ) {
+        WavySeekBar(
+            songId = song.id,
+            progress = progress,
+            isPlaying = isPlaying,
+            modifier = Modifier.fillMaxWidth().height(42.dp),
+            playedColor = accent,
+            playheadColor = accent,
+            unplayedColor = accent.copy(alpha = 0.22f),
+            style = seekbarStyle,
+            onSeek = { f ->
+                if (duration > 0) PlayerConnection.seekTo(SeekbarMath.positionForFraction(f, duration))
+            },
+            onSeekPreview = { seekPreview = it },
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                formatDuration((seekPreview?.let { SeekbarMath.positionForFraction(it, duration) } ?: position) / 1000),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+                color = velvetColors.muted,
+                modifier = Modifier.align(Alignment.CenterStart),
+            )
+            Text(
+                quality.uppercase(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Light,
+                    letterSpacing = 0.85.sp,
+                ),
+                color = accent.copy(alpha = 0.88f),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clickable { PlayerConnection.setHiRes(!hiRes) },
+            )
+            Text(
+                formatDuration(duration / 1000),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+                color = velvetColors.muted,
+                modifier = Modifier.align(Alignment.CenterEnd),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SyncedLyricsOverlay(
+    lyrics: LyricsState,
+    onRequest: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val position = rememberPosition(160)
+    FullLyrics(lyrics, position, onRequest = onRequest, onClose = onClose)
+}
+
+@Composable
 private fun AudioWaveformVisualizer(
     isPlaying: Boolean,
     accent: Color,
     style: String = "FLUID_WAVE",
     modifier: Modifier = Modifier,
 ) {
-    // Cadence ~120 BPM fluid acoustic wave ripple (2400ms cycle)
-    val beatTransition = rememberInfiniteTransition(label = "fluidBeat")
-    val beatCycle by if (isPlaying) {
-        beatTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = (4 * Math.PI).toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 2400, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart,
-            ),
-            label = "beatCycle",
-        )
-    } else {
-        remember { mutableFloatStateOf(0f) }
+    // Continuous phase accumulator: holds exact phase on Pause and settles wave amplitude smoothly
+    var beatCycle by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(isPlaying) {
+        if (!isPlaying) return@LaunchedEffect
+        var lastNs = withFrameNanos { it }
+        while (true) {
+            val nowNs = withFrameNanos { it }
+            val dtSec = ((nowNs - lastNs).coerceIn(0L, 64_000_000L)) / 1_000_000_000f
+            lastNs = nowNs
+            beatCycle = (beatCycle + dtSec * ((4f * Math.PI.toFloat()) / 2.4f)) % (4f * Math.PI.toFloat())
+        }
     }
+    val waveActivity by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = tween(durationMillis = 340, easing = FastOutSlowInEasing),
+        label = "waveformActivity",
+    )
 
     // Toned down theme accent color for refined luminous acoustic aesthetic
     val tonedAccent = remember(accent) { accent.copy(alpha = 0.85f) }
@@ -1056,6 +1117,9 @@ private fun AudioWaveformVisualizer(
             val height = size.height
             val midY = height / 2f
 
+            val beatBounce = 0.35f +
+                (0.25f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()) * waveActivity
+
             when (style) {
                 "BEAT_BARS" -> {
                     // Modern Studio Symmetrical Equalizer Spectrum Bars (PowerAmp aesthetic)
@@ -1065,11 +1129,7 @@ private fun AudioWaveformVisualizer(
                     val barWidth = ((width * 0.88f - totalSpacing) / barCount).coerceIn(2.5f, 6f)
                     val startX = (width - (barCount * barWidth + totalSpacing)) / 2f
 
-                    val bounce = if (isPlaying) {
-                        0.60f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
-                    } else {
-                        0.35f
-                    }
+                    val bounce = beatBounce
 
                     for (i in 0 until barCount) {
                         val bx = startX + i * (barWidth + spacing)
@@ -1079,7 +1139,7 @@ private fun AudioWaveformVisualizer(
                         val freqPhase1 = beatCycle * 1.6 + i * 0.42
                         val freqPhase2 = beatCycle * 0.85 + i * 0.28
                         val rawFreq = (kotlin.math.sin(freqPhase1) * 0.55 + kotlin.math.cos(freqPhase2) * 0.45).toFloat()
-                        val activity = (0.25f + 0.75f * ((rawFreq + 1f) / 2f)).coerceIn(0.15f, 1f)
+                        val activity = 0.15f + (0.10f + 0.75f * ((rawFreq + 1f) / 2f)).coerceIn(0.15f, 1f) * (0.35f + 0.65f * waveActivity)
 
                         val barHeight = ((height * 0.78f) * envelope * bounce * activity).coerceIn(4f, height * 0.90f)
                         val top = midY - barHeight / 2f
@@ -1105,20 +1165,14 @@ private fun AudioWaveformVisualizer(
                     // Concentric Expanding Radial Acoustic Ripples & Pulsing Sound Particle Sparks
                     val centerX = width / 2f
                     val centerY = midY
-                    val bounce = if (isPlaying) {
-                        0.60f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
-                    } else {
-                        0.35f
-                    }
+                    val bounce = beatBounce
 
                     // 5 Concentric expanding elliptical sonic ripples radiating outward from center
                     val ringCount = 5
                     for (r in 0 until ringCount) {
-                        val ringProgress = if (isPlaying) {
-                            ((beatCycle / (4 * Math.PI.toFloat()) * 2f + r * (1f / ringCount)) % 1f)
-                        } else {
-                            (r + 1f) / (ringCount + 1f)
-                        }
+                        val activeRingProgress = ((beatCycle / (4 * Math.PI.toFloat()) * 2f + r * (1f / ringCount)) % 1f)
+                        val restRingProgress = (r + 1f) / (ringCount + 1f)
+                        val ringProgress = restRingProgress + (activeRingProgress - restRingProgress) * waveActivity
                         val ringW = (width * 0.42f) * ringProgress
                         val ringH = (height * 0.40f) * ringProgress * bounce
                         val ringAlpha = ((1f - ringProgress) * 0.85f * bounce).coerceIn(0.02f, 0.90f)
@@ -1147,14 +1201,11 @@ private fun AudioWaveformVisualizer(
                         val pIdx = p / 2
                         val pNorm = (pIdx + 1f) / (particleCount / 2f + 1f)
                         val px = centerX + side * (width * 0.44f * pNorm)
-                        val particlePulse = if (isPlaying) {
-                            0.45f + 0.55f * kotlin.math.abs(kotlin.math.sin(beatCycle * 1.5 + pIdx * 0.7)).toFloat()
-                        } else {
-                            0.4f
-                        }
+                        val particlePulse = 0.40f +
+                            (0.05f + 0.55f * kotlin.math.abs(kotlin.math.sin(beatCycle * 1.5 + pIdx * 0.7)).toFloat()) * waveActivity
                         val pEnv = (1f - pNorm * 0.7f) * bounce
                         val pAlpha = (pEnv * particlePulse).coerceIn(0.05f, 0.95f)
-                        val py = centerY + (kotlin.math.sin(beatCycle + pIdx).toFloat() * 2.5.dp.toPx() * bounce)
+                        val py = centerY + (kotlin.math.sin(beatCycle + pIdx).toFloat() * 2.5.dp.toPx() * bounce * waveActivity)
 
                         drawCircle(
                             color = tonedAccent.copy(alpha = pAlpha),
@@ -1164,11 +1215,8 @@ private fun AudioWaveformVisualizer(
                     }
 
                     // Radiant central sonic core emitter
-                    val corePulse = if (isPlaying) {
-                        0.75f + 0.25f * kotlin.math.abs(kotlin.math.sin(beatCycle * 2.0)).toFloat()
-                    } else {
-                        0.60f
-                    }
+                    val corePulse = 0.60f +
+                        (0.15f + 0.25f * kotlin.math.abs(kotlin.math.sin(beatCycle * 2.0)).toFloat()) * waveActivity
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
@@ -1188,11 +1236,7 @@ private fun AudioWaveformVisualizer(
                 "MINIMAL_CREST" -> {
                     // Sleek Precision Acoustic Needle / Crest Profile
                     val crestPath = Path()
-                    val bounce = if (isPlaying) {
-                        0.60f + 0.40f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
-                    } else {
-                        0.35f
-                    }
+                    val bounce = beatBounce
                     val maxAmp = (height * 0.44f) * bounce
                     val stepPx = 2.5f
                     val count = (width / stepPx).toInt() + 1
@@ -1224,7 +1268,8 @@ private fun AudioWaveformVisualizer(
                     )
 
                     // Luminous center pulse point
-                    val centerPulse = if (isPlaying) (0.7f + 0.3f * kotlin.math.abs(kotlin.math.sin(beatCycle * 1.5)).toFloat()) else 0.6f
+                    val centerPulse = 0.60f +
+                        (0.10f + 0.30f * kotlin.math.abs(kotlin.math.sin(beatCycle * 1.5)).toFloat()) * waveActivity
                     drawCircle(
                         color = tonedAccent.copy(alpha = 0.95f),
                         radius = (3.2.dp.toPx()) * centerPulse,
@@ -1247,11 +1292,8 @@ private fun AudioWaveformVisualizer(
                     val stepPx = 4f
                     val count = (width / stepPx).toInt() + 1
 
-                    val bounce = if (isPlaying) {
-                        0.55f + 0.45f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()
-                    } else {
-                        0.35f
-                    }
+                    val bounce = 0.35f +
+                        (0.20f + 0.45f * kotlin.math.abs(kotlin.math.sin(beatCycle.toDouble())).toFloat()) * waveActivity
                     val maxAmp = (height * 0.42f) * bounce
 
                     primaryFillPath.moveTo(0f, midY)
@@ -1371,8 +1413,8 @@ private fun ModernControlDock(accent: Color) {
         val shuffleScale by animateFloatAsState(
             targetValue = if (isShufflePressed) 0.88f else 1.0f,
             animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow,
+                dampingRatio = 0.88f,
+                stiffness = 480f,
             ),
             label = "shuffleScale",
         )
@@ -1437,8 +1479,8 @@ private fun ModernControlDock(accent: Color) {
         val prevScale by animateFloatAsState(
             targetValue = if (isPrevPressed) 0.86f else 1.0f,
             animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow,
+                dampingRatio = 0.88f,
+                stiffness = 480f,
             ),
             label = "prevScale",
         )
@@ -1467,18 +1509,23 @@ private fun ModernControlDock(accent: Color) {
             )
         }
 
-        // Tactile Springy & Clicky Play/Pause Button
+        // Tactile Smooth Play/Pause Button (shows Pause/Spinner smoothly without jerking or blocking Pause taps)
         val playPauseInteractionSource = remember { MutableInteractionSource() }
         val isPressed by playPauseInteractionSource.collectIsPressedAsState()
         val playPauseScale by animateFloatAsState(
-            targetValue = if (isPressed) 0.86f else 1.0f,
+            targetValue = if (isPressed) 0.90f else 1.0f,
             animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow,
+                dampingRatio = 0.88f,
+                stiffness = 480f,
             ),
             label = "playPauseScale",
         )
         val playPauseIconColor = if (accent.luminance() > 0.55f) Color(0xFF09140D) else Color.White
+        val playVisualState = when {
+            PlayerConnection.isBuffering -> 2
+            PlayerConnection.isPlaying -> 1
+            else -> 0
+        }
 
         Box(
             modifier = Modifier
@@ -1503,19 +1550,33 @@ private fun ModernControlDock(accent: Color) {
                 },
             contentAlignment = Alignment.Center,
         ) {
-            if (PlayerConnection.isBuffering) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(28.dp),
-                    color = playPauseIconColor,
-                    strokeWidth = 3.dp,
-                )
-            } else {
-                Icon(
-                    if (PlayerConnection.isPlaying) AppIcons.Pause else AppIcons.Play,
-                    contentDescription = if (PlayerConnection.isPlaying) "Pause" else "Play",
-                    tint = playPauseIconColor,
-                    modifier = Modifier.size(32.dp),
-                )
+            AnimatedContent(
+                targetState = playVisualState,
+                transitionSpec = {
+                    (fadeIn(tween(150, easing = FastOutSlowInEasing)) + scaleIn(initialScale = 0.86f, animationSpec = tween(160)))
+                        .togetherWith(fadeOut(tween(110, easing = FastOutSlowInEasing)) + scaleOut(targetScale = 0.86f, animationSpec = tween(110)))
+                },
+                label = "nowPlayingPlayPauseMorph",
+            ) { state ->
+                when (state) {
+                    2 -> CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        color = playPauseIconColor,
+                        strokeWidth = 3.dp,
+                    )
+                    1 -> Icon(
+                        AppIcons.Pause,
+                        contentDescription = "Pause",
+                        tint = playPauseIconColor,
+                        modifier = Modifier.size(32.dp),
+                    )
+                    else -> Icon(
+                        AppIcons.Play,
+                        contentDescription = "Play",
+                        tint = playPauseIconColor,
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
             }
         }
 
@@ -1524,8 +1585,8 @@ private fun ModernControlDock(accent: Color) {
         val nextScale by animateFloatAsState(
             targetValue = if (isNextPressed) 0.86f else 1.0f,
             animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow,
+                dampingRatio = 0.88f,
+                stiffness = 480f,
             ),
             label = "nextScale",
         )
@@ -1560,8 +1621,8 @@ private fun ModernControlDock(accent: Color) {
         val repeatScale by animateFloatAsState(
             targetValue = if (isRepeatPressed) 0.88f else 1.0f,
             animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow,
+                dampingRatio = 0.88f,
+                stiffness = 480f,
             ),
             label = "repeatScale",
         )
@@ -1610,24 +1671,24 @@ private fun PlayerBottomCards(
     val ultraInteraction = remember { MutableInteractionSource() }
     val isUltraPressed by ultraInteraction.collectIsPressedAsState()
     val ultraScale by animateFloatAsState(
-        targetValue = if (isUltraPressed) 0.92f else 1.0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        targetValue = if (isUltraPressed) 0.93f else 1.0f,
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f),
         label = "ultraScale",
     )
 
     val queueInteraction = remember { MutableInteractionSource() }
     val isQueuePressed by queueInteraction.collectIsPressedAsState()
     val queueScale by animateFloatAsState(
-        targetValue = if (isQueuePressed) 0.92f else 1.0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        targetValue = if (isQueuePressed) 0.93f else 1.0f,
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f),
         label = "queueScale",
     )
 
     val sleepInteraction = remember { MutableInteractionSource() }
     val isSleepPressed by sleepInteraction.collectIsPressedAsState()
     val sleepScale by animateFloatAsState(
-        targetValue = if (isSleepPressed) 0.92f else 1.0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        targetValue = if (isSleepPressed) 0.93f else 1.0f,
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f),
         label = "sleepScale",
     )
 
@@ -1963,7 +2024,7 @@ private fun QueueSheet(
 
     val dismissWithAnimation: () -> Unit = {
         coroutineScope.launch {
-            sheetHeightAnim.animateTo(0f, tween(durationMillis = 200, easing = FastOutSlowInEasing))
+            sheetHeightAnim.animateTo(0f, spring(dampingRatio = 0.94f, stiffness = 380f))
             onDismiss()
         }
     }
