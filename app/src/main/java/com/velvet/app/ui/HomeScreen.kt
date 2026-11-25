@@ -568,7 +568,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     (userPicks + freshDiscovery).distinctBy { it.id }.take(9)
                 }
                 com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(
-                    (computedSpeedDial + qPicks + recent + liked + trend + seeds).distinctBy { it.id },
+                    (sd + qPicks + recent + liked + trend + seeds).distinctBy { it.id },
                 )
                 m to sd
             }
