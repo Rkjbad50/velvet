@@ -354,3 +354,23 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - **Unit Test Results (`:app:testReleaseUnitTest`):** **307 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest > streamFetch`), **0 FAILED** — including all 8 suites in `app/src/test/java/com/velvet/app/unit/Phase8DiversityAndInnertubeTest.kt`.
 - **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; real-world mobile network queue fill times across live carriers await on-device confirmation.
 - **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`6c82576`).
+
+### v2.7.6 Playback Sync, Seekbar Timeline & Silky Motion Refinement
+- **Status:** **Code & CI Verification Complete** (`main` @ `a95f814`)
+- **Scope Implemented:**
+  - **Play/Pause Intent, Optimistic IPC Sync & Zero-Latency Buffering Guard (`PlayerUiSync.kt`, `PlayerConnection.kt`):**
+    - Extracted `PlaybackControlSync` and `SeekbarMath` into `PlayerUiSync.kt` so `togglePlay()` evaluates playback intent (`playWhenReady && playbackState != STATE_ENDED && playbackState != STATE_IDLE` / `optimisticPlayState`) instead of blocking Pause whenever streaming audio briefly dips into `STATE_BUFFERING`.
+    - Added short-lived optimistic toggle protection and optimistic `play()` priming so stale MediaController Binder snapshots never flip the Play/Pause icon back-and-forth unpredictably; prevented stale `exoCurrent` events in `syncBasicState()` from reverting `PlayerConnection.current` backward on track switches.
+  - **Stuck Seekbar / Timeline Sync & Gesture Conflict Fix (`Controls.kt`, `NowPlaying.kt`, `PlayerConnection.kt`):**
+    - Fixed live `durationMs` refresh inside `PlayerConnection.positionMs()` (eliminating `durationMs == 0L` frozen seekbars), cleared `savedInitialPositionMs` on track changes (`syncQueueState`, `play`, `previous`) while preserving paused session restore (`resetPositionOnTrackChange = false`), and added `pendingSeekTargetMs` convergence hold in `seekTo()`/`reconcilePositionMs()` so the thumb & timestamp never snap backward while ExoPlayer completes an async seek.
+    - Replaced competing dual `.pointerInput` (`detectTapGestures` + `detectHorizontalDragGestures`) modifiers in `WavySeekBar` and `SegmentedSeekBar` with a shared unified `seekBarPointerInput` handler that locks onto horizontal scrubbing seamlessly while yielding clean vertical minimize swipes to the parent player sheet; expanded seekbar touch height in `NowPlayingScreen` from `28.dp` to `42.dp`.
+    - Decoupled timeline polling (`rememberPosition`) into `SeekbarTimelineSection` (`120ms`), `MiniPlayerProgressBar` (`160ms`), and `SyncedLyricsOverlay` (`160ms`) so live ticks keep audio + timeline tightly synced without recomposing full-screen artwork or gradients.
+  - **Smooth Play/Pause Transitions & Critically-Damped App Motion (`OriginMotion.kt`, `Components.kt`, `MainActivity.kt`, `Controls.kt`, `NowPlaying.kt`, `RadioNotificationBanner.kt`):**
+    - Replaced `rememberInfiniteTransition` teardowns in `NowPlayingScreen` ambient bloom, `AudioWaveformVisualizer`, and `WavySeekBar` with monotonic `withFrameNanos` phase accumulators + `animateFloatAsState` intensity ramps so Play/Pause eases waves smoothly in place without snapping back to `0f`.
+    - Added smooth `AnimatedContent` icon morphing for Play/Pause/Buffering buttons, replaced harsh underdamped/abrupt curves across `OriginTransformCalculator` (`windowOpenSpring` `0.92f / 360f`, `windowCloseSpring` `0.95f / 400f`), `PersistentRootTabs` (`0.92f / 420f`, `0f -> 1f` alpha glide), `VelvetPopupMotion`, `VelvetModalSheet`, `RadioNotificationBanner`, and `QueueSheet` dismiss.
+- **CI/CD Verification (`main` @ `a95f814`):**
+  - **Run ID:** `45583721493` (`Build & Verify (CI)` job `139099877271`, `BUILD_NUMBER=229`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 4m 58s**, `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **312 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest > streamFetch`), **0 FAILED** — including all 5 new offline sync & motion tests in `app/src/test/java/com/velvet/app/unit/PlayerSyncAndMotionTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; physical touch scrubbing feel, visual fluidity on 120Hz panels, and live ExoPlayer stream synchronization await on-device confirmation.
+- **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`0788379`).
