@@ -21,6 +21,8 @@ data class ExplicitLibraryInputs(
     val likedSongs: List<Song> = emptyList(),
     val playlistSongs: List<Song> = emptyList(),
     val followedArtistNames: List<String> = emptyList(),
+    val preferredArtistNames: List<String> = emptyList(),
+    val preferredGenres: List<String> = emptyList(),
     val preferredLanguageNames: List<String> = emptyList(),
     val knownSongsByProviderId: Map<String, Song> = emptyMap(),
 )
@@ -101,6 +103,38 @@ class TasteProfileBuilder(
             }
         }
 
+        fun addExplicitAffinity(
+            weight: Double,
+            genreIds: Collection<String> = emptyList(),
+            subgenreIds: Collection<String> = emptyList(),
+            musicTypes: Collection<MusicType> = emptyList(),
+            artistKeys: Collection<String> = emptyList(),
+            languageIds: Collection<String> = emptyList(),
+            moodIds: Collection<String> = emptyList(),
+        ) {
+            if (weight <= 0.0 || weight.isNaN() || weight.isInfinite()) return
+            genreIds.forEach { g ->
+                if (g.isNotBlank()) genres[g] = (genres[g] ?: 0.0) + weight
+            }
+            subgenreIds.forEach { sg ->
+                if (sg.isNotBlank()) subgenres[sg] = (subgenres[sg] ?: 0.0) + weight
+            }
+            musicTypes.forEach { mt ->
+                if (mt != MusicType.UNKNOWN) {
+                    this.musicTypes[mt] = (this.musicTypes[mt] ?: 0.0) + weight
+                }
+            }
+            artistKeys.forEach { art ->
+                if (art.isNotBlank()) artists[art] = (artists[art] ?: 0.0) + weight
+            }
+            languageIds.forEach { lang ->
+                if (lang.isNotBlank()) languages[lang] = (languages[lang] ?: 0.0) + weight
+            }
+            moodIds.forEach { m ->
+                if (m.isNotBlank()) moods[m] = (moods[m] ?: 0.0) + weight
+            }
+        }
+
         fun toVector(): FeaturePreferenceVector = FeaturePreferenceVector(
             genreWeights = saturateAndNormalize(genres),
             subgenreWeights = saturateAndNormalize(subgenres),
@@ -134,11 +168,44 @@ class TasteProfileBuilder(
         val dislikedProviders = linkedSetOf<String>()
         val hiddenRecs = linkedSetOf<String>()
         val hiddenProviders = linkedSetOf<String>()
-        val followedArtists = libraryInputs.followedArtistNames
+        val followedArtists = (libraryInputs.followedArtistNames + libraryInputs.preferredArtistNames)
             .map { normalizePrimaryArtist(it) }
             .filter { it.isNotBlank() }
             .toSet()
         val preferredLanguages = normalizeLanguagePreferences(libraryInputs.preferredLanguageNames)
+
+        // Fold 3-step onboarding taste choices directly so cold-start home & queues personalize immediately
+        val hasOnboardingTaste = libraryInputs.preferredArtistNames.isNotEmpty() || libraryInputs.preferredGenres.isNotEmpty()
+        for (artistName in libraryInputs.preferredArtistNames) {
+            val keys = artistKeysFor(artistName, null)
+            if (keys.isNotEmpty()) {
+                longAcc.addExplicitAffinity(weight = 1.4, artistKeys = keys)
+                medAcc.addExplicitAffinity(weight = 0.7, artistKeys = keys)
+            }
+        }
+        for (genreRaw in libraryInputs.preferredGenres) {
+            val sig = resolveSurveyGenreSignals(genreRaw)
+            if (sig.genres.isNotEmpty() || sig.subgenres.isNotEmpty() || sig.musicTypes.isNotEmpty() || sig.moods.isNotEmpty()) {
+                longAcc.addExplicitAffinity(
+                    weight = 1.5,
+                    genreIds = sig.genres,
+                    subgenreIds = sig.subgenres,
+                    musicTypes = sig.musicTypes,
+                    moodIds = sig.moods,
+                )
+                medAcc.addExplicitAffinity(
+                    weight = 0.8,
+                    genreIds = sig.genres,
+                    subgenreIds = sig.subgenres,
+                    musicTypes = sig.musicTypes,
+                    moodIds = sig.moods,
+                )
+            }
+        }
+        if (hasOnboardingTaste && preferredLanguages.isNotEmpty()) {
+            longAcc.addExplicitAffinity(weight = 1.0, languageIds = preferredLanguages)
+            medAcc.addExplicitAffinity(weight = 0.5, languageIds = preferredLanguages)
+        }
 
         // Search intent tracking
         val queryTextsByQueryId = mutableMapOf<String, String>()
@@ -546,6 +613,101 @@ class TasteProfileBuilder(
         else -> null
     }
 
+    private data class SurveyGenreSignals(
+        val genres: List<String> = emptyList(),
+        val subgenres: List<String> = emptyList(),
+        val musicTypes: List<MusicType> = emptyList(),
+        val moods: List<String> = emptyList(),
+    )
+
+    private fun resolveSurveyGenreSignals(raw: String): SurveyGenreSignals {
+        val norm = raw.trim().lowercase(Locale.ROOT)
+        if (norm.isBlank()) return SurveyGenreSignals()
+        val directGenre = GenreOntology.canonicalize(norm)
+        return when {
+            norm in setOf("bhakti", "devotional", "bhajan", "aarti", "mantra", GenreOntology.DEVOTIONAL) ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.DEVOTIONAL),
+                    subgenres = listOf("bhajan", "aarti", "mantra"),
+                    musicTypes = listOf(MusicType.BHAJAN, MusicType.DEVOTIONAL, MusicType.AARTI, MusicType.CHALISA, MusicType.MANTRA),
+                    moods = listOf("devotional", "peaceful"),
+                )
+            norm in setOf("sufi", "ghazal", "sufi & ghazal", "qawwali", GenreOntology.SUFI_GHAZAL) ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.SUFI_GHAZAL),
+                    subgenres = listOf("sufi", "ghazal", "qawwali"),
+                    musicTypes = listOf(MusicType.SUFI, MusicType.GHAZAL, MusicType.QAWALI),
+                    moods = listOf("soulful", "peaceful"),
+                )
+            norm in setOf("bollywood", "hindi film", "hindi hits", GenreOntology.BOLLYWOOD) ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.BOLLYWOOD),
+                    subgenres = listOf("bollywood_romantic", "bollywood_party"),
+                    musicTypes = listOf(MusicType.FILM_SONG, MusicType.SONG),
+                )
+            norm in setOf("90s", "retro", "90s & retro", "bollywood_retro", "old is gold") ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.BOLLYWOOD),
+                    subgenres = listOf("bollywood_retro", "bollywood_90s"),
+                    musicTypes = listOf(MusicType.FILM_SONG),
+                )
+            norm in setOf("romantic", "romance", "love", "bollywood_romantic") ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.BOLLYWOOD, GenreOntology.WESTERN_POP),
+                    subgenres = listOf("bollywood_romantic"),
+                    moods = listOf("romantic"),
+                )
+            norm in setOf("sad", "heartbreak", "bollywood_sad") ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.BOLLYWOOD, GenreOntology.INDIAN_INDIE),
+                    subgenres = listOf("bollywood_sad"),
+                    moods = listOf("sad", "melancholic"),
+                )
+            norm in setOf("punjabi", "bhangra", "punjabi beats", GenreOntology.PUNJABI) ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.PUNJABI),
+                    subgenres = listOf("punjabi_pop", "punjabi_bhangra"),
+                    moods = listOf("energetic", "party"),
+                )
+            norm in setOf("south indian", "tamil & telugu", "tollywood", "kollywood", GenreOntology.SOUTH_INDIAN) ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.SOUTH_INDIAN),
+                    subgenres = listOf("tamil_film", "telugu_film", "malayalam_film", "kannada_film"),
+                    musicTypes = listOf(MusicType.FILM_SONG),
+                )
+            norm in setOf("indian indie", "indie", "acoustic", GenreOntology.INDIAN_INDIE) ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.INDIAN_INDIE),
+                    subgenres = listOf("indie_pop", "indie_acoustic"),
+                    musicTypes = listOf(MusicType.INDEPENDENT),
+                )
+            norm in setOf("classical", "indian classical", "instrumental", GenreOntology.INDIAN_CLASSICAL) ->
+                SurveyGenreSignals(
+                    genres = listOf(GenreOntology.INDIAN_CLASSICAL),
+                    subgenres = listOf("hindustani_classical", "carnatic", "raga_instrumental"),
+                    musicTypes = listOf(MusicType.CLASSICAL, MusicType.INSTRUMENTAL),
+                )
+            norm in setOf("pop", "western pop", "international pop", GenreOntology.WESTERN_POP) ->
+                SurveyGenreSignals(genres = listOf(GenreOntology.WESTERN_POP), subgenres = listOf("synth_pop", "dance_pop"))
+            norm in setOf("hip hop", "hip-hop", "rap", "desi hip hop", GenreOntology.HIP_HOP) ->
+                SurveyGenreSignals(genres = listOf(GenreOntology.HIP_HOP), subgenres = listOf("desi_hip_hop"))
+            norm in setOf("rock", "alt rock", GenreOntology.ROCK) ->
+                SurveyGenreSignals(genres = listOf(GenreOntology.ROCK), subgenres = listOf("alt_rock", "classic_rock"))
+            norm in setOf("edm", "electronic", "dance", "party", GenreOntology.EDM) ->
+                SurveyGenreSignals(genres = listOf(GenreOntology.EDM), moods = listOf("energetic", "party"))
+            norm in setOf("lofi", "lo-fi", "lofi & chill", "chill", GenreOntology.LOFI_CHILL) ->
+                SurveyGenreSignals(genres = listOf(GenreOntology.LOFI_CHILL), subgenres = listOf("lofi_beats"), moods = listOf("chill", "peaceful"))
+            directGenre != null -> {
+                val parent = GenreOntology.parentOf(directGenre)
+                SurveyGenreSignals(
+                    genres = listOf(parent).distinct(),
+                    subgenres = if (parent != directGenre) listOf(directGenre) else emptyList(),
+                )
+            }
+            else -> SurveyGenreSignals(genres = listOf(norm))
+        }
+    }
+
     private fun normalizeLanguagePreferences(langs: List<String>): Set<String> = langs.mapNotNull { lang ->
         when (lang.trim().lowercase(Locale.ROOT)) {
             "hindi" -> "hi"
@@ -556,6 +718,10 @@ class TasteProfileBuilder(
             "malayalam" -> "ml"
             "kannada" -> "kn"
             "bengali", "bangla" -> "bn"
+            "marathi" -> "mr"
+            "gujarati" -> "gu"
+            "bhojpuri" -> "bho"
+            "haryanvi" -> "bgc"
             "sanskrit" -> "sa"
             "urdu" -> "ur"
             "" -> null

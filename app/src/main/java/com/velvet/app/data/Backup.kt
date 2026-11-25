@@ -81,6 +81,13 @@ fun mergeLibraries(current: LibraryData, incoming: LibraryData): LibraryData {
         autoLyrics = incoming.autoLyrics,
         autoBackup = incoming.autoBackup,
         eq = incoming.eq,
+        musicLanguages = incoming.musicLanguages.ifEmpty { current.musicLanguages },
+        onboardingCompleted = current.onboardingCompleted || incoming.onboardingCompleted,
+        preferredArtists = union(current.preferredArtists, incoming.preferredArtists) { it.lowercase() },
+        preferredGenres = union(current.preferredGenres, incoming.preferredGenres) { it.lowercase() },
+        persistedShuffleMode = if (incoming.persistedShuffleMode != "OFF") incoming.persistedShuffleMode else current.persistedShuffleMode,
+        shuffleToastShownOnce = current.shuffleToastShownOnce || incoming.shuffleToastShownOnce,
+        smartShuffleToastShownOnce = current.smartShuffleToastShownOnce || incoming.smartShuffleToastShownOnce,
     )
 }
 

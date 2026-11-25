@@ -71,6 +71,12 @@ data class LibraryData(
     val queueDragReorderEnabled: Boolean = false,
     val playedGroupIds: List<String> = emptyList(),
     val listenEvents: List<ListenEvent> = emptyList(),
+    val onboardingCompleted: Boolean = false,
+    val preferredArtists: List<String> = emptyList(),
+    val preferredGenres: List<String> = emptyList(),
+    val persistedShuffleMode: String = "OFF",
+    val shuffleToastShownOnce: Boolean = false,
+    val smartShuffleToastShownOnce: Boolean = false,
 ) {
     companion object {
         const val CURRENT_VERSION = 2
@@ -570,6 +576,48 @@ class Library(dir: File) {
     fun setFontPreference(font: String) = update { it.copy(fontPreference = font) }
 
     fun setMusicLanguages(languages: List<String>) = update { it.copy(musicLanguages = languages) }
+
+    fun completeOnboarding(
+        languages: List<String>,
+        artists: List<ArtistRef>,
+        genres: List<String>,
+    ) {
+        val cleanedLangs = languages.map { it.trim() }.filter { it.isNotBlank() }.distinct().ifEmpty { listOf("Hindi", "English") }
+        val cleanedArtists = artists.map { it.name.trim() }.filter { it.isNotBlank() }.distinct()
+        val cleanedGenres = genres.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        update { d ->
+            val existingUrls = d.artists.map { it.url }.toSet()
+            val now = System.currentTimeMillis()
+            val addedArtistRefs = artists
+                .filter { it.url.isNotBlank() && it.name.isNotBlank() && it.url !in existingUrls }
+                .map { if (it.addedAt <= 0L) it.copy(addedAt = now) else it }
+            d.copy(
+                musicLanguages = cleanedLangs,
+                preferredArtists = cleanedArtists,
+                preferredGenres = cleanedGenres,
+                artists = d.artists + addedArtistRefs,
+                onboardingCompleted = true,
+            )
+        }
+    }
+
+    fun reopenOnboarding() = update { it.copy(onboardingCompleted = false) }
+
+    fun setPersistedShuffleMode(mode: String) = update {
+        val normalized = when (mode.uppercase()) {
+            "STANDARD", "SMART" -> mode.uppercase()
+            else -> "OFF"
+        }
+        if (it.persistedShuffleMode == normalized) it else it.copy(persistedShuffleMode = normalized)
+    }
+
+    fun markShuffleToastShown() = update {
+        if (it.shuffleToastShownOnce) it else it.copy(shuffleToastShownOnce = true)
+    }
+
+    fun markSmartShuffleToastShown() = update {
+        if (it.smartShuffleToastShownOnce) it else it.copy(smartShuffleToastShownOnce = true)
+    }
 
     fun setSeekbarStyle(style: String) = update { it.copy(seekbarStyle = style) }
 

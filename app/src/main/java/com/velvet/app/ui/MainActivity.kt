@@ -20,6 +20,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -425,6 +426,35 @@ private fun AppRoot() {
                 modifier = Modifier.align(Alignment.TopCenter),
                 onDismiss = { PlayerConnection.dismissRadioBanner() },
             )
+
+            val libraryData by VelvetApp.library.data.collectAsStateWithLifecycle()
+            AnimatedVisibility(
+                visible = !libraryData.onboardingCompleted,
+                enter = fadeIn(animationSpec = tween(220)),
+                exit = fadeOut(animationSpec = tween(320)) + scaleOut(
+                    targetScale = 0.96f,
+                    animationSpec = tween(320),
+                ),
+            ) {
+                OnboardingSurveyScreen(
+                    initialData = libraryData,
+                    onAnalyzeStart = { languages, artists, genres ->
+                        homeVm.refreshForTaste(
+                            libraryData.copy(
+                                musicLanguages = languages,
+                                preferredArtists = artists.map { it.name },
+                                preferredGenres = genres,
+                                onboardingCompleted = true,
+                            ),
+                            forceRefresh = true,
+                        )
+                    },
+                    onComplete = { languages, artists, genres ->
+                        VelvetApp.library.completeOnboarding(languages, artists, genres)
+                        homeVm.refreshAfterOnboarding()
+                    },
+                )
+            }
         }
 
         menu?.let { request -> SongActionsSheet(request) { menu = null } }

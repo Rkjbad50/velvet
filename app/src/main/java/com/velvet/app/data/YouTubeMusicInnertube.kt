@@ -53,10 +53,13 @@ object YouTubeMusicInnertube {
         val headers: Map<String, String>,
     )
 
-    private fun webRemixContext(): JsonObject {
+    private fun webRemixContext(
+        glOverride: String? = null,
+        hlOverride: String? = null,
+    ): JsonObject {
         val locale = Locale.getDefault()
-        val hl = locale.language.ifBlank { "en" }
-        val gl = locale.country.ifBlank { "US" }
+        val hl = hlOverride?.takeIf { it.isNotBlank() } ?: locale.language.ifBlank { "en" }
+        val gl = glOverride?.takeIf { it.isNotBlank() } ?: locale.country.ifBlank { "US" }
         return JsonObject().apply {
             put(
                 "client",
@@ -75,6 +78,16 @@ object YouTubeMusicInnertube {
                 },
             )
         }
+    }
+
+    internal fun countryForLanguages(languages: List<String>): String {
+        val norm = languages.map { it.trim().lowercase(Locale.ROOT) }
+        val indianLangs = setOf(
+            "hindi", "punjabi", "bhojpuri", "haryanvi", "bengali", "bangla",
+            "tamil", "telugu", "malayalam", "marathi", "gujarati", "kannada", "sanskrit", "urdu",
+        )
+        if (norm.any { it in indianLangs }) return "IN"
+        return Locale.getDefault().country.ifBlank { "US" }
     }
 
     private fun androidVrContext(): JsonObject {
@@ -191,6 +204,90 @@ object YouTubeMusicInnertube {
     }
 
     /**
+     * Direct YT Music Artist search fallback using InnerTube WEB_REMIX.
+     */
+    fun searchArtists(query: String, limit: Int = 20): List<ArtistRef> {
+        if (query.isBlank()) return emptyList()
+        val body = JsonObject().apply {
+            put("context", webRemixContext())
+            put("query", query)
+        }
+        val root = postJson(YTM_SEARCH_URL, body) ?: return emptyList()
+        return parseArtistsSearchJson(root).take(limit)
+    }
+
+    /**
+     * Fetches genuine live YouTube Music Trending / Top Charts (`FEmusic_charts` + `FEmusic_explore`
+     * + top regional/global chart `VL` playlists), strictly returning verified studio tracks only.
+     */
+    fun fetchTrendingCharts(
+        preferredLanguages: List<String> = emptyList(),
+        limit: Int = 30,
+    ): List<Song> {
+        val gl = countryForLanguages(preferredLanguages)
+        val ctx = webRemixContext(glOverride = gl)
+
+        val chartsRoot = postJson(
+            YTM_BROWSE_URL,
+            JsonObject().apply {
+                put("context", ctx)
+                put("browseId", "FEmusic_charts")
+            },
+        )
+        val collected = mutableListOf<Song>()
+        if (chartsRoot != null) {
+            collected += parseSearchOrBrowseSongsJson(chartsRoot)
+            if (collected.size < limit) {
+                val playlistIds = extractChartPlaylistBrowseIds(chartsRoot, preferredLanguages)
+                for (browseId in playlistIds.take(2)) {
+                    if (collected.size >= limit + 10) break
+                    collected += browsePlaylistSongs(browseId, glOverride = gl, limit = limit)
+                }
+            }
+        }
+
+        if (collected.size < limit) {
+            val exploreRoot = postJson(
+                YTM_BROWSE_URL,
+                JsonObject().apply {
+                    put("context", ctx)
+                    put("browseId", "FEmusic_explore")
+                },
+            )
+            if (exploreRoot != null) {
+                collected += parseSearchOrBrowseSongsJson(exploreRoot)
+                if (collected.size < limit) {
+                    val exploreIds = extractChartPlaylistBrowseIds(exploreRoot, preferredLanguages)
+                    exploreIds.firstOrNull()?.let { browseId ->
+                        collected += browsePlaylistSongs(browseId, glOverride = gl, limit = limit)
+                    }
+                }
+            }
+        }
+
+        return collected.distinctBy { it.id }.take(limit)
+    }
+
+    fun browsePlaylistSongs(
+        browseId: String,
+        glOverride: String? = null,
+        limit: Int = 30,
+    ): List<Song> {
+        if (browseId.isBlank()) return emptyList()
+        val normalizedId = if (browseId.startsWith("VL") || browseId.startsWith("FE") || browseId.startsWith("MP")) {
+            browseId
+        } else {
+            "VL$browseId"
+        }
+        val body = JsonObject().apply {
+            put("context", webRemixContext(glOverride = glOverride))
+            put("browseId", normalizedId)
+        }
+        val root = postJson(YTM_BROWSE_URL, body) ?: return emptyList()
+        return parseSearchOrBrowseSongsJson(root).take(limit)
+    }
+
+    /**
      * Tertiary resilient player audio resolution using Android VR client via InnerTube,
      * only invoked if NewPipeExtractor VisionOS & full Watch extractors both fail.
      */
@@ -291,12 +388,144 @@ object YouTubeMusicInnertube {
 
     internal fun parseSearchOrBrowseSongsJson(root: JsonObject): List<Song> {
         val songs = mutableListOf<Song>()
-        val items = mutableListOf<JsonObject>()
-        collectResponsiveItemsRecursive(root, items)
-        for (renderer in items) {
+        val responsiveItems = mutableListOf<JsonObject>()
+        collectRenderersRecursive(root, "musicResponsiveListItemRenderer", responsiveItems)
+        for (renderer in responsiveItems) {
             parseResponsiveListItem(renderer)?.let { songs.add(it) }
         }
+        val twoRowItems = mutableListOf<JsonObject>()
+        collectRenderersRecursive(root, "musicTwoRowItemRenderer", twoRowItems)
+        for (renderer in twoRowItems) {
+            parseTwoRowItemSong(renderer)?.let { songs.add(it) }
+        }
+        val panelItems = mutableListOf<JsonObject>()
+        collectRenderersRecursive(root, "playlistPanelVideoRenderer", panelItems)
+        for (renderer in panelItems) {
+            parsePlaylistPanelVideo(renderer, excludeVideoId = "")?.let { songs.add(it) }
+        }
         return songs.distinctBy { it.id }
+    }
+
+    internal fun extractChartPlaylistBrowseIds(
+        root: JsonObject,
+        preferredLanguages: List<String> = emptyList(),
+    ): List<String> {
+        val langHints = preferredLanguages.map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotBlank() }
+        val indianSelected = langHints.any {
+            it in setOf("hindi", "punjabi", "bhojpuri", "haryanvi", "bengali", "tamil", "telugu", "malayalam", "marathi", "gujarati", "kannada")
+        }
+        val candidates = mutableListOf<Pair<String, Int>>()
+        val twoRowItems = mutableListOf<JsonObject>()
+        collectRenderersRecursive(root, "musicTwoRowItemRenderer", twoRowItems)
+        for (renderer in twoRowItems) {
+            val browseId = renderer.getObject("navigationEndpoint")
+                .getObject("browseEndpoint")
+                .getString("browseId")
+                ?.takeIf { it.startsWith("VL") || it.startsWith("RDCLAK") }
+                ?: continue
+            val title = extractRunsText(renderer.getObject("title").getArray("runs"))?.lowercase(Locale.ROOT).orEmpty()
+            var score = 0
+            if (langHints.any { title.contains(it) }) score += 5
+            if (indianSelected && title.contains("india")) score += 4
+            if (title.contains("top songs") || title.contains("top 100") || title.contains("trending") || title.contains("chart")) score += 3
+            if (title.contains("viral") || title.contains("daily") || title.contains("hits")) score += 1
+            if (title.contains("music videos") || title.endsWith("videos")) score -= 4
+            candidates.add(browseId to score)
+        }
+        return candidates
+            .sortedByDescending { it.second }
+            .map { it.first }
+            .distinct()
+    }
+
+    internal fun parseArtistsSearchJson(root: JsonObject): List<ArtistRef> {
+        val artists = mutableListOf<ArtistRef>()
+        val items = mutableListOf<JsonObject>()
+        collectRenderersRecursive(root, "musicResponsiveListItemRenderer", items)
+        for (renderer in items) {
+            val navBrowse = renderer.getObject("navigationEndpoint").getObject("browseEndpoint")
+            val browseId = navBrowse.getString("browseId")?.takeIf { it.startsWith("UC") } ?: continue
+            val pageType = navBrowse.getObject("browseEndpointContextSupportedConfigs")
+                .getObject("browseEndpointContextMusicConfig")
+                .getString("pageType", "")
+            val flexColumns = renderer.getArray("flexColumns") ?: continue
+            val nameRuns = flexColumns.getObject(0)
+                ?.getObject("musicResponsiveListItemFlexColumnRenderer")
+                ?.getObject("text")
+                ?.getArray("runs")
+            val name = extractRunsText(nameRuns) ?: continue
+            val subRuns = flexColumns.getObject(1)
+                ?.getObject("musicResponsiveListItemFlexColumnRenderer")
+                ?.getObject("text")
+                ?.getArray("runs")
+            val subText = extractRunsText(subRuns).orEmpty()
+            val looksLikeArtist = pageType == "MUSIC_PAGE_TYPE_ARTIST" ||
+                subText.contains("artist", ignoreCase = true) ||
+                subText.contains("subscriber", ignoreCase = true) ||
+                pageType.isBlank()
+            if (!looksLikeArtist) continue
+
+            val thumbs = renderer.getObject("thumbnail")
+                .getObject("musicThumbnailRenderer")
+                .getObject("thumbnail")
+                .getArray("thumbnails")
+            val (thumbUrl, _) = parseThumbnails(thumbs, browseId)
+            artists.add(
+                ArtistRef(
+                    url = "$YTM_ORIGIN/channel/$browseId",
+                    name = name,
+                    thumb = thumbUrl.takeIf { !it.contains("ytimg.com") },
+                ),
+            )
+        }
+        return artists.distinctBy { it.url }
+    }
+
+    private fun parseTwoRowItemSong(renderer: JsonObject): Song? {
+        val navWatch = renderer.getObject("navigationEndpoint").getObject("watchEndpoint")
+        val overlayWatch = renderer.getObject("thumbnailOverlay")
+            .getObject("musicItemThumbnailOverlayRenderer")
+            .getObject("content")
+            .getObject("musicPlayButtonRenderer")
+            .getObject("playNavigationEndpoint")
+            .getObject("watchEndpoint")
+        val watchEndpoint = if (navWatch.has("videoId")) navWatch else overlayWatch
+        val videoId = watchEndpoint.getString("videoId")?.takeIf(::isValidVideoId) ?: return null
+
+        val musicVideoType = watchEndpoint.getObject("watchEndpointMusicSupportedConfigs")
+            .getObject("watchEndpointMusicConfig")
+            .getString("musicVideoType", "")
+        if (musicVideoType in REJECTED_VIDEO_TYPES) return null
+
+        val title = extractRunsText(renderer.getObject("title").getArray("runs")) ?: return null
+        val subRuns = renderer.getObject("subtitle").getArray("runs")
+        val (artist, artistUrl, parsedAlbum, parsedDuration) = parseResponsiveSubRuns(subRuns)
+
+        val thumbs = renderer.getObject("thumbnailRenderer")
+            .getObject("musicThumbnailRenderer")
+            .getObject("thumbnail")
+            .getArray("thumbnails")
+        val (thumbUrl, hasSquareArt) = parseThumbnails(thumbs, videoId)
+
+        val isAtv = musicVideoType == "MUSIC_VIDEO_TYPE_ATV"
+        if (!isAtv && !hasSquareArt) return null
+
+        val song = Song(
+            id = videoId,
+            title = title,
+            artist = artist,
+            durationSec = parsedDuration,
+            thumb = thumbUrl,
+            artistUrl = artistUrl,
+            preferredMusicSource = hasSquareArt || isAtv,
+            album = parsedAlbum,
+            isTopicRelease = false,
+            isUploaderVerified = isAtv,
+            rawUploaderName = artist,
+            hasSquareArtwork = hasSquareArt,
+            isYouTubeMusicCatalog = isAtv || hasSquareArt,
+        )
+        return if (song.isPureMusic() && song.isOriginalMusicAudio()) song else null
     }
 
     private fun collectPlaylistPanelSongs(contents: JsonArray?, excludeVideoId: String, out: MutableList<Song>) {
@@ -413,17 +642,18 @@ object YouTubeMusicInnertube {
         return if (song.isPureMusic() && song.isOriginalMusicAudio()) song else null
     }
 
-    private fun collectResponsiveItemsRecursive(node: Any?, out: MutableList<JsonObject>) {
+    private fun collectRenderersRecursive(node: Any?, targetKey: String, out: MutableList<JsonObject>) {
         when (node) {
             is JsonObject -> {
-                if (node.has("musicResponsiveListItemRenderer")) {
-                    out.add(node.getObject("musicResponsiveListItemRenderer"))
-                } else {
-                    for (v in node.values) collectResponsiveItemsRecursive(v, out)
+                if (node.has(targetKey)) {
+                    out.add(node.getObject(targetKey))
+                }
+                for (v in node.values) {
+                    collectRenderersRecursive(v, targetKey, out)
                 }
             }
             is JsonArray -> {
-                for (v in node) collectResponsiveItemsRecursive(v, out)
+                for (v in node) collectRenderersRecursive(v, targetKey, out)
             }
         }
     }

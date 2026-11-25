@@ -3,6 +3,7 @@ package com.velvet.app.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.Image
 import org.schabi.newpipe.extractor.InfoItem
@@ -55,7 +56,14 @@ object YouTube {
                 page.items.mapNotNull { it.toBrowseItem(isAlbum = filter == FILTER_ALBUMS) }
             }
             val items = pageResult.getOrNull().orEmpty()
-            return if (filter == FILTER_SONGS) {
+            return if (filter == FILTER_ARTISTS) {
+                if (items.isEmpty() && isFirstPage) {
+                    hasMore = false
+                    YouTubeMusicInnertube.searchArtists(query).map { BrowseItem.ArtistItem(it) }
+                } else {
+                    items
+                }
+            } else if (filter == FILTER_SONGS) {
                 val baseItems = if (items.isEmpty() && isFirstPage) {
                     hasMore = false
                     YouTubeMusicInnertube.searchSongs(query).map { BrowseItem.SongItem(it) }
@@ -233,13 +241,29 @@ object YouTube {
         )
     }
 
-    /** YouTube's music trending chart, for the home screen. Filtered for pure music releases only. */
-    fun trendingMusic(): List<Song> {
-        val extractor = service.kioskList.getExtractorById("trending_music", null)
-        extractor.fetchPage()
-        return extractor.initialPage.items.mapNotNull { (it as? StreamInfoItem)?.toSong() }
-            .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
-            .sortedByDescending { it.preferredMusicSource }
+    /**
+     * Live YouTube Music trending charts combining InnerTube (`FEmusic_charts` + `FEmusic_explore`)
+     * with NewPipeExtractor's `trending_music` kiosk in parallel, filtered for pure studio audio.
+     */
+    fun trendingMusic(preferredLanguages: List<String> = emptyList()): List<Song> = runBlocking {
+        coroutineScope {
+            val innertubeCharts = async(Dispatchers.IO) {
+                runCatching { YouTubeMusicInnertube.fetchTrendingCharts(preferredLanguages, limit = 30) }
+                    .getOrDefault(emptyList())
+            }
+            val newpipeKiosk = async(Dispatchers.IO) {
+                runCatching {
+                    val extractor = service.kioskList.getExtractorById("trending_music", null)
+                    extractor.fetchPage()
+                    extractor.initialPage.items.mapNotNull { (it as? StreamInfoItem)?.toSong() }
+                        .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
+                        .sortedByDescending { it.preferredMusicSource }
+                }.getOrDefault(emptyList())
+            }
+            (innertubeCharts.await() + newpipeKiosk.await())
+                .distinctBy { it.id }
+                .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
+        }
     }
 
     // ---------------------------------------------------------------- helpers

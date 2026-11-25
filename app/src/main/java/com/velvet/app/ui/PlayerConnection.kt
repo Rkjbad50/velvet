@@ -188,19 +188,16 @@ object PlayerConnection {
                 val allowSmart = isUserPlaylistActive
                 if (queueManager.shuffleMode == ShuffleMode.OFF) {
                     queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = allowSmart)
+                    VelvetApp.library.setPersistedShuffleMode("STANDARD")
                     syncQueueState()
                     syncToExoPlayer()
-                    (context?.let { null } ?: appContext)?.let {
-                        Toast.makeText(it, "Shuffle is on", Toast.LENGTH_SHORT).show()
-                    }
+                    showFirstTimeShuffleToast(ShuffleMode.STANDARD, context = null)
                 } else {
-                    // Running playlist already has shuffle on: tapping Shuffle reshuffles the upcoming queue
-                    queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = allowSmart)
+                    // Running playlist already has shuffle on: reshuffle without repeating intrusive toasts
+                    val activeMode = queueManager.shuffleMode
+                    queueManager.setShuffleMode(activeMode, allowSmartShuffle = allowSmart)
                     syncQueueState()
                     syncToExoPlayer()
-                    (context?.let { null } ?: appContext)?.let {
-                        Toast.makeText(it, "Reshuffled queue 🔀", Toast.LENGTH_SHORT).show()
-                    }
                 }
                 if (!isPlaying) {
                     togglePlay()
@@ -265,6 +262,34 @@ object PlayerConnection {
         }
     }
 
+    private fun persistedShuffleEnum(): ShuffleMode = when (VelvetApp.library.data.value.persistedShuffleMode) {
+        "STANDARD" -> ShuffleMode.STANDARD
+        "SMART" -> ShuffleMode.SMART
+        else -> ShuffleMode.OFF
+    }
+
+    private fun showFirstTimeShuffleToast(mode: ShuffleMode, context: Context?) {
+        val ctx = context ?: appContext ?: return
+        val libData = VelvetApp.library.data.value
+        when (mode) {
+            ShuffleMode.STANDARD -> {
+                if (!libData.shuffleToastShownOnce) {
+                    VelvetApp.library.markShuffleToastShown()
+                    runCatching { Toast.makeText(ctx, "Shuffle is on", Toast.LENGTH_SHORT).show() }
+                }
+            }
+            ShuffleMode.SMART -> {
+                if (!libData.smartShuffleToastShownOnce) {
+                    VelvetApp.library.markSmartShuffleToastShown()
+                    runCatching {
+                        Toast.makeText(ctx, "Smart Shuffle is on ✨ (Mixing in fresh matching songs)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            ShuffleMode.OFF -> Unit
+        }
+    }
+
     // ── Connection plumbing ──────────────────────────────────────────────────
     private var appContext: Context? = null
     private var started = false
@@ -275,6 +300,9 @@ object PlayerConnection {
         appContext = context.applicationContext
         started = true
         if (current == null) {
+            val savedShuffle = persistedShuffleEnum()
+            shuffleMode = savedShuffle
+            shuffle = savedShuffle != ShuffleMode.OFF
             restoreSavedPlaybackState(null)
         }
         ensureConnected()
@@ -524,10 +552,16 @@ object PlayerConnection {
         if (saved.userQueue.isNotEmpty()) {
             saved.userQueue.forEach { queueManager.playNext(it) }
         }
-        if (saved.shuffleMode == ShuffleMode.STANDARD) {
-            queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = false)
-        } else if (saved.shuffleMode == ShuffleMode.SMART && isUserPlaylistActive) {
-            queueManager.setShuffleMode(ShuffleMode.SMART, allowSmartShuffle = true)
+        val targetShuffleMode = if (saved.shuffleMode != ShuffleMode.OFF) saved.shuffleMode else persistedShuffleEnum()
+        if (fullList.size > 1) {
+            if (targetShuffleMode == ShuffleMode.STANDARD) {
+                queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = false)
+            } else if (targetShuffleMode == ShuffleMode.SMART) {
+                queueManager.setShuffleMode(
+                    if (isUserPlaylistActive) ShuffleMode.SMART else ShuffleMode.STANDARD,
+                    allowSmartShuffle = isUserPlaylistActive,
+                )
+            }
         }
         syncQueueState(resetPositionOnTrackChange = false)
 
@@ -591,12 +625,20 @@ object PlayerConnection {
         }
         val isUserPlaylist = playlistId != null && VelvetApp.library.data.value.playlists.any { it.id == playlistId }
         val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
+        val savedShuffleMode = persistedShuffleEnum()
+        val effectiveShuffled = shuffled || (!radio && songs.size > 1 && savedShuffleMode != ShuffleMode.OFF)
+        if (shuffled) {
+            VelvetApp.library.setPersistedShuffleMode("STANDARD")
+        }
 
         com.velvet.app.playback.DismissedTrackRegistry.clear()
-        queueManager.start(songs, startIndex, shuffled)
-        // Strictly disallow Smart Shuffle when playing outside a user-created playlist
-        if (!isUserPlaylist && queueManager.shuffleMode == ShuffleMode.SMART) {
-            queueManager.setShuffleMode(if (shuffled) ShuffleMode.STANDARD else ShuffleMode.OFF, allowSmartShuffle = false)
+        queueManager.start(songs, startIndex, effectiveShuffled)
+        // Restore persisted Smart Shuffle strictly on user-created playlists; keep Standard elsewhere without clobbering stored mode
+        val shouldApplySmart = !shuffled && !radio && songs.size > 1 && savedShuffleMode == ShuffleMode.SMART && isUserPlaylist
+        if (shouldApplySmart) {
+            queueManager.setShuffleMode(ShuffleMode.SMART, allowSmartShuffle = true)
+        } else if (!isUserPlaylist && queueManager.shuffleMode == ShuffleMode.SMART) {
+            queueManager.setShuffleMode(if (effectiveShuffled) ShuffleMode.STANDARD else ShuffleMode.OFF, allowSmartShuffle = false)
         }
 
         val resolvedContextId = playlistId ?: context?.id
@@ -640,6 +682,9 @@ object PlayerConnection {
 
         syncQueueState()
         syncToExoPlayer(playlistStart = start, isRadio = radio)
+        if (queueManager.shuffleMode == ShuffleMode.SMART && isUserPlaylist) {
+            loadSmartShuffleRecommendations()
+        }
 
         val isAutoplayOn = VelvetApp.library.data.value.autoplay || radio
         if (isAutoplayOn) {
@@ -672,6 +717,7 @@ object PlayerConnection {
         }
         val allowSmart = isUserPlaylistActive && (queueManager.upNext.isNotEmpty() || queueManager.sourceList.size > 1)
         val newMode = queueManager.cycleShuffleMode(allowSmartShuffle = allowSmart)
+        VelvetApp.library.setPersistedShuffleMode(newMode.name)
         syncQueueState()
         syncToExoPlayer()
 
@@ -682,21 +728,9 @@ object PlayerConnection {
             checkAndExtendAutoplay(seedId = activeSong.id)
         }
 
-        when (newMode) {
-            ShuffleMode.OFF -> {
-                (context ?: appContext)?.let { runCatching { Toast.makeText(it, "Shuffle is off", Toast.LENGTH_SHORT).show() } }
-            }
-            ShuffleMode.STANDARD -> {
-                (context ?: appContext)?.let { runCatching { Toast.makeText(it, "Shuffle is on", Toast.LENGTH_SHORT).show() } }
-            }
-            ShuffleMode.SMART -> {
-                (context ?: appContext)?.let {
-                    runCatching {
-                        Toast.makeText(it, "Smart Shuffle is on ✨ (Mixing in fresh matching songs)", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                loadSmartShuffleRecommendations()
-            }
+        showFirstTimeShuffleToast(newMode, context)
+        if (newMode == ShuffleMode.SMART) {
+            loadSmartShuffleRecommendations()
         }
     }
 

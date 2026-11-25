@@ -67,7 +67,9 @@ class DefaultUserProfileRepository(
         val inputs = ExplicitLibraryInputs(
             likedSongs = lib.liked,
             playlistSongs = lib.playlists.flatMap { it.songs },
-            followedArtistNames = lib.artists.map { it.name },
+            followedArtistNames = (lib.artists.map { it.name } + lib.preferredArtists).distinct(),
+            preferredArtistNames = lib.preferredArtists,
+            preferredGenres = lib.preferredGenres,
             preferredLanguageNames = lib.musicLanguages,
             knownSongsByProviderId = (lib.liked + lib.recent + lib.playlists.flatMap { it.songs }).associateBy { it.id },
         )
@@ -121,7 +123,10 @@ class DefaultUserProfileRepository(
         val libHash = lib.liked.size * 31 +
             lib.playlists.sumOf { it.songs.size } * 17 +
             lib.artists.size * 7 +
-            lib.musicLanguages.hashCode()
+            lib.musicLanguages.hashCode() +
+            lib.preferredArtists.hashCode() * 13 +
+            lib.preferredGenres.hashCode() * 19 +
+            (if (lib.onboardingCompleted) 1 else 0)
         return "$mutationSeq|$libHash|${sessionId.orEmpty()}|$timeBucket"
     }
 

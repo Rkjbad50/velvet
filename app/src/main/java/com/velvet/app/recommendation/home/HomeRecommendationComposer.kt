@@ -70,32 +70,75 @@ class HomeRecommendationComposer(
     }
 
     /**
-     * Filters raw Trending candidates to verified studio audio and boosts user-preferred languages
-     * cleanly without allowing same-artist flooding.
+     * Filters raw Trending candidates to verified studio audio and boosts user-preferred languages,
+     * preferred artists, and preferred genres cleanly while keeping genuine top-chart tracks first.
      */
     fun rankAndFilterTrending(
         rawTrending: List<Song>,
         preferredLanguageIds: Set<String> = emptySet(),
+        preferredArtistNames: Set<String> = emptySet(),
+        preferredGenres: List<String> = emptyList(),
+        tasteProfile: UserTasteSnapshot? = null,
         limit: Int = 20,
     ): List<Song> {
         val strict = filterStrictOriginalAudio(rawTrending)
+            .filterNot { tasteProfile?.isExplicitlyDisliked(it) == true }
         if (strict.isEmpty()) return emptyList()
 
-        val sorted = strict.sortedWith(
-            compareByDescending<Song> { song ->
-                val feat = featureRepository.getCachedOrExtract(song)
-                if (preferredLanguageIds.isNotEmpty() && feat.languageIds.keys.any { it in preferredLanguageIds }) 1 else 0
-            }.thenByDescending { song ->
-                RecordingIdentityResolver.resolve(song).releaseClassification.audioClass.qualityTier
-            },
-        )
+        val normPreferredArtists = buildSet {
+            preferredArtistNames.forEach { raw ->
+                val norm = normalizePrimaryArtist(raw)
+                if (norm.isNotBlank()) {
+                    add(norm)
+                    add(SongIdentity.collapseHindiLatinVariants(norm))
+                }
+            }
+            tasteProfile?.explicit?.followedArtistIds?.forEach { a ->
+                if (a.isNotBlank()) {
+                    add(a)
+                    add(SongIdentity.collapseHindiLatinVariants(a))
+                }
+            }
+        }
+        val normPreferredGenres = preferredGenres.mapNotNullTo(mutableSetOf()) { GenreOntology.canonicalize(it) ?: it.trim().lowercase() }
+        val total = strict.size.coerceAtLeast(1).toDouble()
+
+        val sorted = strict.mapIndexed { idx, song ->
+            val feat = featureRepository.getCachedOrExtract(song)
+            val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
+            val chartFreshnessScore = 1.0 - (idx / total) * 0.45
+            val langBonus = if (preferredLanguageIds.isNotEmpty() && feat.languageIds.keys.any { it in preferredLanguageIds }) 0.42 else 0.0
+            val artistKey = normalizePrimaryArtist(song.artist)
+            val artistMatch = artistKey.isNotBlank() &&
+                (artistKey in normPreferredArtists || SongIdentity.collapseHindiLatinVariants(artistKey) in normPreferredArtists)
+            val artistBonus = if (artistMatch) 0.38 else 0.0
+            val genreBonus = if (normPreferredGenres.isNotEmpty()) {
+                val matched = feat.genreIds.keys.any { g ->
+                    g in normPreferredGenres || GenreOntology.parentOf(g) in normPreferredGenres
+                } || feat.subgenreIds.keys.any { sg ->
+                    sg in normPreferredGenres || GenreOntology.parentOf(sg) in normPreferredGenres
+                }
+                if (matched) 0.30 else 0.0
+            } else {
+                val profileGenre = feat.genreIds.entries.maxOfOrNull { (g, c) ->
+                    ((tasteProfile?.longTerm?.genreWeights?.get(g) ?: 0.0) * 0.6 +
+                        (tasteProfile?.mediumTerm?.genreWeights?.get(g) ?: 0.0) * 0.4) * c
+                } ?: 0.0
+                0.24 * profileGenre
+            }
+            val skipPenalty = (tasteProfile?.fatigue?.singleSkipPenalties?.get(recId) ?: 0.0) * 0.35
+            val tierBonus = RecordingIdentityResolver.resolve(song).releaseClassification.audioClass.qualityTier * 0.03
+            val totalScore = chartFreshnessScore + langBonus + artistBonus + genreBonus + tierBonus - skipPenalty
+            song to totalScore
+        }.sortedByDescending { it.second }.map { it.first }
+
         return capArtists(sorted, maxPerArtist = 2, limit = limit)
     }
 
     /**
      * Builds Home "Quick picks" using the recommendation engine when available, enriched with
      * diversity and strict original audio verification. Cold-start returns empty cleanly unless
-     * [fallbackCatalog] is provided.
+     * explicit survey preferences or [fallbackCatalog] are provided.
      */
     suspend fun composeQuickPicks(
         recent: List<Song>,
@@ -103,10 +146,16 @@ class HomeRecommendationComposer(
         preferredLanguageIds: Set<String> = emptySet(),
         directSearchProvider: (suspend (String) -> List<Song>)? = null,
         fallbackCatalog: List<Song> = emptyList(),
+        preferredArtistNames: Set<String> = emptySet(),
+        preferredGenres: List<String> = emptyList(),
+        tasteProfile: UserTasteSnapshot? = null,
         limit: Int = 10,
     ): List<Song> {
         val verifiedSeeds = filterStrictOriginalAudio(recent + liked)
-        if (verifiedSeeds.isEmpty() && fallbackCatalog.isEmpty()) return emptyList()
+        val hasSurveyTaste = preferredArtistNames.isNotEmpty() || preferredGenres.isNotEmpty()
+        if (verifiedSeeds.isEmpty() && fallbackCatalog.isEmpty() && (!hasSurveyTaste || directSearchProvider == null)) {
+            return emptyList()
+        }
 
         val playedIds = recent.mapTo(mutableSetOf()) { it.id }
         val playedRecs = recent.mapTo(mutableSetOf()) { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
@@ -134,16 +183,31 @@ class HomeRecommendationComposer(
             }
         }
 
-        // Clean fallback via direct search or fallback catalog — still strict studio audio only
-        val fetched = buildList {
-            if (directSearchProvider != null && verifiedSeeds.isNotEmpty()) {
-                val seedArtists = verifiedSeeds
+        // Clean fallback via direct search (recent/liked artists or onboarding survey choices) + catalog — strict studio audio only
+        val searchQueries = buildList {
+            if (verifiedSeeds.isNotEmpty()) {
+                verifiedSeeds
                     .mapNotNull { it.artist.trim().takeIf { a -> a.isNotBlank() } }
                     .distinctBy { it.lowercase() }
                     .take(3)
-                for (artist in seedArtists) {
+                    .forEach { add("$it songs") }
+            }
+            if (size < 3 && preferredArtistNames.isNotEmpty()) {
+                preferredArtistNames.mapNotNull { it.trim().takeIf { a -> a.isNotBlank() } }
+                    .distinctBy { it.lowercase() }
+                    .take(3 - size)
+                    .forEach { add("$it songs") }
+            }
+            if (size < 4 && preferredGenres.isNotEmpty()) {
+                preferredGenres.take(2).forEach { add("$it hit songs") }
+            }
+        }
+
+        val fetched = buildList {
+            if (directSearchProvider != null && searchQueries.isNotEmpty()) {
+                for (q in searchQueries) {
                     val items = try {
-                        directSearchProvider("$artist songs")
+                        directSearchProvider(q)
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (_: Exception) {
@@ -154,16 +218,35 @@ class HomeRecommendationComposer(
             }
             addAll(fallbackCatalog)
         }.filterNot { song ->
-            song.id in playedIds || RecordingIdentityResolver.resolve(song).canonicalRecordingId in playedRecs
+            song.id in playedIds ||
+                RecordingIdentityResolver.resolve(song).canonicalRecordingId in playedRecs ||
+                tasteProfile?.isExplicitlyDisliked(song) == true
         }
 
-        return capArtists(filterStrictOriginalAudio(fetched), maxPerArtist = 2, limit = limit)
+        val strictFetched = filterStrictOriginalAudio(fetched)
+        val normArtists = preferredArtistNames.mapNotNullTo(mutableSetOf()) { normalizePrimaryArtist(it).takeIf { a -> a.isNotBlank() } }
+        val normGenres = preferredGenres.mapNotNullTo(mutableSetOf()) { GenreOntology.canonicalize(it) ?: it.trim().lowercase() }
+        val ranked = if (normArtists.isEmpty() && normGenres.isEmpty() && preferredLanguageIds.isEmpty()) {
+            strictFetched
+        } else {
+            strictFetched.sortedByDescending { song ->
+                val feat = featureRepository.getCachedOrExtract(song)
+                val artistKey = normalizePrimaryArtist(song.artist)
+                var boost = 0.0
+                if (artistKey in normArtists) boost += 0.45
+                if (feat.genreIds.keys.any { it in normGenres || GenreOntology.parentOf(it) in normGenres }) boost += 0.30
+                if (preferredLanguageIds.isNotEmpty() && feat.languageIds.keys.any { it in preferredLanguageIds }) boost += 0.20
+                boost
+            }
+        }
+
+        return capArtists(ranked, maxPerArtist = 2, limit = limit)
     }
 
     /**
      * Builds "Speed Dial" filling all [limit] (9) cells whenever verified studio audio exists,
      * dynamically adapting to listening habits (frequency, completion, likes, active genre/mood,
-     * preferred languages, and fatigue/skips) blended with fresh discovery tracks.
+     * preferred languages, onboarding artists/genres, and fatigue/skips) blended with fresh discovery tracks.
      */
     fun composeSpeedDial(
         recent: List<Song>,
@@ -174,6 +257,8 @@ class HomeRecommendationComposer(
         playlistsSongs: List<Song> = emptyList(),
         preferredLanguageIds: Set<String> = emptySet(),
         tasteProfile: UserTasteSnapshot? = null,
+        preferredArtistNames: Set<String> = emptySet(),
+        preferredGenres: List<String> = emptyList(),
     ): List<Song> {
         if (limit <= 0) return emptyList()
 
@@ -186,6 +271,22 @@ class HomeRecommendationComposer(
         }
         val likedRecIds = liked.mapTo(mutableSetOf()) { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
         val playlistRecIds = playlistsSongs.mapTo(mutableSetOf()) { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
+        val normPreferredArtists = buildSet {
+            preferredArtistNames.forEach { raw ->
+                val norm = normalizePrimaryArtist(raw)
+                if (norm.isNotBlank()) {
+                    add(norm)
+                    add(SongIdentity.collapseHindiLatinVariants(norm))
+                }
+            }
+            tasteProfile?.explicit?.followedArtistIds?.forEach { a ->
+                if (a.isNotBlank()) {
+                    add(a)
+                    add(SongIdentity.collapseHindiLatinVariants(a))
+                }
+            }
+        }
+        val normPreferredGenres = preferredGenres.mapNotNullTo(mutableSetOf()) { GenreOntology.canonicalize(it) ?: it.trim().lowercase() }
 
         fun habitScore(song: Song, recId: String, isFamiliar: Boolean): Double {
             if (tasteProfile?.isExplicitlyDisliked(song) == true) return Double.NEGATIVE_INFINITY
@@ -202,6 +303,19 @@ class HomeRecommendationComposer(
             }
             if (recId in likedRecIds) score += 0.30
             if (recId in playlistRecIds) score += 0.14
+
+            val artistKey = normalizePrimaryArtist(song.artist)
+            if (artistKey.isNotBlank() &&
+                (artistKey in normPreferredArtists || SongIdentity.collapseHindiLatinVariants(artistKey) in normPreferredArtists)
+            ) {
+                score += 0.38
+            }
+            if (normPreferredGenres.isNotEmpty() &&
+                (feat.genreIds.keys.any { it in normPreferredGenres || GenreOntology.parentOf(it) in normPreferredGenres } ||
+                    feat.subgenreIds.keys.any { it in normPreferredGenres || GenreOntology.parentOf(it) in normPreferredGenres })
+            ) {
+                score += 0.30
+            }
 
             if (tasteProfile != null) {
                 score += (tasteProfile.longTerm.recordingWeights[recId] ?: 0.0) * 0.45
@@ -226,7 +340,7 @@ class HomeRecommendationComposer(
             }
 
             if (preferredLanguageIds.isNotEmpty() && feat.languageIds.keys.any { it in preferredLanguageIds }) {
-                score += 0.15
+                score += 0.18
             }
             val tierBonus = RecordingIdentityResolver.resolve(song).releaseClassification.audioClass.qualityTier * 0.03
             if (!isFamiliar) score += tierBonus
@@ -299,8 +413,21 @@ class HomeRecommendationComposer(
         recent: List<Song>,
         liked: List<Song>,
         limit: Int = 8,
+        preferredArtistNames: Set<String> = emptySet(),
+        fallbackCatalog: List<Song> = emptyList(),
     ): List<Song> {
-        val strict = filterStrictOriginalAudio(recent + liked)
+        val primaryPool = filterStrictOriginalAudio(recent + liked)
+        val normPreferredArtists = preferredArtistNames.mapNotNullTo(mutableSetOf()) {
+            normalizePrimaryArtist(it).takeIf { n -> n.isNotBlank() }
+        }
+        val catalogPool = if (fallbackCatalog.isNotEmpty() && normPreferredArtists.isNotEmpty()) {
+            filterStrictOriginalAudio(fallbackCatalog).sortedByDescending { song ->
+                val aKey = normalizePrimaryArtist(song.artist)
+                if (aKey in normPreferredArtists) 1 else 0
+            }
+        } else emptyList()
+
+        val strict = (primaryPool + catalogPool).distinctBy { it.id }
         if (strict.isEmpty()) return emptyList()
 
         val selected = mutableListOf<Song>()

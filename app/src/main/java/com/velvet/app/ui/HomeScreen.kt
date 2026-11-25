@@ -110,11 +110,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var speedDial by mutableStateOf<List<Song>>(emptyList())
         private set
+    var surveySeeds by mutableStateOf<List<Song>>(emptyList())
+        private set
 
     private var historyIds = emptyList<String>()
-    private var loadedMoreLanguages: List<String>? = null
+    private var loadedTasteKey: String? = null
+    private var loadedMoreSignature: String? = null
+    private var lastMoreLoadedAtMs: Long = 0L
+    private var moreForYouSpin: Int = 0
     private var lastDerivedKey: String? = null
     private var quickPicksJob: Job? = null
+    private var trendingJob: Job? = null
+    private var moreForYouJob: Job? = null
     private var derivedJob: Job? = null
     private val feedPrefs by lazy {
         application.getSharedPreferences("home_feed", Context.MODE_PRIVATE)
@@ -122,30 +129,42 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch {
+            val libSnapshot = VelvetApp.library.data.value
             val locale = Locale.getDefault().toLanguageTag()
+            val expectedTasteKey = onboardingTasteKey(libSnapshot)
             val cache = withContext(Dispatchers.IO) { feedPrefs }
-            val (cached, cachedSpeedDial, fetchedAt) = withContext(Dispatchers.IO) {
+            val cachedBundle = withContext(Dispatchers.IO) {
                 val snapshot = cache.all
-                val sameLocale = snapshot["locale"] == locale
-                val songs = if (sameLocale) {
+                val sameLocaleAndTaste = snapshot["locale"] == locale && snapshot["taste_key"] == expectedTasteKey
+                val songs = if (sameLocaleAndTaste) {
                     (snapshot["songs"] as? String)?.let { encoded ->
                         runCatching { feedJson.decodeFromString(songList, encoded) }.getOrNull()
                     }.orEmpty()
                 } else emptyList()
-                val sd = if (sameLocale) {
+                val sd = if (sameLocaleAndTaste) {
                     (snapshot["speed_dial_songs"] as? String)?.let { encoded ->
                         runCatching { feedJson.decodeFromString(songList, encoded) }.getOrNull()
                     }.orEmpty()
                 } else emptyList()
-                Triple(songs, sd, snapshot["fetched_at"] as? Long ?: 0L)
+                val seeds = if (sameLocaleAndTaste) {
+                    (snapshot["survey_seeds"] as? String)?.let { encoded ->
+                        runCatching { feedJson.decodeFromString(songList, encoded) }.getOrNull()
+                    }.orEmpty()
+                } else emptyList()
+                listOf(songs, sd, seeds, snapshot["fetched_at"] as? Long ?: 0L)
             }
-            trending = cached
-            if (cachedSpeedDial.isNotEmpty()) {
-                speedDial = cachedSpeedDial.take(9)
-            }
+            @Suppress("UNCHECKED_CAST")
+            val cached = cachedBundle[0] as List<Song>
+            @Suppress("UNCHECKED_CAST")
+            val cachedSpeedDial = cachedBundle[1] as List<Song>
+            @Suppress("UNCHECKED_CAST")
+            val cachedSurveySeeds = cachedBundle[2] as List<Song>
+            val fetchedAt = cachedBundle[3] as Long
 
-            // Immediately populate derived shelves from cached trending + local library on startup
-            val libSnapshot = VelvetApp.library.data.value
+            if (cached.isNotEmpty()) trending = cached
+            if (cachedSurveySeeds.isNotEmpty()) surveySeeds = cachedSurveySeeds
+            if (cachedSpeedDial.isNotEmpty()) speedDial = cachedSpeedDial.take(9)
+
             updateDerivedShelves(
                 recent = libSnapshot.recent,
                 liked = libSnapshot.liked,
@@ -153,97 +172,209 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 eventCount = libSnapshot.listenEvents.size,
             )
 
-            // Fetch YouTube Music pre-made albums and playlists for "More for you"
-            loadMoreForYou(libSnapshot.musicLanguages)
+            refreshForTaste(
+                libSnapshot = libSnapshot,
+                forceRefresh = cached.size < 12 || (System.currentTimeMillis() - fetchedAt) !in 0 until feedMaxAge,
+            )
+        }
+    }
 
-            val verifiedCachedCount = cached.count {
-                it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
-            }
-            val age = System.currentTimeMillis() - fetchedAt
-            if (cached.size >= 12 && verifiedCachedCount >= 9 && age in 0 until feedMaxAge) return@launch
+    private fun onboardingTasteKey(lib: com.velvet.app.data.LibraryData): String = buildString {
+        append(lib.musicLanguages.map { it.trim() }.filter { it.isNotBlank() }.sorted().joinToString(","))
+        append('|')
+        append(lib.preferredArtists.map { it.trim() }.filter { it.isNotBlank() }.sorted().joinToString(","))
+        append('|')
+        append(lib.preferredGenres.map { it.trim() }.filter { it.isNotBlank() }.sorted().joinToString(","))
+        append('|')
+        append(lib.onboardingCompleted)
+    }
 
-            val latest = withContext(Dispatchers.IO) {
-                val rawSongs = try {
-                    YouTube.trendingMusic().distinctBy { it.id }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    emptyList()
-                }
-                val composer = VelvetApp.homeRecommendationComposerOrNull()
-                val currentLib = VelvetApp.library.data.value
-                val langs = currentLib.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
-                val langNames = currentLib.musicLanguages.ifEmpty { listOf("Hindi", "English") }
+    fun refreshAfterOnboarding() {
+        val libSnapshot = VelvetApp.library.data.value
+        val expectedKey = onboardingTasteKey(libSnapshot)
+        if (loadedTasteKey != expectedKey) {
+            refreshForTaste(libSnapshot = libSnapshot, forceRefresh = true)
+        }
+        loadFor(libSnapshot.recent, forceSurveyRefresh = true)
+        loadMoreForYou(
+            languages = libSnapshot.musicLanguages,
+            artists = libSnapshot.preferredArtists,
+            genres = libSnapshot.preferredGenres,
+            forceRefresh = loadedTasteKey != expectedKey,
+        )
+    }
 
-                val initialVerified = if (composer != null) {
-                    composer.rankAndFilterTrending(rawSongs, preferredLanguageIds = langs, limit = 20)
-                } else {
-                    rawSongs.rankMusic().take(20)
-                }
+    fun refreshForTaste(
+        libSnapshot: com.velvet.app.data.LibraryData = VelvetApp.library.data.value,
+        forceRefresh: Boolean = false,
+    ) {
+        val tKey = onboardingTasteKey(libSnapshot)
+        if (!forceRefresh && tKey == loadedTasteKey && trending.size >= 12) return
+        loadedTasteKey = tKey
 
-                // Supplement via YouTube Music FILTER_SONGS catalog so Speed Dial & Trending always
-                // have >= 15 strict verified studio tracks ready for instant 9/9 display.
-                val supplementedRaw = if (initialVerified.size < 12) {
-                    val catalogSongs = langNames.take(2).flatMap { langName ->
-                        runCatching {
-                            YouTube.Search("$langName top hit songs", YouTube.FILTER_SONGS)
-                                .loadNext()
-                                .filterIsInstance<BrowseItem.SongItem>()
-                                .map { it.song }
-                        }.getOrDefault(emptyList())
+        trendingJob?.cancel()
+        trendingJob = viewModelScope.launch {
+            val locale = Locale.getDefault().toLanguageTag()
+            val composer = VelvetApp.homeRecommendationComposerOrNull()
+            val langs = libSnapshot.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
+            val langNames = libSnapshot.musicLanguages.ifEmpty { listOf("Hindi", "English") }
+            val chosenArtists = libSnapshot.preferredArtists
+            val chosenGenres = libSnapshot.preferredGenres
+
+            val (fetchedSurveySeeds, latestTrending) = withContext(Dispatchers.IO) {
+                val seedTask = async {
+                    if (chosenArtists.isEmpty() && chosenGenres.isEmpty()) {
+                        emptyList()
+                    } else {
+                        val queries = buildList {
+                            chosenArtists.take(4).forEach { add("$it songs") }
+                            chosenGenres.take(3).forEach { genre ->
+                                val langPrefix = langNames.firstOrNull().orEmpty()
+                                add(if (langPrefix.isNotBlank()) "$langPrefix $genre songs" else "$genre songs")
+                            }
+                        }
+                        queries.map { q ->
+                            async {
+                                runCatching {
+                                    YouTube.Search(q, YouTube.FILTER_SONGS).loadNext()
+                                        .filterIsInstance<BrowseItem.SongItem>()
+                                        .map { it.song }
+                                        .take(4)
+                                }.getOrDefault(emptyList())
+                            }
+                        }.awaitAll().flatten().distinctBy { it.id }
                     }
-                    (rawSongs + catalogSongs).distinctBy { it.id }
-                } else {
-                    rawSongs
                 }
 
-                val songs = if (composer != null) {
-                    composer.rankAndFilterTrending(supplementedRaw, preferredLanguageIds = langs, limit = 20)
-                } else {
-                    supplementedRaw.rankMusic().take(20)
+                val trendingTask = async {
+                    val rawCharts = runCatching { YouTube.trendingMusic(langNames) }.getOrDefault(emptyList())
+                    val profile = runCatching { VelvetApp.userProfileRepository.getSnapshot() }.getOrNull()
+                    val artistSet = chosenArtists.map { it.trim() }.filter { it.isNotBlank() }.toSet()
+
+                    val initialVerified = if (composer != null) {
+                        composer.rankAndFilterTrending(
+                            rawTrending = rawCharts,
+                            preferredLanguageIds = langs,
+                            preferredArtistNames = artistSet,
+                            preferredGenres = chosenGenres,
+                            tasteProfile = profile,
+                            limit = 20,
+                        )
+                    } else {
+                        rawCharts.rankMusic().take(20)
+                    }
+
+                    val supplementedRaw = if (initialVerified.size < 14) {
+                        val suppQueries = buildList {
+                            if (chosenGenres.isNotEmpty()) {
+                                val topLang = langNames.firstOrNull() ?: "Hindi"
+                                chosenGenres.take(2).forEach { add("$topLang $it top hit songs") }
+                            }
+                            langNames.take(2).forEach { add("$it top hit songs") }
+                        }.distinct().take(3)
+                        val extra = suppQueries.flatMap { q ->
+                            runCatching {
+                                YouTube.Search(q, YouTube.FILTER_SONGS).loadNext()
+                                    .filterIsInstance<BrowseItem.SongItem>()
+                                    .map { it.song }
+                            }.getOrDefault(emptyList())
+                        }
+                        (rawCharts + extra).distinctBy { it.id }
+                    } else {
+                        rawCharts
+                    }
+
+                    if (composer != null) {
+                        composer.rankAndFilterTrending(
+                            rawTrending = supplementedRaw,
+                            preferredLanguageIds = langs,
+                            preferredArtistNames = artistSet,
+                            preferredGenres = chosenGenres,
+                            tasteProfile = profile,
+                            limit = 20,
+                        )
+                    } else {
+                        supplementedRaw.rankMusic().take(20)
+                    }
                 }
-                if (songs.isNotEmpty()) {
-                    cache.edit()
-                        .putString("locale", locale)
-                        .putString("songs", feedJson.encodeToString(songList, songs))
-                        .putLong("fetched_at", System.currentTimeMillis())
-                        .apply()
+
+                val seeds = seedTask.await().let { rawSeeds ->
+                    composer?.filterStrictOriginalAudio(rawSeeds) ?: rawSeeds.rankMusic()
                 }
-                songs
+                val trends = trendingTask.await()
+
+                runCatching {
+                    feedPrefs.edit().apply {
+                        putString("locale", locale)
+                        putString("taste_key", tKey)
+                        if (trends.isNotEmpty()) {
+                            putString("songs", feedJson.encodeToString(songList, trends))
+                            putLong("fetched_at", System.currentTimeMillis())
+                        }
+                        if (seeds.isNotEmpty()) {
+                            putString("survey_seeds", feedJson.encodeToString(songList, seeds))
+                        }
+                    }.apply()
+                }
+
+                seeds to trends
             }
-            if (latest.isNotEmpty()) {
-                trending = latest
-                val libNow = VelvetApp.library.data.value
-                updateDerivedShelves(
-                    recent = libNow.recent,
-                    liked = libNow.liked,
-                    playlistsSongs = libNow.playlists.flatMap { it.songs },
-                    eventCount = libNow.listenEvents.size,
-                )
+
+            if (fetchedSurveySeeds.isNotEmpty()) {
+                surveySeeds = fetchedSurveySeeds
+            }
+            if (latestTrending.isNotEmpty()) {
+                trending = latestTrending
+            } else if (fetchedSurveySeeds.isNotEmpty() && trending.isEmpty()) {
+                trending = fetchedSurveySeeds.take(20)
+            }
+            val libNow = VelvetApp.library.data.value
+            updateDerivedShelves(
+                recent = libNow.recent,
+                liked = libNow.liked,
+                playlistsSongs = libNow.playlists.flatMap { it.songs },
+                eventCount = libNow.listenEvents.size,
+            )
+            if (libNow.recent.isEmpty() && fetchedSurveySeeds.isNotEmpty()) {
+                loadFor(libNow.recent, forceSurveyRefresh = true)
             }
         }
+
+        loadMoreForYou(
+            languages = libSnapshot.musicLanguages,
+            artists = libSnapshot.preferredArtists,
+            genres = libSnapshot.preferredGenres,
+            forceRefresh = forceRefresh,
+        )
     }
 
     private fun mapLanguageToIso(raw: String): String? = when (raw.trim().lowercase(Locale.ROOT)) {
         "hindi" -> "hi"
         "english" -> "en"
         "punjabi" -> "pa"
+        "bhojpuri" -> "bho"
+        "haryanvi" -> "bgc"
+        "bengali", "bangla" -> "bn"
         "tamil" -> "ta"
         "telugu" -> "te"
         "malayalam" -> "ml"
+        "marathi" -> "mr"
+        "gujarati" -> "gu"
         "kannada" -> "kn"
-        "bengali" -> "bn"
         "sanskrit" -> "sa"
+        "urdu" -> "ur"
         else -> null
     }
 
-    /** Build Quick Picks from strict verified studio recommendations anchored by listening habits. */
-    fun loadFor(recent: List<Song>) {
+    /** Build Quick Picks from strict verified studio recommendations anchored by listening habits or survey choices. */
+    fun loadFor(recent: List<Song>, forceSurveyRefresh: Boolean = false) {
+        val libData = VelvetApp.library.data.value
+        val hasSurveyTaste = libData.preferredArtists.isNotEmpty() || libData.preferredGenres.isNotEmpty() || surveySeeds.isNotEmpty()
         val ids = recent.map { it.id }
-        if (ids == historyIds) return
+        if (ids == historyIds && !forceSurveyRefresh) return
         historyIds = ids
         quickPicksJob?.cancel()
-        if (recent.isEmpty()) {
+        if (recent.isEmpty() && !hasSurveyTaste) {
             quickPicks = emptyList()
             return
         }
@@ -252,9 +383,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         quickPicks = quickPicks.filterNot { it.id in played }
         quickPicksJob = viewModelScope.launch {
             val composer = VelvetApp.homeRecommendationComposerOrNull()
-            val libData = VelvetApp.library.data.value
             val langs = libData.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
             val resolved = withContext(Dispatchers.IO) {
+                val profile = runCatching { VelvetApp.userProfileRepository.getSnapshot() }.getOrNull()
                 if (composer != null) {
                     composer.composeQuickPicks(
                         recent = recent,
@@ -265,7 +396,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                                 .filterIsInstance<BrowseItem.SongItem>()
                                 .map { it.song }
                         },
-                        fallbackCatalog = trending,
+                        fallbackCatalog = (surveySeeds + trending).distinctBy { it.id },
+                        preferredArtistNames = libData.preferredArtists.toSet(),
+                        preferredGenres = libData.preferredGenres,
+                        tasteProfile = profile,
                         limit = 15,
                     )
                 } else {
@@ -278,36 +412,88 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Refresh More For You albums and playlists dynamically using chosen languages and periodic rotation */
-    fun loadMoreForYou(languages: List<String>) {
+    /** Refresh More For You albums and playlists dynamically using languages, artists, genres, moods & session rotation. */
+    fun loadMoreForYou(
+        languages: List<String>,
+        artists: List<String> = VelvetApp.library.data.value.preferredArtists,
+        genres: List<String> = VelvetApp.library.data.value.preferredGenres,
+        forceRefresh: Boolean = false,
+    ) {
         val langs = languages.ifEmpty { listOf("Hindi", "English") }
-        if (langs == loadedMoreLanguages && moreForYou.isNotEmpty()) return
-        loadedMoreLanguages = langs
-        viewModelScope.launch(Dispatchers.IO) {
-            val variants = listOf("Top Hits", "Trending Now", "Viral Hits", "New Releases", "Essentials", "Party Hits")
-            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-            val variant = variants[(hour / 3) % variants.size]
+        val lib = VelvetApp.library.data.value
+        val followedOrRecentArtists = (artists + lib.artists.map { it.name } + lib.recent.take(5).map { it.artist })
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val signature = "${langs.joinToString(",")}|${followedOrRecentArtists.take(4).joinToString(",")}|${genres.joinToString(",")}"
+        val now = System.currentTimeMillis()
+        val ageMs = now - lastMoreLoadedAtMs
+        if (!forceRefresh && signature == loadedMoreSignature && moreForYou.isNotEmpty() && ageMs < TimeUnit.MINUTES.toMillis(4)) {
+            return
+        }
+        loadedMoreSignature = signature
+        lastMoreLoadedAtMs = now
+        moreForYouSpin++
 
-            val collected = mutableListOf<AlbumRef>()
-            for (lang in langs.take(3)) {
-                val query1 = "$lang $variant"
-                val playlists = runCatching {
-                    YouTube.Search(query1, YouTube.FILTER_PLAYLISTS).loadNext()
-                        .filterIsInstance<BrowseItem.AlbumItem>()
-                        .map { it.album }
-                }.getOrDefault(emptyList())
+        moreForYouJob?.cancel()
+        moreForYouJob = viewModelScope.launch(Dispatchers.IO) {
+            val playlistDescriptors = listOf(
+                "Trending Now", "Top Hits", "Viral Hits", "New Releases",
+                "Essentials", "Late Night Vibes", "Acoustic Chill", "Party Hits",
+            )
+            val albumDescriptors = listOf("Hits", "Essentials", "New Albums", "Top Releases")
+            val seed = (now / TimeUnit.MINUTES.toMillis(2)) + moreForYouSpin * 31L
+            val rng = java.util.Random(seed)
 
-                val query2 = "$lang Hits"
-                val albums = runCatching {
-                    YouTube.Search(query2, YouTube.FILTER_ALBUMS).loadNext()
-                        .filterIsInstance<BrowseItem.AlbumItem>()
-                        .map { it.album }
-                }.getOrDefault(emptyList())
+            data class FetchSpec(val query: String, val filter: String)
+            val queryPool = mutableListOf<FetchSpec>()
 
-                collected.addAll(playlists.take(4))
-                collected.addAll(albums.take(4))
+            // 1. Chosen / listening-habit languages with rotating descriptors
+            val shuffledPlDesc = playlistDescriptors.shuffled(rng)
+            val shuffledAlDesc = albumDescriptors.shuffled(rng)
+            langs.shuffled(rng).take(3).forEachIndexed { idx, lang ->
+                queryPool += FetchSpec("$lang ${shuffledPlDesc[idx % shuffledPlDesc.size]}", YouTube.FILTER_PLAYLISTS)
+                queryPool += FetchSpec("$lang ${shuffledAlDesc[idx % shuffledAlDesc.size]}", YouTube.FILTER_ALBUMS)
             }
-            val finalItems = collected.distinctBy { it.url }
+
+            // 2. User-chosen genres (onboarding + taste) paired with active languages
+            if (genres.isNotEmpty()) {
+                val primaryLang = langs.first()
+                genres.shuffled(rng).take(3).forEach { genre ->
+                    queryPool += FetchSpec("$primaryLang $genre Playlist", YouTube.FILTER_PLAYLISTS)
+                    queryPool += FetchSpec("$genre Best Albums", YouTube.FILTER_ALBUMS)
+                }
+            }
+
+            // 3. Chosen / followed / recent artists mixes & albums
+            if (followedOrRecentArtists.isNotEmpty()) {
+                followedOrRecentArtists.shuffled(rng).take(3).forEach { artist ->
+                    queryPool += FetchSpec("$artist Mix", YouTube.FILTER_PLAYLISTS)
+                    queryPool += FetchSpec("$artist", YouTube.FILTER_ALBUMS)
+                }
+            }
+
+            val selectedSpecs = queryPool.distinct().shuffled(rng).take(6)
+            val buckets = selectedSpecs.map { spec ->
+                async {
+                    runCatching {
+                        YouTube.Search(spec.query, spec.filter).loadNext()
+                            .filterIsInstance<BrowseItem.AlbumItem>()
+                            .map { it.album }
+                            .take(4)
+                    }.getOrDefault(emptyList())
+                }
+            }.awaitAll()
+
+            // Interleave buckets round-robin so consecutive cards showcase varied themes & genres
+            val interleaved = mutableListOf<AlbumRef>()
+            val maxPerBucket = buckets.maxOfOrNull { it.size } ?: 0
+            for (pos in 0 until maxPerBucket) {
+                for (bucket in buckets) {
+                    bucket.getOrNull(pos)?.let { interleaved.add(it) }
+                }
+            }
+            val finalItems = interleaved.distinctBy { it.url }
             if (finalItems.isNotEmpty()) {
                 withContext(Dispatchers.Main) {
                     moreForYou = finalItems
@@ -325,6 +511,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val qPicks = quickPicks
         val trend = trending
+        val seeds = surveySeeds
         val libData = VelvetApp.library.data.value
         val key = buildString {
             recent.take(30).forEach { append(it.id).append(',') }
@@ -335,7 +522,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             append('|')
             append(eventCount)
             append('|')
+            append(onboardingTasteKey(libData))
+            append('|')
             qPicks.take(20).forEach { append(it.id).append(',') }
+            append('|')
+            seeds.take(20).forEach { append(it.id).append(',') }
             append('|')
             trend.take(20).forEach { append(it.id).append(',') }
         }
@@ -346,22 +537,31 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         derivedJob = viewModelScope.launch {
             val composer = VelvetApp.homeRecommendationComposerOrNull()
             val langs = libData.musicLanguages.mapNotNullTo(mutableSetOf(), ::mapLanguageToIso)
+            val preferredArtistSet = libData.preferredArtists.map { it.trim() }.filter { it.isNotBlank() }.toSet()
+            val preferredGenres = libData.preferredGenres
             val (computedMixes, computedSpeedDial) = withContext(Dispatchers.Default) {
                 val tasteProfile = runCatching { VelvetApp.userProfileRepository.getSnapshot() }.getOrNull()
-                val m = composer?.composeMadeForYouMixSeeds(recent, liked, limit = 8)
-                    ?: (recent + liked).distinctBy { it.artist.lowercase() }.take(8)
+                val m = composer?.composeMadeForYouMixSeeds(
+                    recent = recent,
+                    liked = liked,
+                    limit = 8,
+                    preferredArtistNames = preferredArtistSet,
+                    fallbackCatalog = (seeds + trend).distinctBy { it.id },
+                ) ?: (recent + liked + seeds).distinctBy { it.artist.lowercase() }.take(8)
                 val sd = composer?.composeSpeedDial(
                     recent = recent,
                     liked = liked,
-                    quickPicks = qPicks,
+                    quickPicks = (qPicks + seeds).distinctBy { it.id },
                     trending = trend,
                     limit = 9,
                     playlistsSongs = playlistsSongs,
                     preferredLanguageIds = langs,
                     tasteProfile = tasteProfile,
+                    preferredArtistNames = preferredArtistSet,
+                    preferredGenres = preferredGenres,
                 ) ?: run {
                     val userPicks = (recent + liked + playlistsSongs).distinctBy { it.id }.filter { it.isPureMusic() }.take(4)
-                    val freshDiscovery = (qPicks + trend).distinctBy { it.id }
+                    val freshDiscovery = (qPicks + seeds + trend).distinctBy { it.id }
                         .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
                     (userPicks + freshDiscovery).distinctBy { it.id }.take(9)
                 }
@@ -369,12 +569,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
             mixSeeds = computedMixes
             // Publish atomically so a complete 9/9 grid isn't temporarily replaced by a smaller partial grid mid-fetch
-            if (computedSpeedDial.size >= minOf(9, speedDial.size) || speedDial.isEmpty()) {
+            if (computedSpeedDial.size >= minOf(9, speedDial.size) || speedDial.isEmpty() || libData.onboardingCompleted) {
                 speedDial = computedSpeedDial
                 if (computedSpeedDial.size >= 9) {
+                    val locale = Locale.getDefault().toLanguageTag()
+                    val tKey = onboardingTasteKey(libData)
                     withContext(Dispatchers.IO) {
                         runCatching {
                             feedPrefs.edit()
+                                .putString("locale", locale)
+                                .putString("taste_key", tKey)
                                 .putString("speed_dial_songs", feedJson.encodeToString(songList, computedSpeedDial))
                                 .apply()
                         }
@@ -409,9 +613,17 @@ fun HomeScreen(vm: HomeViewModel) {
     val playlistSongs = remember(data.playlists) { data.playlists.flatMap { it.songs } }
     val eventCount = data.listenEvents.size
 
-    LaunchedEffect(recent) { vm.loadFor(recent) }
-    LaunchedEffect(languages) { vm.loadMoreForYou(languages) }
-    LaunchedEffect(recent, data.liked, playlistSongs, eventCount, quickPicks, trending) {
+    val preferredArtists = data.preferredArtists
+    val preferredGenres = data.preferredGenres
+    val surveySeeds = vm.surveySeeds
+
+    LaunchedEffect(recent, preferredArtists, preferredGenres, surveySeeds) {
+        vm.loadFor(recent, forceSurveyRefresh = surveySeeds.isNotEmpty() || preferredArtists.isNotEmpty() || preferredGenres.isNotEmpty())
+    }
+    LaunchedEffect(languages, preferredArtists, preferredGenres, data.onboardingCompleted) {
+        vm.refreshForTaste(data)
+    }
+    LaunchedEffect(recent, data.liked, playlistSongs, eventCount, quickPicks, trending, surveySeeds, languages, preferredArtists, preferredGenres) {
         vm.updateDerivedShelves(recent, data.liked, playlistSongs, eventCount)
     }
 
