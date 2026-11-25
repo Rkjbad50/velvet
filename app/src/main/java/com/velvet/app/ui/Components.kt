@@ -1477,6 +1477,7 @@ fun VelvetModalSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = skipPartiallyExpanded)
     val scope = rememberCoroutineScope()
     var hiding by remember { mutableStateOf(false) }
+    val reveal = remember { Animatable(0f) }
 
     val hideAndRun: (() -> Unit) -> Unit = { afterHide ->
         if (!hiding) {
@@ -1497,7 +1498,6 @@ fun VelvetModalSheet(
     val registry = LocalOriginRegistry.current
     val origin = remember { registry?.consumeBestOrigin() }
     var sheetW by remember { mutableFloatStateOf(0f) }
-    val reveal = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         reveal.animateTo(1f, VelvetPopupMotion.enterSpring)
     }
