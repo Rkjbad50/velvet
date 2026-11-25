@@ -274,3 +274,23 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - Phase 7 (Unified Engine, Refill Coordinator & Queue Wiring): `checkpoint/phase-7-engine-queue` (`1866f37`)
   - Phases 8–9 (Radio Evolution, Home Composer, Inspector & Acceptance): `checkpoint/phase-8-modes-home` (`04032de`)
   - Release Merge (`v2.7.6`): User-authorized promotion onto `main`, `versionName = "2.7.6"`, cleaned `README.md`, and upgraded `NewPipeExtractor` to `v0.27.1` (VisionOS fast-path client, Java `record Description` handling, and Firefox ESR 153 headers).
+
+### v2.7.6 Post-Release Fixes — Autoplay Queue Loading, Blank-Queue Shuffle Guard & 120Hz Home Transition Speedup
+- **Status:** **Code & CI Verification Complete** (`main` @ `10d8ec3`)
+- **Scope Implemented:**
+  - **Autoplay Queue & Similar Songs Loading (`Models.kt`, `YouTube.kt`, `StreamResolver.kt`, `ReleaseAudioClassifier.kt`, `CandidatePoolBuilder.kt`, `ModeRankerConfig.kt`, `VelvetApp.kt`, `PlayerConnection.kt`):**
+    - Tagged genuine `YouTube.FILTER_SONGS` (`music_songs`) and official `albumPage` (`isAlbum = true`) audio tracks with `isYouTubeMusicCatalog = true` cleanly (`FILTER_VIDEOS`, generic Watch pages, and unverified uploads remain untagged).
+    - Updated `ReleaseAudioClassifier` so non-rejected `isYouTubeMusicCatalog && hasSquareArtwork` tracks verify as `ReleaseAudioClass.VERIFIED_STUDIO_AUDIO` (`ytmusic_catalog_square_audio`), while keeping all hard rejections (OMV, lyric videos, visualizers, live concerts, UGC/covers, remixes/slowed) and fail-closed `UNVERIFIED` checks on 16:9 / non-catalog uploads intact.
+    - Hardened `StreamResolver.related(videoId)` + `VelvetApp` `G1_RELATED` with YT Music catalog fallback (never caching transient empty failures), increased `CandidatePoolBuilder` defaults (`4_500ms` per-source / `5_500ms` overall) with incremental concurrent collection so fast sources are never discarded if a remote source times out, and prioritized `Genre > Mood > Tempo` in `ModeRankerConfigs`.
+  - **Next Button & Blank-Queue Shuffle Crash Prevention (`PlayerConnection.kt`, `QueueExoAdapter.kt`, `PlayerQueueManager.kt`, `NowPlaying.kt`):**
+    - Fixed `PlayerConnection.next()` so pressing Next on an empty queue triggers `checkAndExtendAutoplay(..., autoPlayNext = true, force = true)` instead of clearing `queueManager.current` to `null` while audio/Now Playing stays active (which previously caused subsequent `cycleShuffle()` taps to wipe ExoPlayer and force-close `NowPlayingScreen`).
+    - Hardened `PlayerConnection.cycleShuffle()` with null/empty-queue re-anchoring, safe Toast guards, and automatic autoplay kick-start on blank queues; guarded `QueueExoAdapter.syncToExoPlayer` against `curIdx < 0` / out-of-range indices; added empty-queue guidance row in `QueueSheet`.
+  - **Instant Home Return, 120Hz Refresh Rate & Snappy Jelly Transitions (`MainActivity.kt`, `HomeScreen.kt`):**
+    - Added `configurePreferredRefreshRate()` in `MainActivity` (`minSdk 31+`) to select the highest supported display refresh rate mode at current panel resolution.
+    - Hoisted `homeVm` (`HomeViewModel`) and replaced destructive tab unmounting with `PersistentRootTabs` + `updateTransition`, preserving `HomeScreen`/`SearchScreen`/`LibraryScreen` + `vm.listState` hot in memory while unplacing obscured idle tabs (`0` draw/layout/touch cost), moving `HomeRecommendationComposer` shelf derivation to `Dispatchers.Default`, deduplicating `loadMoreForYou`, and adding snappy directional jelly-spring gliding (`dampingRatio = 0.78f, stiffness = 620f`).
+- **CI/CD Verification (`main` @ `10d8ec3`):**
+  - **Run ID:** `45518926968` (`Build & Verify (CI)` job `138885513905`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 3m 23s** (`59 actionable tasks`), `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **294 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including 3 new regression tests in `Phase2IdentityAndFeaturesTest`, `Phase4CandidateAndFilterTest`, and `PlayerQueueTest`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; physical-device UI animation feel, live 120Hz panel locking, and live YouTube Music network queues await on-device confirmation.
+- **Rollback Point:** Previous `v2.7.6` baseline on `main` (`fe498fd`).
