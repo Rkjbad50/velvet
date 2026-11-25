@@ -1,7 +1,6 @@
 package com.velvet.app.ui
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -131,12 +130,7 @@ class MainActivity : ComponentActivity() {
     /** Request the highest supported panel refresh rate (90/120Hz+) without altering screen resolution. */
     private fun configurePreferredRefreshRate() {
         runCatching {
-            val currentDisplay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                display ?: windowManager.defaultDisplay
-            } else {
-                @Suppress("DEPRECATION")
-                windowManager.defaultDisplay
-            } ?: return
+            val currentDisplay = display ?: return
             val active = currentDisplay.mode ?: return
             val bestMode = currentDisplay.supportedModes
                 .filter { it.physicalWidth == active.physicalWidth && it.physicalHeight == active.physicalHeight }

@@ -3,10 +3,12 @@ package com.velvet.app.unit
 import com.velvet.app.data.Song
 import com.velvet.app.data.isSameTrackAs
 import com.velvet.app.playback.PlayerQueueManager
+import com.velvet.app.playback.ShuffleMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
