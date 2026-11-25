@@ -298,3 +298,24 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - **Unit Test Results (`:app:testReleaseUnitTest`):** **295 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including regression tests in `Phase2IdentityAndFeaturesTest`, `Phase4CandidateAndFilterTest`, `Phase8ModesAndHomeTest`, and `PlayerQueueTest`.
 - **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; physical-device UI animation feel, live 120Hz panel locking, and live YouTube Music network queues await on-device confirmation.
 - **Rollback Point:** Previous `v2.7.6` baseline on `main` (`fe498fd`).
+
+### v2.7.6 Post-Release Update — Genre-First Diversity, YouTube Music InnerTube Hybrid & Silky Popup/Slider/Player Motion
+- **Status:** **Code & CI Verification Complete** (`main` @ `5bbe454`)
+- **Scope Implemented:**
+  - **Strict Same-Title Suppression (Devotional/Bhajan & General Catalog):**
+    - Added `canonicalCompositionTitleKey` & `isSameCompositionTitle` in `RecordingIdentityResolver.kt` (normalizing alternate-singer titles and honorific prefixes like `shree`/`jai`/`om` while preserving Phase 2 `workId` contracts).
+    - Enforced composition-level deduplication in `DuplicateFilter.kt`, `SequenceOptimizer.kt` (`usedCompositionKeys`), `DefaultCandidateSources.kt` (diversified liturgical G5 queries & seed composition filtering), and `StreamResolver.kt` (`related(videoId)` filtering), preventing multi-singer clones of the same devotional or film track from repeating in queues.
+  - **Dominant Genre -> Category -> Type -> Mood -> Tempo Priority (`ModeRankerConfig.kt`):**
+    - Elevated **Genre** (`0.35–0.36`) and **Category/Type** (`0.24`), followed by **Mood** (`0.15`) and **Tempo** (`0.11`), strictly above artist, language, era, or popularity tie-breakers across `SIMILAR_SONGS`, `SONG_RADIO`, `NEXT_SONG`, and `AUTOPLAY_REFILL`.
+  - **Hybrid YouTube Music InnerTube + NewPipeExtractor (`YouTubeMusicInnertube.kt`, `StreamResolver.kt`, `YouTube.kt`, `VelvetApp.kt`):**
+    - Added native OkHttp + nanojson `YouTubeMusicInnertube` (`WEB_REMIX` `/next` `RDAMVM` + Related `/browse`, `FILTER_SONGS` `/search`, and `ANDROID_VR` `/player` tertiary stream fallback) gated strictly to `MUSIC_VIDEO_TYPE_ATV` / square-art catalog tracks while rejecting `OMV`/`UGC`/`PODCAST_EPISODE`.
+    - Removed stale Watch-only `relatedCache` overwrite in `StreamResolver.fetchFull()` and preserved upstream `ExtractionException` / bot-check diagnoses when both extractors fail.
+  - **Silky Popups, Sliders & Coherent Player Expand/Minimize (`Components.kt`, `MainActivity.kt`, `NowPlaying.kt`, `Controls.kt`, `EqualizerScreen.kt`, `CollectionScreens.kt`, `LibraryScreen.kt`, `SettingsControls.kt`, `SettingsScreen.kt`, `RadioNotificationBanner.kt`):**
+    - Unified all dialogs (`VelvetAnimatedDialog`, `VelvetAlertDialog`, `VelvetDialogHost`), bottom sheets (`VelvetModalSheet` with exit-animated action dismissal), dropdown menus (`VelvetDropdownMenu`), and banner exit persistence (`RadioNotificationBanner`).
+    - Upgraded `WavySeekBar`, `SegmentedSeekBar`, `MiniPlayer` progress bar, and `EqualizerScreen` `SliderRow` with 120Hz `Animatable` playhead glide, `snap()` drag tracking, and press/drag thumb spring scaling.
+    - Unified `MiniPlayer` <-> `NowPlayingScreen` expand/minimize with synchronized scrim/dock depth scaling, dynamic corner rounding, swipe-up on `MiniPlayer`, and interactive pull-down-to-minimize drag handoff on `NowPlayingScreen`.
+- **CI/CD Verification (`main` @ `5bbe454`):**
+  - **Run ID:** `45526608916` (`Build & Verify (CI)` job `138911435267`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 2m 45s**, `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **300 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including all 5 new suites in `app/src/test/java/com/velvet/app/unit/Phase8DiversityAndInnertubeTest.kt`.
+- **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`9f8d1d5`).
