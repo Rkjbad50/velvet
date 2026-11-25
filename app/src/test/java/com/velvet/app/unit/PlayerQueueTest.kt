@@ -799,4 +799,32 @@ class PlayerQueueTest {
         manager.toggleShuffle()
         assertEquals("Should guarantee an alternate order for 2 tracks", listOf("pair_2", "pair_1"), manager.upNext.map { it.song.id })
     }
+
+    @Test
+    fun testBlankQueue_cycleShuffleAndSmartShuffleNeverCrashes_andPreservesCurrentSong() {
+        val singleSong = makeSong("solo_track", "Solo Track")
+        val manager = PlayerQueueManager()
+
+        // Empty manager before any track loaded
+        assertEquals(ShuffleMode.STANDARD, manager.cycleShuffleMode(allowSmartShuffle = false))
+        assertEquals(ShuffleMode.OFF, manager.cycleShuffleMode(allowSmartShuffle = false))
+        assertNull(manager.current)
+
+        // Single standalone song with blank upNext / empty userQueue
+        manager.start(listOf(singleSong), startIndex = 0, shuffled = false)
+        assertTrue(manager.upNext.isEmpty())
+        assertTrue(manager.userQueue.isEmpty())
+
+        assertEquals(ShuffleMode.STANDARD, manager.cycleShuffleMode(allowSmartShuffle = true))
+        assertEquals(singleSong.id, manager.current?.id)
+        assertTrue(manager.upNext.isEmpty())
+
+        assertEquals(ShuffleMode.SMART, manager.cycleShuffleMode(allowSmartShuffle = true))
+        assertEquals(singleSong.id, manager.current?.id)
+        assertTrue(manager.upNext.isEmpty())
+
+        assertEquals(ShuffleMode.OFF, manager.cycleShuffleMode(allowSmartShuffle = true))
+        assertEquals(singleSong.id, manager.current?.id)
+        assertTrue(manager.upNext.isEmpty())
+    }
 }

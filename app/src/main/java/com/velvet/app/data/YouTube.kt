@@ -52,8 +52,15 @@ object YouTube {
             hasMore = page.hasNextPage()
             val items = page.items.mapNotNull { it.toBrowseItem(isAlbum = filter == FILTER_ALBUMS) }
             return if (filter == FILTER_SONGS) {
-                items.filter { item ->
-                    (item as? BrowseItem.SongItem)?.song?.let { it.isPureMusic() && it.isOriginalMusicAudio() } ?: true
+                items.mapNotNull { item ->
+                    val songItem = item as? BrowseItem.SongItem ?: return@mapNotNull item
+                    val catalogSong = songItem.song.copy(
+                        isYouTubeMusicCatalog = true,
+                        preferredMusicSource = songItem.song.preferredMusicSource || songItem.song.hasSquareArtwork,
+                    )
+                    if (catalogSong.isPureMusic() && catalogSong.isOriginalMusicAudio()) {
+                        BrowseItem.SongItem(catalogSong)
+                    } else null
                 }.sortedByDescending { (it as? BrowseItem.SongItem)?.song?.preferredMusicSource == true }
             } else {
                 items
@@ -203,7 +210,16 @@ object YouTube {
             thumb = hint?.thumb ?: biggest(info.thumbnails) ?: songs.firstOrNull()?.thumb,
             isAlbum = hint?.isAlbum ?: true,
         )
-        AlbumPage(album, songs.distinctBy { it.id }.map { it.copy(album = album.title) })
+        AlbumPage(
+            album,
+            songs.distinctBy { it.id }.map {
+                it.copy(
+                    album = album.title,
+                    isYouTubeMusicCatalog = album.isAlbum,
+                    preferredMusicSource = it.preferredMusicSource || (album.isAlbum && it.hasSquareArtwork),
+                )
+            },
+        )
     }
 
     /** YouTube's music trending chart, for the home screen. Filtered for pure music releases only. */

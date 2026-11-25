@@ -387,4 +387,46 @@ class Phase2IdentityAndFeaturesTest {
         assertEquals(1.0, clamped.eraConfidence, 0.001)
         assertEquals(0.0, clamped.languageConfidence, 0.001)
     }
+
+    @Test
+    fun strictOriginalAudioClassifier_acceptsYouTubeMusicSquareCatalogAudio_andStillRejectsVideosAnd16x9() {
+        val ytMusicSong = Song(
+            id = "ytm1",
+            title = "Apna Bana Le",
+            artist = "Arijit Singh",
+            durationSec = 261,
+            isUploaderVerified = false,
+            isTopicRelease = false,
+            hasSquareArtwork = true,
+            isYouTubeMusicCatalog = true,
+        )
+        val ytMusicVideo16x9 = Song(
+            id = "ytm2",
+            title = "Apna Bana Le",
+            artist = "Arijit Singh",
+            durationSec = 261,
+            hasSquareArtwork = false,
+            isYouTubeMusicCatalog = true,
+        )
+        val ytMusicLiveEvenIfSquare = Song(
+            id = "ytm3",
+            title = "Apna Bana Le (Live Concert)",
+            artist = "Arijit Singh",
+            durationSec = 290,
+            hasSquareArtwork = true,
+            isYouTubeMusicCatalog = true,
+        )
+
+        val clsValid = ReleaseAudioClassifier.classify(ytMusicSong)
+        assertEquals(ReleaseAudioClass.VERIFIED_STUDIO_AUDIO, clsValid.audioClass)
+        assertTrue(clsValid.isVerifiedOriginalAudio)
+
+        val cls16x9 = ReleaseAudioClassifier.classify(ytMusicVideo16x9)
+        assertEquals(ReleaseAudioClass.UNVERIFIED, cls16x9.audioClass)
+        assertFalse(cls16x9.isVerifiedOriginalAudio)
+
+        val clsLive = ReleaseAudioClassifier.classify(ytMusicLiveEvenIfSquare)
+        assertEquals(ReleaseAudioClass.REJECTED_LIVE, clsLive.audioClass)
+        assertFalse(clsLive.isVerifiedOriginalAudio)
+    }
 }

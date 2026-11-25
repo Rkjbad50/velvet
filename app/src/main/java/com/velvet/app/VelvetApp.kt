@@ -116,7 +116,23 @@ class VelvetApp : Application(), ImageLoaderFactory {
         }
         val sources = listOf(
             com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource(
-                relatedProvider = { seed -> com.velvet.app.data.StreamResolver.related(seed.id) },
+                relatedProvider = { seed ->
+                    val related = runCatching { com.velvet.app.data.StreamResolver.related(seed.id) }
+                        .getOrDefault(emptyList())
+                    val verifiedCount = related.count {
+                        it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
+                    }
+                    if (verifiedCount >= 4) {
+                        related
+                    } else {
+                        val artistQuery = com.velvet.app.playback.normalizePrimaryArtist(seed.artist)
+                            .ifBlank { seed.artist.trim() }
+                        val supplemental = if (artistQuery.isNotBlank()) {
+                            runCatching { searchSongsProvider("$artistQuery songs") }.getOrDefault(emptyList())
+                        } else emptyList()
+                        (supplemental + related).filter { it.id != seed.id }.distinctBy { it.id }
+                    }
+                },
             ),
             com.velvet.app.recommendation.candidates.SameReleaseCandidateSource(
                 releaseTracksProvider = searchSongsProvider,

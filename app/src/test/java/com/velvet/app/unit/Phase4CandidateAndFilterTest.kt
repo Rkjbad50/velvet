@@ -326,4 +326,31 @@ class Phase4CandidateAndFilterTest {
         assertEquals(listOf("h_valid1"), deduped.kept.map { it.song.id })
         assertTrue(deduped.removedAlreadyKnownCount >= 1)
     }
+
+    @Test
+    fun candidatePoolBuilder_preservesFastCompletedSourcesWhenSlowSourceExceedsOverallDeadline() = runBlocking {
+        val seed = topicSong("seed_fast", "Tum Hi Ho", "Arijit Singh")
+        val fastTrack = topicSong("fast_ok", "Channa Mereya", "Arijit Singh")
+
+        val fastSource = SeedRelatedCandidateSource(relatedProvider = { listOf(fastTrack) })
+        val verySlowSource = object : RecommendationCandidateSource {
+            override val sourceId = "very_slow_src"
+            override suspend fun fetch(request: CandidateSourceRequest): CandidateSourceResult {
+                delay(2_000L)
+                return CandidateSourceResult(sourceId, emptyList(), 0L, 2_000L, CandidateSourceStatus.SUCCESS)
+            }
+        }
+
+        val builder = CandidatePoolBuilder(
+            sources = listOf(fastSource, verySlowSource),
+            perSourceTimeoutMs = 1_500L,
+            overallDeadlineMs = 200L,
+        )
+        val req = RecommendationRequest("req-deadline", RecommendationMode.AUTOPLAY_REFILL, seedSongs = listOf(seed))
+        val pool = builder.build(req, UserTasteSnapshot())
+
+        assertEquals(listOf("fast_ok"), pool.candidates.map { it.song.id })
+        assertEquals(CandidateSourceStatus.SUCCESS, pool.sourceHealth["g1_related"]?.status)
+        assertEquals(CandidateSourceStatus.TIMEOUT, pool.sourceHealth["very_slow_src"]?.status)
+    }
 }

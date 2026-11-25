@@ -1,6 +1,7 @@
 package com.velvet.app.ui
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -9,11 +10,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -22,6 +26,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,6 +59,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -61,7 +67,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -86,6 +95,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        configurePreferredRefreshRate()
         setContent {
             val data by VelvetApp.library.data.collectAsStateWithLifecycle()
             val dark = data.isDarkTheme
@@ -112,8 +122,31 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        configurePreferredRefreshRate()
         AppUpdater.checkInstallResult(this) { message ->
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Request the highest supported panel refresh rate (90/120Hz+) without altering screen resolution. */
+    private fun configurePreferredRefreshRate() {
+        runCatching {
+            val currentDisplay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display ?: windowManager.defaultDisplay
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            } ?: return
+            val active = currentDisplay.mode ?: return
+            val bestMode = currentDisplay.supportedModes
+                .filter { it.physicalWidth == active.physicalWidth && it.physicalHeight == active.physicalHeight }
+                .maxByOrNull { it.refreshRate }
+                ?: currentDisplay.supportedModes.maxByOrNull { it.refreshRate }
+            if (bestMode != null && bestMode.modeId != window.attributes.preferredDisplayModeId) {
+                window.attributes = window.attributes.also { attrs ->
+                    attrs.preferredDisplayModeId = bestMode.modeId
+                }
+            }
         }
     }
 
@@ -152,6 +185,7 @@ private fun AppRoot() {
     // survives rotation and the app being recreated
     val nav = rememberSaveable(saver = Navigator.Saver) { Navigator() }
     var menu by remember { mutableStateOf<SongMenuRequest?>(null) }
+    val homeVm: HomeViewModel = viewModel(key = "home")
     val searchVm: SearchViewModel = viewModel(key = "search")
     val context = LocalContext.current
     val hasPlayer = PlayerConnection.current != null
@@ -238,46 +272,82 @@ private fun AppRoot() {
                 }
 
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    AnimatedContent(
-                        targetState = Pair(nav.tab, nav.current),
+                    val detailTransition = updateTransition(targetState = nav.current, label = "detailScreenTransition")
+                    val keepRootMeasured = detailTransition.currentState == null || detailTransition.targetState == null
+
+                    // Keep Home/Search/Library hot in the Compose slot table so switching back to Home
+                    // takes <1ms with zero remount delay/jerk, while gliding with crisp jelly spring physics.
+                    PersistentRootTabs(
+                        activeTab = nav.tab,
+                        isRootVisible = keepRootMeasured,
+                        homeVm = homeVm,
+                        searchVm = searchVm,
+                    )
+
+                    @OptIn(ExperimentalAnimationApi::class)
+                    detailTransition.AnimatedContent(
                         transitionSpec = {
-                            val isTabSwitch = initialState.second == null && targetState.second == null
-                            if (isTabSwitch) {
-                                // Fluid butter-smooth tab transition with zero scale jerk
-                                fadeIn(animationSpec = tween(140, easing = LinearEasing))
-                                    .togetherWith(fadeOut(animationSpec = tween(140, easing = LinearEasing)))
-                            } else if (targetState.second != null && initialState.second == null) {
-                                // Detail screen entrance: elegant subtle slide & fade
-                                (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                                    slideInHorizontally(initialOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(220, easing = FastOutSlowInEasing)))
-                                    .togetherWith(fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing)))
+                            if (targetState != null && initialState == null) {
+                                // Detail push: crisp jelly-smooth horizontal slide + quick fade
+                                (slideInHorizontally(
+                                    initialOffsetX = { (it * 0.28f).toInt() },
+                                    animationSpec = spring(dampingRatio = 0.80f, stiffness = 580f),
+                                ) + fadeIn(animationSpec = tween(140, easing = FastOutSlowInEasing)))
+                                    .togetherWith(
+                                        fadeOut(animationSpec = tween(110, easing = FastOutSlowInEasing)) +
+                                            slideOutHorizontally(
+                                                targetOffsetX = { -(it * 0.08f).toInt() },
+                                                animationSpec = spring(dampingRatio = 0.85f, stiffness = 620f),
+                                            ),
+                                    )
+                            } else if (targetState == null && initialState != null) {
+                                // Detail pop back to root tabs: fast jelly glide retreat
+                                fadeIn(animationSpec = tween(120, easing = FastOutSlowInEasing))
+                                    .togetherWith(
+                                        fadeOut(animationSpec = tween(130, easing = FastOutSlowInEasing)) +
+                                            slideOutHorizontally(
+                                                targetOffsetX = { (it * 0.30f).toInt() },
+                                                animationSpec = spring(dampingRatio = 0.82f, stiffness = 620f),
+                                            ),
+                                    )
                             } else {
-                                // Detail screen exit: graceful retreat
-                                fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
-                                    .togetherWith(fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)) +
-                                        slideOutHorizontally(targetOffsetX = { (it * 0.08f).toInt() }, animationSpec = tween(180, easing = FastOutSlowInEasing)))
+                                // Detail-to-detail transition
+                                (slideInHorizontally(
+                                    initialOffsetX = { (it * 0.24f).toInt() },
+                                    animationSpec = spring(dampingRatio = 0.80f, stiffness = 600f),
+                                ) + fadeIn(animationSpec = tween(140)))
+                                    .togetherWith(
+                                        fadeOut(animationSpec = tween(110)) +
+                                            slideOutHorizontally(
+                                                targetOffsetX = { -(it * 0.08f).toInt() },
+                                                animationSpec = spring(dampingRatio = 0.85f, stiffness = 620f),
+                                            ),
+                                    )
                             }
                         },
-                        label = "screenTransition",
-                    ) { (_, currentRoute) ->
-                        when (currentRoute) {
-                            null -> when (nav.tab) {
-                                0 -> HomeScreen(viewModel())
-                                1 -> SearchScreen(searchVm)
-                                else -> LibraryScreen()
+                    ) { currentRoute ->
+                        if (currentRoute != null) {
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(velvetColors.background)
+                                    .pointerInput(Unit) { detectTapGestures { } },
+                            ) {
+                                when (currentRoute) {
+                                    Route.Liked -> LikedScreen(onBack = nav::back)
+                                    Route.Recent -> RecentScreen(onBack = nav::back)
+                                    Route.History -> HistoryScreen(onBack = nav::back)
+                                    Route.Downloads -> DownloadsScreen(onBack = nav::back)
+                                    Route.Settings -> SettingsScreen(onBack = nav::back)
+                                    Route.Equalizer -> EqualizerScreen(onBack = nav::back)
+                                    Route.Import -> ImportScreen(onBack = nav::back)
+                                    Route.Developer -> DeveloperScreen(onBack = nav::back)
+                                    is Route.LocalPlaylist -> LocalPlaylistScreen(currentRoute.id, onBack = nav::back)
+                                    is Route.Album -> AlbumScreen(currentRoute.album, onBack = nav::back)
+                                    is Route.Artist -> ArtistScreen(currentRoute.artist, onBack = nav::back)
+                                    is Route.Genre -> GenreScreen(currentRoute.name, onBack = nav::back)
+                                }
                             }
-                            Route.Liked -> LikedScreen(onBack = nav::back)
-                            Route.Recent -> RecentScreen(onBack = nav::back)
-                            Route.History -> HistoryScreen(onBack = nav::back)
-                            Route.Downloads -> DownloadsScreen(onBack = nav::back)
-                            Route.Settings -> SettingsScreen(onBack = nav::back)
-                            Route.Equalizer -> EqualizerScreen(onBack = nav::back)
-                            Route.Import -> ImportScreen(onBack = nav::back)
-                            Route.Developer -> DeveloperScreen(onBack = nav::back)
-                            is Route.LocalPlaylist -> LocalPlaylistScreen(currentRoute.id, onBack = nav::back)
-                            is Route.Album -> AlbumScreen(currentRoute.album, onBack = nav::back)
-                            is Route.Artist -> ArtistScreen(currentRoute.artist, onBack = nav::back)
-                            is Route.Genre -> GenreScreen(currentRoute.name, onBack = nav::back)
                         }
                     }
                 }
@@ -302,13 +372,13 @@ private fun AppRoot() {
             AnimatedVisibility(
                 visible = nav.nowPlayingOpen && hasPlayer,
                 enter = slideInVertically(
-                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 520f),
                     initialOffsetY = { it },
-                ) + fadeIn(animationSpec = tween(200)),
+                ) + fadeIn(animationSpec = tween(150)),
                 exit = slideOutVertically(
-                    animationSpec = tween(260, easing = FastOutSlowInEasing),
+                    animationSpec = spring(dampingRatio = 0.88f, stiffness = 580f),
                     targetOffsetY = { it },
-                ) + fadeOut(animationSpec = tween(160)),
+                ) + fadeOut(animationSpec = tween(130)),
             ) {
                 NowPlayingScreen(onClose = { nav.nowPlayingOpen = false })
             }
@@ -321,6 +391,95 @@ private fun AppRoot() {
         }
 
         menu?.let { request -> SongActionsSheet(request) { menu = null } }
+    }
+}
+
+@Composable
+private fun PersistentRootTabs(
+    activeTab: Int,
+    isRootVisible: Boolean,
+    homeVm: HomeViewModel,
+    searchVm: SearchViewModel,
+) {
+    var settledTab by remember { mutableIntStateOf(activeTab) }
+    var outgoingTab by remember { mutableIntStateOf(activeTab) }
+    val glideAnim = remember { Animatable(1f) }
+    var directionSign by remember { mutableIntStateOf(1) }
+
+    LaunchedEffect(activeTab) {
+        if (activeTab != settledTab) {
+            outgoingTab = settledTab
+            directionSign = if (activeTab > settledTab) 1 else -1
+            settledTab = activeTab
+            glideAnim.snapTo(0f)
+            glideAnim.animateTo(
+                targetValue = 1f,
+                // Crisp jelly-smooth gliding spring: snappy settle (~180ms), silky motion, zero sluggishness
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 620f),
+            )
+            outgoingTab = activeTab
+        }
+    }
+
+    val p = glideAnim.value
+    val isTransitioning = outgoingTab != settledTab && p < 0.998f
+
+    Layout(
+        content = {
+            @Composable
+            fun tabSlot(tabIndex: Int, content: @Composable () -> Unit) {
+                val isIncoming = tabIndex == settledTab
+                val isOutgoing = isTransitioning && tabIndex == outgoingTab
+                val slotAlpha = when {
+                    isIncoming && isTransitioning -> (0.25f + 0.75f * p).coerceIn(0f, 1f)
+                    isIncoming -> 1f
+                    isOutgoing -> (1f - p * 1.15f).coerceIn(0f, 1f)
+                    else -> 0f
+                }
+                val slotScale = when {
+                    isIncoming && isTransitioning -> 0.968f + 0.032f * p
+                    isIncoming -> 1f
+                    isOutgoing -> 1f - 0.032f * p
+                    else -> 1f
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            val travelPx = size.width * 0.32f
+                            translationX = when {
+                                isIncoming && isTransitioning -> directionSign * travelPx * (1f - p)
+                                isOutgoing -> -directionSign * travelPx * 0.55f * p
+                                else -> 0f
+                            }
+                            scaleX = slotScale
+                            scaleY = slotScale
+                            alpha = slotAlpha
+                        },
+                ) {
+                    content()
+                }
+            }
+
+            tabSlot(0) { HomeScreen(homeVm) }
+            tabSlot(1) { SearchScreen(searchVm) }
+            tabSlot(2) { LibraryScreen() }
+        },
+        modifier = Modifier.fillMaxSize(),
+    ) { measurables, constraints ->
+        // Only measure & place active / transitioning tabs; unplaced tabs remain hot in composition
+        // with zero draw cost, zero layout cost, and zero touch or semantics interference.
+        val placeables = measurables.mapIndexed { idx, measurable ->
+            val shouldPlace = (isRootVisible && (idx == settledTab || (isTransitioning && idx == outgoingTab)))
+            if (shouldPlace) measurable.measure(constraints) else null
+        }
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            // Draw outgoing first so incoming tab glides cleanly over it
+            if (isTransitioning) {
+                placeables.getOrNull(outgoingTab)?.placeRelative(0, 0)
+            }
+            placeables.getOrNull(settledTab)?.placeRelative(0, 0)
+        }
     }
 }
 

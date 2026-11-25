@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -97,14 +98,24 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
+    val listState = LazyListState()
+
     var quickPicks by mutableStateOf<List<Song>>(emptyList())
         private set
     var trending by mutableStateOf<List<Song>>(emptyList())
         private set
     var moreForYou by mutableStateOf<List<AlbumRef>>(emptyList())
         private set
+    var mixSeeds by mutableStateOf<List<Song>>(emptyList())
+        private set
+    var speedDial by mutableStateOf<List<Song>>(emptyList())
+        private set
+
     private var historyIds = emptyList<String>()
+    private var loadedMoreLanguages: List<String>? = null
+    private var lastDerivedKey: String? = null
     private var quickPicksJob: Job? = null
+    private var derivedJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -215,6 +226,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     /** Refresh More For You albums and playlists dynamically using chosen languages and periodic rotation */
     fun loadMoreForYou(languages: List<String>) {
         val langs = languages.ifEmpty { listOf("Hindi", "English") }
+        if (langs == loadedMoreLanguages && moreForYou.isNotEmpty()) return
+        loadedMoreLanguages = langs
         viewModelScope.launch(Dispatchers.IO) {
             val variants = listOf("Top Hits", "Trending Now", "Viral Hits", "New Releases", "Essentials", "Party Hits")
             val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
@@ -247,6 +260,43 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /** Compute Speed Dial and Made For You mix seeds off the Main UI thread to keep Home transitions 120Hz smooth. */
+    fun updateDerivedShelves(recent: List<Song>, liked: List<Song>) {
+        val qPicks = quickPicks
+        val trend = trending
+        val key = buildString {
+            recent.take(30).forEach { append(it.id).append(',') }
+            append('|')
+            liked.take(30).forEach { append(it.id).append(',') }
+            append('|')
+            qPicks.take(20).forEach { append(it.id).append(',') }
+            append('|')
+            trend.take(20).forEach { append(it.id).append(',') }
+        }
+        if (key == lastDerivedKey) return
+        lastDerivedKey = key
+
+        derivedJob?.cancel()
+        derivedJob = viewModelScope.launch {
+            val composer = VelvetApp.homeRecommendationComposerOrNull()
+            val (computedMixes, computedSpeedDial) = withContext(Dispatchers.Default) {
+                val m = composer?.composeMadeForYouMixSeeds(recent, liked, limit = 8)
+                    ?: (recent + liked).distinctBy { it.artist.lowercase() }.take(8)
+                val sd = composer?.composeSpeedDial(recent, liked, qPicks, trend, limit = 9)
+                    ?: run {
+                        val userPicks = (recent + liked).distinctBy { it.id }.filter { it.isPureMusic() }.take(3)
+                        val freshDiscovery = (qPicks + trend).distinctBy { it.id }
+                            .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
+                            .take(6)
+                        (userPicks + freshDiscovery).take(9)
+                    }
+                m to sd
+            }
+            mixSeeds = computedMixes
+            speedDial = computedSpeedDial
+        }
+    }
 }
 
 private fun List<Song>.rankMusic() = distinctBy { it.id }.sortedByDescending { it.preferredMusicSource }
@@ -272,6 +322,9 @@ fun HomeScreen(vm: HomeViewModel) {
 
     LaunchedEffect(recent) { vm.loadFor(recent) }
     LaunchedEffect(languages) { vm.loadMoreForYou(languages) }
+    LaunchedEffect(recent, data.liked, quickPicks, trending) {
+        vm.updateDerivedShelves(recent, data.liked)
+    }
 
     val filteredRecents = remember(data.contextRecents, data.playlists) {
         ContextRecentsManager.filterDeletedPlaylists(data.contextRecents, data.playlists)
@@ -309,25 +362,9 @@ fun HomeScreen(vm: HomeViewModel) {
         }
     }.take(4)
 
-    val composer = remember { VelvetApp.homeRecommendationComposerOrNull() }
-
-    // One radio per verified artist you listen to, balanced across artists and styles
-    val mixes = remember(recent, data.liked) {
-        composer?.composeMadeForYouMixSeeds(recent, data.liked, limit = 8)
-            ?: (recent + data.liked).distinctBy { it.artist.lowercase() }.take(8)
-    }
-
-    // Speed Dial songs: strict verified studio tracks mixing familiar picks + fresh discovery
-    val speedDialSongs = remember(recent, data.liked, quickPicks, trending) {
-        composer?.composeSpeedDial(recent, data.liked, quickPicks, trending, limit = 9)
-            ?: run {
-                val userPicks = (recent + data.liked).distinctBy { it.id }.filter { it.isPureMusic() }.take(3)
-                val freshDiscovery = (quickPicks + trending).distinctBy { it.id }
-                    .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
-                    .take(6)
-                (userPicks + freshDiscovery).take(9)
-            }
-    }
+    // Precomputed off Main thread inside HomeViewModel for zero tab-switch jerk
+    val mixes = vm.mixSeeds
+    val speedDialSongs = vm.speedDial
 
     val homeVisitRequestId = remember { UUID.randomUUID().toString() }
 
@@ -341,7 +378,11 @@ fun HomeScreen(vm: HomeViewModel) {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(
+        state = vm.listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
         item(key = "velvet-heading") {
             Row(
                 Modifier

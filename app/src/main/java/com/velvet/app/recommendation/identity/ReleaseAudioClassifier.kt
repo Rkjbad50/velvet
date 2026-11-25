@@ -237,8 +237,21 @@ object ReleaseAudioClassifier {
             )
         }
 
+        // YouTube Music catalog songs (MUSIC_SONGS / official album tracks) expose square album
+        // cover art while NewPipe leaves isUploaderVerified=false and strips "- Topic" from artist names.
+        // Only accept when both catalog provenance and square 1:1 album artwork hold and Step 1 rejected nothing.
+        if (song.isYouTubeMusicCatalog && song.hasSquareArtwork) {
+            evidence.add("ytmusic_catalog_square_audio")
+            return ReleaseClassification(
+                audioClass = ReleaseAudioClass.VERIFIED_STUDIO_AUDIO,
+                confidence = 0.84,
+                evidence = evidence,
+                reasonCode = "ytmusic_catalog_square_audio",
+            )
+        }
+
         // 3. Fail-closed: verified uploaders, known labels, or legacy preferredMusicSource
-        // WITHOUT explicit Topic or explicit Audio evidence resolve to UNVERIFIED.
+        // WITHOUT explicit Topic, OST/Label Audio, or verified YT Music catalog proof resolve to UNVERIFIED.
         val reason = when {
             hasExplicitAudioMarker -> "audio_marker_on_unverified_channel"
             song.isUploaderVerified || isKnownLabel -> "verified_channel_missing_audio_proof"

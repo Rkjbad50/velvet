@@ -33,11 +33,11 @@ object ModeRankerConfigs {
 
     fun forMode(mode: RecommendationMode): RankerWeights = when (mode) {
         RecommendationMode.SIMILAR_SONGS -> RankerWeights(
-            typeFit = 0.24,
-            genreFit = 0.26,
-            moodFit = 0.16,
-            audioFit = 0.14,
-            tempoEnergyFit = 0.08,
+            typeFit = 0.22,
+            genreFit = 0.28,
+            moodFit = 0.18,
+            audioFit = 0.10,
+            tempoEnergyFit = 0.14,
             languageFit = 0.06,
             eraFit = 0.05,
             contextFit = 0.06,
@@ -51,15 +51,15 @@ object ModeRankerConfigs {
         )
 
         RecommendationMode.SONG_RADIO -> RankerWeights(
-            typeFit = 0.22,
-            genreFit = 0.24,
-            moodFit = 0.15,
-            audioFit = 0.12,
-            tempoEnergyFit = 0.07,
+            typeFit = 0.21,
+            genreFit = 0.26,
+            moodFit = 0.18,
+            audioFit = 0.10,
+            tempoEnergyFit = 0.13,
             languageFit = 0.06,
             eraFit = 0.05,
             contextFit = 0.06,
-            personalTasteFit = 0.10,
+            personalTasteFit = 0.09,
             searchIntentFit = 0.04,
             selectedArtistWeight = 0.0, // Music-first invariant
             artistAffinityFit = 0.03,
@@ -87,16 +87,16 @@ object ModeRankerConfigs {
         )
 
         RecommendationMode.NEXT_SONG -> RankerWeights(
-            typeFit = 0.22,
-            genreFit = 0.22,
-            moodFit = 0.16,
-            audioFit = 0.12,
-            tempoEnergyFit = 0.10,
+            typeFit = 0.21,
+            genreFit = 0.26,
+            moodFit = 0.18,
+            audioFit = 0.09,
+            tempoEnergyFit = 0.14,
             languageFit = 0.06,
             eraFit = 0.04,
             contextFit = 0.08,
-            personalTasteFit = 0.10,
-            searchIntentFit = 0.08,
+            personalTasteFit = 0.09,
+            searchIntentFit = 0.07,
             selectedArtistWeight = 0.0,
             artistAffinityFit = 0.03,
             qualityFit = 0.06,
@@ -105,15 +105,15 @@ object ModeRankerConfigs {
         )
 
         RecommendationMode.AUTOPLAY_REFILL -> RankerWeights(
-            typeFit = 0.22,
-            genreFit = 0.23,
-            moodFit = 0.15,
-            audioFit = 0.12,
-            tempoEnergyFit = 0.08,
+            typeFit = 0.21,
+            genreFit = 0.27,
+            moodFit = 0.18,
+            audioFit = 0.09,
+            tempoEnergyFit = 0.14,
             languageFit = 0.07,
             eraFit = 0.05,
             contextFit = 0.07,
-            personalTasteFit = 0.10,
+            personalTasteFit = 0.09,
             searchIntentFit = 0.05,
             selectedArtistWeight = 0.0,
             artistAffinityFit = 0.03,

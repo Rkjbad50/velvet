@@ -49,6 +49,7 @@ data class Song(
     val rawUploaderName: String? = null,
     val hasSquareArtwork: Boolean = false,
     val releaseDescriptionHint: String? = null,
+    val isYouTubeMusicCatalog: Boolean = false,
 )
 
 @Serializable

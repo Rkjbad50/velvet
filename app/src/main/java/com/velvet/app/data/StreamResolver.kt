@@ -147,29 +147,38 @@ object StreamResolver {
         relatedCache[videoId]?.let { return it }
         synchronized(locks.getOrPut("rel|$videoId") { Any() }) {
             relatedCache[videoId]?.let { return it }
-            val info = YouTube.streamInfo(videoId)
-            val pureRelated = info.relatedItems
-                .mapNotNull { (it as? StreamInfoItem)?.toSong() }
-                .filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
-                .sortedByDescending { it.preferredMusicSource }
+            val info = runCatching { YouTube.streamInfo(videoId) }.getOrNull()
+            val pureRelated = info?.relatedItems
+                ?.mapNotNull { (it as? StreamInfoItem)?.toSong() }
+                ?.filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
+                ?.sortedByDescending { it.preferredMusicSource || it.isTopicRelease }
+                .orEmpty()
 
-            val finalRelated = if (pureRelated.size < 6) {
-                val seedArtist = (info.uploaderName ?: "").removeSuffix(" - Topic").trim()
-                val musicFallback = if (seedArtist.isNotBlank()) {
+            // YouTube Watch relatedItems often lack Topic/Official Audio provenance even on music seeds,
+            // so supplement with YT Music FILTER_SONGS catalog tracks whenever verified audio coverage is low.
+            val verifiedRelatedCount = pureRelated.count {
+                it.isTopicRelease || (it.isUploaderVerified && it.hasSquareArtwork)
+            }
+            val finalRelated = if (pureRelated.size < 8 || verifiedRelatedCount < 6) {
+                val seedArtist = (info?.uploaderName ?: "").removeSuffix(" - Topic").trim()
+                val query = if (seedArtist.isNotBlank()) "$seedArtist songs" else ""
+                val musicFallback = if (query.isNotBlank()) {
                     runCatching {
-                        YouTube.Search(seedArtist, YouTube.FILTER_SONGS).loadNext()
+                        YouTube.Search(query, YouTube.FILTER_SONGS).loadNext()
                             .filterIsInstance<BrowseItem.SongItem>()
                             .map { it.song }
                             .filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
                             .sortedByDescending { it.preferredMusicSource }
                     }.getOrDefault(emptyList())
                 } else emptyList()
-                (pureRelated + musicFallback).distinctBy { it.id }
+                (musicFallback + pureRelated).distinctBy { it.id }
             } else {
                 pureRelated
             }
 
-            relatedCache[videoId] = finalRelated
+            if (finalRelated.isNotEmpty()) {
+                relatedCache[videoId] = finalRelated
+            }
             return finalRelated
         }
     }

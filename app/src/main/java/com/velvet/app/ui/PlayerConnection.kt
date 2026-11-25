@@ -580,20 +580,42 @@ object PlayerConnection {
      * so it cycles strictly between OFF <-> STANDARD (ON).
      */
     fun cycleShuffle(context: Context? = null) {
-        val allowSmart = isUserPlaylistActive
+        val activeSong = queueManager.current ?: current
+        if (activeSong == null) {
+            (context ?: appContext)?.let {
+                runCatching { Toast.makeText(it, "Nothing playing right now", Toast.LENGTH_SHORT).show() }
+            }
+            return
+        }
+        // Re-anchor QueueManager if UI/ExoPlayer has an active track but queueManager.current became null
+        if (queueManager.current == null) {
+            queueManager.start(listOf(activeSong), startIndex = 0, shuffled = false)
+        }
+        val allowSmart = isUserPlaylistActive && (queueManager.upNext.isNotEmpty() || queueManager.sourceList.size > 1)
         val newMode = queueManager.cycleShuffleMode(allowSmartShuffle = allowSmart)
         syncQueueState()
         syncToExoPlayer()
 
+        if (queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty() &&
+            newMode != ShuffleMode.OFF &&
+            (VelvetApp.library.data.value.autoplay || isRadioActive)
+        ) {
+            checkAndExtendAutoplay(seedId = activeSong.id)
+        }
+
         when (newMode) {
             ShuffleMode.OFF -> {
-                (context ?: appContext)?.let { Toast.makeText(it, "Shuffle is off", Toast.LENGTH_SHORT).show() }
+                (context ?: appContext)?.let { runCatching { Toast.makeText(it, "Shuffle is off", Toast.LENGTH_SHORT).show() } }
             }
             ShuffleMode.STANDARD -> {
-                (context ?: appContext)?.let { Toast.makeText(it, "Shuffle is on", Toast.LENGTH_SHORT).show() }
+                (context ?: appContext)?.let { runCatching { Toast.makeText(it, "Shuffle is on", Toast.LENGTH_SHORT).show() } }
             }
             ShuffleMode.SMART -> {
-                (context ?: appContext)?.let { Toast.makeText(it, "Smart Shuffle is on ✨ (Mixing in fresh matching songs)", Toast.LENGTH_SHORT).show() }
+                (context ?: appContext)?.let {
+                    runCatching {
+                        Toast.makeText(it, "Smart Shuffle is on ✨ (Mixing in fresh matching songs)", Toast.LENGTH_SHORT).show()
+                    }
+                }
                 loadSmartShuffleRecommendations()
             }
         }
@@ -908,28 +930,45 @@ object PlayerConnection {
     }
 
     fun next() {
-        val outgoing = current
+        val outgoing = current ?: queueManager.current
         val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
         val outgoingDur = durationMs
-        recordCurrentPlaybackEnd(endReason = null)
-        val lastPlayingSong = outgoing ?: queueManager.current ?: queueManager.history.lastOrNull()
-        val nextSong = queueManager.advance(manual = true)
-        VelvetApp.eventRecorderOrNull()?.onExplicitTrackAdvance(
-            outgoingSong = outgoing,
-            nextSong = nextSong,
-            positionMs = outgoingPos,
-            durationMs = outgoingDur,
-            repeatModeLabel = currentRepeatLabel(),
-            transitionReason = "MANUAL_NEXT",
-        )
-        if (nextSong != null) {
-            syncQueueState()
-            syncToExoPlayer()
-            checkAndExtendAutoplay()
+        val hasUpcoming = queueManager.userQueue.isNotEmpty() ||
+            queueManager.upNext.isNotEmpty() ||
+            (queueManager.repeatMode == RepeatMode.ALL && queueManager.sourceList.isNotEmpty())
+
+        if (hasUpcoming) {
+            recordCurrentPlaybackEnd(endReason = null)
+            val nextSong = queueManager.advance(manual = true)
+            VelvetApp.eventRecorderOrNull()?.onExplicitTrackAdvance(
+                outgoingSong = outgoing,
+                nextSong = nextSong,
+                positionMs = outgoingPos,
+                durationMs = outgoingDur,
+                repeatModeLabel = currentRepeatLabel(),
+                transitionReason = "MANUAL_NEXT",
+            )
+            if (nextSong != null) {
+                syncQueueState()
+                syncToExoPlayer()
+                checkAndExtendAutoplay()
+                return
+            }
+        }
+
+        val seed = outgoing ?: queueManager.history.lastOrNull() ?: return
+        val canAutoplay = VelvetApp.library.data.value.autoplay || isRadioActive
+        if (canAutoplay) {
+            // Never null out queueManager.current while ExoPlayer & NowPlaying are still active on the seed song.
+            if (!isExtendingAutoplay) {
+                appContext?.let {
+                    runCatching { Toast.makeText(it, "Finding similar songs...", Toast.LENGTH_SHORT).show() }
+                }
+            }
+            checkAndExtendAutoplay(seed.id, autoPlayNext = true, force = true)
         } else {
-            val seed = lastPlayingSong
-            if (seed != null) {
-                checkAndExtendAutoplay(seed.id, autoPlayNext = true)
+            appContext?.let {
+                runCatching { Toast.makeText(it, "No next track in queue", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -1022,13 +1061,26 @@ object PlayerConnection {
                                     queueManager.upNext.isEmpty() &&
                                     queueManager.userQueue.isEmpty()
                                 ) {
-                                    queueManager.start(filtered, 0, false)
+                                    if (queueManager.current != null) {
+                                        recordCurrentPlaybackEnd(endReason = null)
+                                        queueManager.appendAutoplay(filtered)
+                                        val advanced = queueManager.advance(manual = true)
+                                        if (advanced == null) {
+                                            queueManager.start(filtered, 0, false)
+                                        }
+                                    } else {
+                                        queueManager.start(filtered, 0, false)
+                                    }
                                     syncQueueState()
                                     syncToExoPlayer()
                                 } else {
                                     queueManager.appendAutoplay(filtered)
                                     syncQueueState()
                                     syncToExoPlayer()
+                                }
+                            } else if (autoPlayNext) {
+                                appContext?.let {
+                                    runCatching { Toast.makeText(it, "No similar tracks available right now", Toast.LENGTH_SHORT).show() }
                                 }
                             }
                         }
@@ -1037,6 +1089,11 @@ object PlayerConnection {
                                 "Autoplay",
                                 "SafeEmpty(${decision.status}): ${decision.reason}",
                             )
+                            if (autoPlayNext) {
+                                appContext?.let {
+                                    runCatching { Toast.makeText(it, "No similar tracks found for this song", Toast.LENGTH_SHORT).show() }
+                                }
+                            }
                         }
                         is RefillDecision.Skip -> Unit
                     }

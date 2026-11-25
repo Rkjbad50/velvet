@@ -15,9 +15,10 @@ import com.velvet.app.recommendation.profile.UserTasteSnapshot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 
 data class CandidatePool(
     val candidates: List<CandidateTrack>,
@@ -39,8 +40,8 @@ class CandidatePoolBuilder(
     private val featureRepository: TrackFeatureRepository = TrackFeatureRepository(),
     private val circuitBreaker: SourceCircuitBreaker = SourceCircuitBreaker(),
     private val clock: () -> Long = System::currentTimeMillis,
-    private val perSourceTimeoutMs: Long = 1_500L,
-    private val overallDeadlineMs: Long = 2_500L,
+    private val perSourceTimeoutMs: Long = 4_500L,
+    private val overallDeadlineMs: Long = 5_500L,
     private val cacheTtlMs: Long = 15 * 60 * 1000L,
     private val maxRawPoolSize: Int = 200,
 ) {
@@ -71,57 +72,72 @@ class CandidatePoolBuilder(
         }
 
         val quotas = computeSourceQuotas(request.mode)
-        val sourceResults = withTimeoutOrNull(overallDeadlineMs) {
-            enabledSources.map { source ->
-                async(Dispatchers.IO) {
-                    if (!circuitBreaker.allowRequest(source.sourceId)) {
-                        val open = CandidateSourceResult(
-                            sourceId = source.sourceId,
-                            candidates = emptyList(),
-                            fetchedAtMillis = clock(),
-                            latencyMillis = 0L,
-                            status = CandidateSourceStatus.CIRCUIT_OPEN,
-                            errorCode = "circuit_open",
-                        )
-                        circuitBreaker.recordResult(open)
-                        return@async open
-                    }
-                    val quotaMax = quotas[source.sourceId] ?: DEFAULT_SOURCE_QUOTA
-                    val srcReq = CandidateSourceRequest(
-                        request = request,
-                        seedFeatures = seedFeatures,
-                        userProfile = userProfile,
-                        maxCandidates = quotaMax,
-                        deadlineMillis = clock() + perSourceTimeoutMs,
+        val collected = ConcurrentHashMap<String, CandidateSourceResult>()
+        val jobs = enabledSources.map { source ->
+            async(Dispatchers.IO) {
+                if (!circuitBreaker.allowRequest(source.sourceId)) {
+                    val open = CandidateSourceResult(
+                        sourceId = source.sourceId,
+                        candidates = emptyList(),
+                        fetchedAtMillis = clock(),
+                        latencyMillis = 0L,
+                        status = CandidateSourceStatus.CIRCUIT_OPEN,
+                        errorCode = "circuit_open",
                     )
-                    val res = try {
-                        withTimeoutOrNull(perSourceTimeoutMs) {
-                            source.fetch(srcReq)
-                        } ?: CandidateSourceResult(
-                            sourceId = source.sourceId,
-                            candidates = emptyList(),
-                            fetchedAtMillis = clock(),
-                            latencyMillis = perSourceTimeoutMs,
-                            status = CandidateSourceStatus.TIMEOUT,
-                            errorCode = "timeout_${perSourceTimeoutMs}ms",
-                        )
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        CandidateSourceResult(
-                            sourceId = source.sourceId,
-                            candidates = emptyList(),
-                            fetchedAtMillis = clock(),
-                            latencyMillis = 0L,
-                            status = CandidateSourceStatus.UNAVAILABLE,
-                            errorCode = e.message ?: "source_exception",
-                        )
-                    }
-                    circuitBreaker.recordResult(res)
-                    res
+                    circuitBreaker.recordResult(open)
+                    collected[source.sourceId] = open
+                    return@async
                 }
-            }.awaitAll()
-        } ?: emptyList()
+                val quotaMax = quotas[source.sourceId] ?: DEFAULT_SOURCE_QUOTA
+                val srcReq = CandidateSourceRequest(
+                    request = request,
+                    seedFeatures = seedFeatures,
+                    userProfile = userProfile,
+                    maxCandidates = quotaMax,
+                    deadlineMillis = clock() + perSourceTimeoutMs,
+                )
+                val res = try {
+                    withTimeoutOrNull(perSourceTimeoutMs) {
+                        source.fetch(srcReq)
+                    } ?: CandidateSourceResult(
+                        sourceId = source.sourceId,
+                        candidates = emptyList(),
+                        fetchedAtMillis = clock(),
+                        latencyMillis = perSourceTimeoutMs,
+                        status = CandidateSourceStatus.TIMEOUT,
+                        errorCode = "timeout_${perSourceTimeoutMs}ms",
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    CandidateSourceResult(
+                        sourceId = source.sourceId,
+                        candidates = emptyList(),
+                        fetchedAtMillis = clock(),
+                        latencyMillis = 0L,
+                        status = CandidateSourceStatus.UNAVAILABLE,
+                        errorCode = e.message ?: "source_exception",
+                    )
+                }
+                circuitBreaker.recordResult(res)
+                collected[source.sourceId] = res
+            }
+        }
+        withTimeoutOrNull(overallDeadlineMs) {
+            jobs.joinAll()
+        }
+        jobs.forEach { if (it.isActive) it.cancel() }
+
+        val sourceResults = enabledSources.map { source ->
+            collected[source.sourceId] ?: CandidateSourceResult(
+                sourceId = source.sourceId,
+                candidates = emptyList(),
+                fetchedAtMillis = clock(),
+                latencyMillis = overallDeadlineMs,
+                status = CandidateSourceStatus.TIMEOUT,
+                errorCode = "overall_deadline_${overallDeadlineMs}ms",
+            ).also { circuitBreaker.recordResult(it) }
+        }
 
         val healthMap = linkedMapOf<String, SourceHealth>()
         val rawMergedByVideoId = linkedMapOf<String, MutableList<RawTrackCandidate>>()

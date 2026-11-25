@@ -2384,6 +2384,19 @@ private fun QueueSheet(
                                 onDragCancel = onDragCancel,
                             )
                         }
+                    } else if (displayUserQueue.isEmpty()) {
+                        item(key = "queue_empty_hint") {
+                            Text(
+                                if (VelvetApp.library.data.value.autoplay || PlayerConnection.isRadioActive) {
+                                    "Finding similar original tracks for your queue..."
+                                } else {
+                                    "Queue is empty. Turn on Autoplay in Settings for continuous similar songs."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = velvetColors.muted,
+                                modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
+                            )
+                        }
                     }
                 }
             }

@@ -52,7 +52,22 @@ object QueueExoAdapter {
 
         // Case 2: ExoPlayer is already playing currentItem. Diff and sync only upcoming items.
         val curIdx = player.currentMediaItemIndex
-        val existingUpcomingCount = player.mediaItemCount - (curIdx + 1)
+        if (curIdx < 0 || curIdx >= player.mediaItemCount) {
+            val allItems = (listOf(currentItem) + targetUpcoming).mapIndexed { i, item ->
+                item.song.toMediaItem(
+                    radio = isRadio && i == 0,
+                    playlistStart = if (i == 0) playlistStart else null,
+                )
+            }
+            val pos = if (startPositionMs > 0L) startPositionMs else 0L
+            player.setMediaItems(allItems, 0, pos)
+            player.prepare()
+            if (autoPlay) {
+                player.play()
+            }
+            return
+        }
+        val existingUpcomingCount = (player.mediaItemCount - (curIdx + 1)).coerceAtLeast(0)
         val existingUpcomingIds = if (existingUpcomingCount > 0) {
             (curIdx + 1 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
         } else {
@@ -63,7 +78,7 @@ object QueueExoAdapter {
 
         // Minimal diff: only touch future items if order or tracks changed
         if (existingUpcomingIds != targetUpcomingIds) {
-            val after = curIdx + 1
+            val after = (curIdx + 1).coerceAtLeast(0)
             if (after < player.mediaItemCount) {
                 player.removeMediaItems(after, player.mediaItemCount)
             }
