@@ -336,3 +336,21 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 3m 26s**, `velvet-apk` uploaded.
   - **Unit Test Results (`:app:testReleaseUnitTest`):** **304 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including all 4 new suites in `app/src/test/java/com/velvet/app/unit/OriginMotionAndNavTest.kt`.
 - **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`cddc9a3`).
+
+### v2.7.6 Post-Release Speed Upgrade — Sub-3s Similar-Song Queue Population & Strict Composition Diversity
+- **Status:** **Code & CI Verification Complete** (`main` @ `756db2f`)
+- **Scope Implemented:**
+  - **Cached Fast-Pool InnerTube Client (`YouTubeMusicInnertube.kt`, `VelvetApp.kt`):**
+    - Replaced per-call `OkHttpClient.newBuilder()` reconstruction with a shared connection-pooled `fastHttpClient()` (`1,500ms` connect / `1,900ms` read / `1,500ms` write) and reordered `VelvetApp.searchSongsProvider` so `YouTubeMusicInnertube.searchSongs` leads before bounded (`1,300ms`) NewPipe `FILTER_SONGS` supplementation.
+  - **Early-Quorum Candidate Pooling & Parallel Fallbacks (`CandidatePoolBuilder.kt`, `StreamResolver.kt`, `DefaultCandidateSources.kt`):**
+    - Upgraded `StreamResolver.related(videoId, seedHint)` to return immediately when InnerTube `fetchNextRadio` yields `>= 8` verified studio audio candidates, and bounded sparse fallback to parallel `CompletableFuture` (`streamInfo` + InnerTube catalog search within a `~1,600ms` combined window).
+    - Enabled opt-in `enableEarlyQuorum = true` (`perSourceTimeoutMs = 1_800ms`, `overallDeadlineMs = 2_200ms`, `earlyQuorumMinCandidates = 14`, `earlyQuorumGraceMs = 160ms`) in `VelvetApp.kt` while keeping `CandidatePoolBuilder` default `enableEarlyQuorum = false` so existing deterministic pool tests remain unchanged.
+    - Parallelized `CollaboratorCandidateSource` (`G4`) with `async/awaitAll` and expanded `GenreLanguageNeighbourSource.buildGenreQuery` across secular film/mood/language tracks while continuing Genre -> Category -> Type prioritization.
+  - **Proactive Prefetch, Unbreakable <3s Refill Ceiling & Clean Composition Matching (`PlayerConnection.kt`, `RecordingIdentityResolver.kt`):**
+    - Added `StreamResolver.prefetchRelated(song)` on `play(...)`, `onMediaItemTransition`, and `syncBasicState` track transitions when upcoming queue `<= 4`, wrapped `checkAndExtendAutoplay` with `withTimeoutOrNull(2_650L)` yielding clean `RefillDecision.SafeEmpty` cancellation handling, and refined `RecordingIdentityResolver.isSameCompositionTitle` so single-word honorific duplicates (e.g., `"Shree Shiva"` vs `"Shiva"`) match without false-positively merging short-word Hindi titles (`"Tu Hi Hai"` vs `"Jo Hai"`).
+- **CI/CD Verification (`main` @ `756db2f`):**
+  - **Run ID:** `45548059934` (`Build & Verify (CI)` job `138982314860`, `BUILD_NUMBER=226`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 4m 44s**, `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **307 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest > streamFetch`), **0 FAILED** — including all 8 suites in `app/src/test/java/com/velvet/app/unit/Phase8DiversityAndInnertubeTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; real-world mobile network queue fill times across live carriers await on-device confirmation.
+- **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`6c82576`).
