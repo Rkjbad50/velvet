@@ -5,6 +5,7 @@ import com.velvet.app.playback.SongIdentity
 import com.velvet.app.playback.normalizePrimaryArtist
 import com.velvet.app.recommendation.features.GenreOntology
 import com.velvet.app.recommendation.features.TrackFeatureRepository
+import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 import com.velvet.app.recommendation.model.CandidateSourceStatus
 import com.velvet.app.recommendation.model.MusicType
 import com.velvet.app.recommendation.model.RecommendationMode
@@ -221,8 +222,14 @@ class GenreLanguageNeighbourSource(
         val query = buildGenreQuery(seedFeatures, request)
             ?: return CandidateSourceResult(sourceId, emptyList(), start, 0L, CandidateSourceStatus.EMPTY)
 
+        val seed = request.request.primarySeed
         return try {
-            val songs = querySearchProvider(query).take(request.maxCandidates)
+            val songs = querySearchProvider(query)
+                .filter { song ->
+                    seed == null || request.request.allowExplicitUserIntentOverride ||
+                        !RecordingIdentityResolver.isSameCompositionTitle(seed, song)
+                }
+                .take(request.maxCandidates)
             val wrapped = songs.mapIndexed { idx, song ->
                 RawTrackCandidate(
                     song = song,
@@ -271,13 +278,13 @@ class GenreLanguageNeighbourSource(
 
         val coreTopic = when {
             explicitGenre != null -> explicitGenre.replace('_', ' ')
-            topType == MusicType.CHALISA -> "Hanuman Chalisa devotional audio"
-            topType == MusicType.AARTI -> "$langLabel aarti devotional songs".trim()
-            topType == MusicType.MANTRA -> "Sanskrit mantra chanting audio"
-            topType == MusicType.BHAJAN -> "$langLabel bhajan devotional songs".trim()
-            topType == MusicType.QAWALI -> "Qawwali sufi original audio"
-            topType == MusicType.GHAZAL -> "Classic ghazal audio"
-            topType == MusicType.SUFI -> "Sufi original audio songs"
+            topType == MusicType.CHALISA -> "devotional stotram aarti bhajan songs"
+            topType == MusicType.AARTI -> "devotional bhajan stotra chalisa songs"
+            topType == MusicType.MANTRA -> "devotional stotram shloka bhajan songs"
+            topType == MusicType.BHAJAN -> "devotional aarti stotram kirtan songs"
+            topType == MusicType.QAWALI -> "sufi qawwali songs"
+            topType == MusicType.GHAZAL -> "classic ghazal songs"
+            topType == MusicType.SUFI -> "sufi soulful songs"
             topSubgenre != null -> "${topSubgenre.replace('_', ' ')} songs"
             topGenre != null -> "${topGenre.replace('_', ' ')} songs"
             else -> null

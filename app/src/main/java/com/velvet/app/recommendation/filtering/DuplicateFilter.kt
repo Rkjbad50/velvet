@@ -52,6 +52,7 @@ class DuplicateFilter {
                 referenceSongs.map { SongIdentity.canonicalGroupId(it) }
             ).toSet()
 
+        val blockSameCompositionTitle = !request.allowExplicitUserIntentOverride
         var removedKnown = 0
         val fresh = mutableListOf<CandidateTrack>()
 
@@ -63,7 +64,10 @@ class DuplicateFilter {
             val matchesExcludedId = song.id in excludedProviderIds ||
                 recId in excludedRecordingIds ||
                 legacyGroup in excludedRecordingIds ||
-                referenceSongs.any { ref -> RecordingIdentityResolver.isSameRecording(ref, song) }
+                referenceSongs.any { ref ->
+                    RecordingIdentityResolver.isSameRecording(ref, song) ||
+                        (blockSameCompositionTitle && RecordingIdentityResolver.isSameCompositionTitle(ref, song))
+                }
 
             if (matchesExcludedId) {
                 removedKnown++
@@ -72,13 +76,15 @@ class DuplicateFilter {
             fresh.add(candidate)
         }
 
-        // Group fresh candidates by same recording identity (never collapsing studio vs live vs remix)
+        // Group fresh candidates by same recording identity & composition title
+        // so Autoplay/Similar Songs never emit multiple singers/versions of the same song title
         val clusters = mutableListOf<MutableList<CandidateTrack>>()
         for (item in fresh) {
             val matched = clusters.find { cluster ->
                 cluster.any { existing ->
                     existing.identity.canonicalRecordingId == item.identity.canonicalRecordingId ||
-                        RecordingIdentityResolver.isSameRecording(existing.song, item.song)
+                        RecordingIdentityResolver.isSameRecording(existing.song, item.song) ||
+                        (blockSameCompositionTitle && RecordingIdentityResolver.isSameCompositionTitle(existing.song, item.song))
                 }
             }
             if (matched != null) {

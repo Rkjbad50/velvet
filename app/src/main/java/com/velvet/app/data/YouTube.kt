@@ -31,7 +31,7 @@ object YouTube {
     private val service get() = ServiceList.YouTube
 
     /** A paged search. Keep the instance around to load further pages. */
-    class Search(query: String, private val filter: String) {
+    class Search(private val query: String, private val filter: String) {
         private val extractor: SearchExtractor =
             service.getSearchExtractor(query, listOf(filter), "")
         private var nextPage: Page? = null
@@ -41,18 +41,28 @@ object YouTube {
             private set
 
         fun loadNext(): List<BrowseItem> {
-            val page = if (!started) {
-                extractor.fetchPage()
-                started = true
-                extractor.initialPage
-            } else {
-                extractor.getPage(nextPage ?: return emptyList())
+            val isFirstPage = !started
+            val pageResult = runCatching {
+                val page = if (!started) {
+                    extractor.fetchPage()
+                    started = true
+                    extractor.initialPage
+                } else {
+                    extractor.getPage(nextPage ?: return emptyList())
+                }
+                nextPage = page.nextPage
+                hasMore = page.hasNextPage()
+                page.items.mapNotNull { it.toBrowseItem(isAlbum = filter == FILTER_ALBUMS) }
             }
-            nextPage = page.nextPage
-            hasMore = page.hasNextPage()
-            val items = page.items.mapNotNull { it.toBrowseItem(isAlbum = filter == FILTER_ALBUMS) }
+            val items = pageResult.getOrNull().orEmpty()
             return if (filter == FILTER_SONGS) {
-                items.mapNotNull { item ->
+                val baseItems = if (items.isEmpty() && isFirstPage) {
+                    hasMore = false
+                    YouTubeMusicInnertube.searchSongs(query).map { BrowseItem.SongItem(it) }
+                } else {
+                    items
+                }
+                baseItems.mapNotNull { item ->
                     val songItem = item as? BrowseItem.SongItem ?: return@mapNotNull item
                     val catalogSong = songItem.song.copy(
                         isYouTubeMusicCatalog = true,
@@ -63,6 +73,7 @@ object YouTube {
                     } else null
                 }.sortedByDescending { (it as? BrowseItem.SongItem)?.song?.preferredMusicSource == true }
             } else {
+                pageResult.getOrThrow()
                 items
             }
         }

@@ -120,7 +120,10 @@ object StreamResolver {
                     fetchFastOrNull(videoId, saver)
                 } else null) ?: run {
                     clientName = "NewPipeExtractor (Full)"
-                    fetchFull(videoId, saver)
+                    runCatching { fetchFull(videoId, saver) }.getOrNull()
+                } ?: run {
+                    clientName = "InnerTube (AndroidVR Fallback)"
+                    fetchInnertubeFallback(videoId, saver)
                 }
                 cache[k] = resolved
                 val duration = System.currentTimeMillis() - startTime
@@ -141,39 +144,62 @@ object StreamResolver {
         }
     }
 
-    /** Songs YouTube relates to this one (for radio and autoplay). Blocking; cached; shared in flight. */
+    /** Songs YouTube Music & YouTube relate to this one (hybrid InnerTube + NewPipeExtractor). Blocking; cached; shared in flight. */
     fun related(videoId: String): List<Song> {
         if (!isValidVideoId(videoId)) return emptyList()
         relatedCache[videoId]?.let { return it }
         synchronized(locks.getOrPut("rel|$videoId") { Any() }) {
             relatedCache[videoId]?.let { return it }
+
+            // 1. Primary: YouTube Music InnerTube Song Radio (RDAMVM) + Related browse tab (ATV studio audio)
+            val innertubeRelated = runCatching { YouTubeMusicInnertube.fetchNextRadio(videoId) }
+                .getOrDefault(emptyList())
+
+            // 2. Companion: NewPipeExtractor streamInfo watch-next related items
             val info = runCatching { YouTube.streamInfo(videoId) }.getOrNull()
-            val pureRelated = info?.relatedItems
+            val seedSongFromInfo = info?.let { runCatching { YouTube.songFrom(it) }.getOrNull() }
+            val newPipeRelated = info?.relatedItems
                 ?.mapNotNull { (it as? StreamInfoItem)?.toSong() }
                 ?.filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
                 ?.sortedByDescending { it.preferredMusicSource || it.isTopicRelease }
                 .orEmpty()
 
-            // YouTube Watch relatedItems often lack Topic/Official Audio provenance even on music seeds,
-            // so supplement with YT Music FILTER_SONGS catalog tracks whenever verified audio coverage is low.
-            val verifiedRelatedCount = pureRelated.count {
-                it.isTopicRelease || (it.isUploaderVerified && it.hasSquareArtwork)
+            val mergedBase = (innertubeRelated + newPipeRelated)
+                .distinctBy { it.id }
+                .filter { cand ->
+                    cand.id != videoId &&
+                        (seedSongFromInfo == null ||
+                            !com.velvet.app.recommendation.identity.RecordingIdentityResolver.isSameCompositionTitle(seedSongFromInfo, cand))
+                }
+
+            val verifiedCount = mergedBase.count {
+                it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
             }
-            val finalRelated = if (pureRelated.size < 8 || verifiedRelatedCount < 6) {
-                val seedArtist = (info?.uploaderName ?: "").removeSuffix(" - Topic").trim()
+
+            val finalRelated = if (verifiedCount < 6) {
+                val seedArtist = (info?.uploaderName ?: innertubeRelated.firstOrNull()?.artist ?: "")
+                    .removeSuffix(" - Topic").trim()
                 val query = if (seedArtist.isNotBlank()) "$seedArtist songs" else ""
-                val musicFallback = if (query.isNotBlank()) {
-                    runCatching {
+                val catalogFallback = if (query.isNotBlank()) {
+                    val npSearch = runCatching {
                         YouTube.Search(query, YouTube.FILTER_SONGS).loadNext()
                             .filterIsInstance<BrowseItem.SongItem>()
                             .map { it.song }
-                            .filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
-                            .sortedByDescending { it.preferredMusicSource }
                     }.getOrDefault(emptyList())
+                    val itSearch = if (npSearch.size < 6) {
+                        runCatching { YouTubeMusicInnertube.searchSongs(query) }.getOrDefault(emptyList())
+                    } else emptyList()
+                    (npSearch + itSearch).filter { cand ->
+                        cand.id != videoId &&
+                            cand.isPureMusic() &&
+                            cand.isOriginalMusicAudio() &&
+                            (seedSongFromInfo == null ||
+                                !com.velvet.app.recommendation.identity.RecordingIdentityResolver.isSameCompositionTitle(seedSongFromInfo, cand))
+                    }
                 } else emptyList()
-                (musicFallback + pureRelated).distinctBy { it.id }
+                (mergedBase + catalogFallback).distinctBy { it.id }
             } else {
-                pureRelated
+                mergedBase
             }
 
             if (finalRelated.isNotEmpty()) {
@@ -247,9 +273,6 @@ object StreamResolver {
 
     private fun fetchFull(videoId: String, saver: Boolean): Resolved {
         val info = YouTube.streamInfo(videoId)
-        relatedCache[videoId] = info.relatedItems.mapNotNull { (it as? StreamInfoItem)?.toSong() }
-            .filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
-            .sortedByDescending { it.preferredMusicSource }
         val progressive = info.audioStreams.filter {
             it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.isUrl
         }
@@ -293,6 +316,23 @@ object StreamResolver {
 
     private fun pick(candidates: List<Candidate>, saver: Boolean): Candidate? =
         pickBest(candidates, saver, { it.kbps }, { it.opus })
+
+    private fun fetchInnertubeFallback(videoId: String, saver: Boolean): Resolved {
+        val items = YouTubeMusicInnertube.fetchPlayerAudioFallback(videoId)
+        if (items.isEmpty()) throw IOException("InnerTube fallback found no playable audio stream for $videoId")
+        val nonDrc = items.filterNot { it.drc }.ifEmpty { items }
+        val best = pickBest(nonDrc, saver, { it.kbps }, { it.opus })
+            ?: throw IOException("No suitable audio candidate in InnerTube fallback for $videoId")
+        val candidate = Candidate(best.url, best.kbps, best.opus, best.m4a, best.itag, best.drc)
+        return Resolved(
+            url = best.url,
+            headers = best.headers,
+            expiresAtMs = expiryOf(best.url),
+            quality = qualityLabel(candidate),
+            rendition = "${best.itag}${if (best.drc) "d" else ""}",
+            fast = true,
+        )
+    }
 
     private fun qualityLabel(c: Candidate): String {
         val codec = when {

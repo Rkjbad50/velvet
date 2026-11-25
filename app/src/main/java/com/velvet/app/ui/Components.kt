@@ -3,12 +3,24 @@ package com.velvet.app.ui
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -25,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,8 +59,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -55,13 +68,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -69,11 +86,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -530,12 +553,9 @@ fun SongActionsSheet(request: SongMenuRequest, onDismiss: () -> Unit) {
     val downloaded = song.id in downloadedIds
     val downloading = progress.containsKey(song.id)
 
-    ModalBottomSheet(
+    VelvetModalSheet(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
-        tonalElevation = 0.dp,
-        scrimColor = Color(0x99000000),
-    ) {
+    ) { sheet ->
         Row(
             Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -548,63 +568,75 @@ fun SongActionsSheet(request: SongMenuRequest, onDismiss: () -> Unit) {
         }
         HorizontalDivider(Modifier.padding(vertical = 10.dp), color = velvetColors.rule)
 
-        if (pickingPlaylist) {
-            PlaylistPicker(song, onDone = onDismiss)
-            return@ModalBottomSheet
-        }
-
-        SheetAction(
-            if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-            if (liked) "Remove from Liked Songs" else "Add to Liked Songs",
-            tint = if (liked) velvetColors.danger else null,
-        ) { library.toggleLike(song); onDismiss() }
-        SheetAction(AppIcons.PlaylistAdd, "Add to playlist") { pickingPlaylist = true }
-        SheetAction(AppIcons.SkipNext, "Play next") { PlayerConnection.playNext(song); onDismiss() }
-        SheetAction(AppIcons.QueueMusic, "Add to queue") { PlayerConnection.enqueue(song); onDismiss() }
-        SheetAction(AppIcons.Radio, "Start song radio") { PlayerConnection.startRadio(song); onDismiss() }
-        when {
-            downloaded -> SheetAction(Icons.Default.Delete, "Remove download") {
-                confirm = ConfirmRequest(
-                    "Remove download?",
-                    "\"${song.title}\" will no longer play offline. You can download it again any time.",
-                    "Remove",
-                ) { downloads.remove(song.id); onDismiss() }
-            }
-            downloading -> SheetAction(AppIcons.Download, "Downloading…", enabled = false) {}
-            else -> SheetAction(AppIcons.Download, "Download") { downloads.download(song); onDismiss() }
-        }
-        if (song.artistUrl != null) {
-            SheetAction(Icons.Default.Person, "Go to artist") {
-                onDismiss()
-                nav.open(Route.Artist(ArtistRef(song.artistUrl, song.artist)))
-            }
-        }
-        SheetAction(Icons.Default.Share, "Share") { shareSong(context, song); onDismiss() }
-        if (request.onMoveUp != null) {
-            SheetAction(Icons.Default.KeyboardArrowUp, "Move up") {
-                request.onMoveUp.invoke()
-                onDismiss()
-            }
-        }
-        if (request.onMoveDown != null) {
-            SheetAction(Icons.Default.KeyboardArrowDown, "Move down") {
-                request.onMoveDown.invoke()
-                onDismiss()
-            }
-        }
-        if (request.playlistId != null) {
-            SheetAction(Icons.Default.Delete, "Remove from this playlist") {
-                confirm = ConfirmRequest(
-                    "Remove from playlist?",
-                    "\"${song.title}\" will be removed from this playlist.",
-                    "Remove",
-                ) {
-                    library.removeFromPlaylist(request.playlistId, song.id)
-                    onDismiss()
+        AnimatedContent(
+            targetState = pickingPlaylist,
+            transitionSpec = {
+                (slideInVertically(initialOffsetY = { it / 8 }, animationSpec = tween(180, easing = FastOutSlowInEasing)) +
+                    fadeIn(tween(160)))
+                    .togetherWith(
+                        slideOutVertically(targetOffsetY = { -it / 10 }, animationSpec = tween(120, easing = FastOutSlowInEasing)) +
+                            fadeOut(tween(110)),
+                    )
+            },
+            label = "songSheetContent",
+        ) { isPicking ->
+            Column(Modifier.fillMaxWidth()) {
+                if (isPicking) {
+                    PlaylistPicker(song, onDone = { sheet.dismiss() })
+                } else {
+                    SheetAction(
+                        if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        if (liked) "Remove from Liked Songs" else "Add to Liked Songs",
+                        tint = if (liked) velvetColors.danger else null,
+                    ) { sheet.dismissThen { library.toggleLike(song) } }
+                    SheetAction(AppIcons.PlaylistAdd, "Add to playlist") { pickingPlaylist = true }
+                    SheetAction(AppIcons.SkipNext, "Play next") { sheet.dismissThen { PlayerConnection.playNext(song) } }
+                    SheetAction(AppIcons.QueueMusic, "Add to queue") { sheet.dismissThen { PlayerConnection.enqueue(song) } }
+                    SheetAction(AppIcons.Radio, "Start song radio") { sheet.dismissThen { PlayerConnection.startRadio(song) } }
+                    when {
+                        downloaded -> SheetAction(Icons.Default.Delete, "Remove download") {
+                            confirm = ConfirmRequest(
+                                "Remove download?",
+                                "\"${song.title}\" will no longer play offline. You can download it again any time.",
+                                "Remove",
+                            ) { sheet.dismissThen { downloads.remove(song.id) } }
+                        }
+                        downloading -> SheetAction(AppIcons.Download, "Downloading…", enabled = false) {}
+                        else -> SheetAction(AppIcons.Download, "Download") { sheet.dismissThen { downloads.download(song) } }
+                    }
+                    if (song.artistUrl != null) {
+                        SheetAction(Icons.Default.Person, "Go to artist") {
+                            sheet.dismissThen {
+                                nav.open(Route.Artist(ArtistRef(song.artistUrl, song.artist)))
+                            }
+                        }
+                    }
+                    SheetAction(Icons.Default.Share, "Share") { sheet.dismissThen { shareSong(context, song) } }
+                    if (request.onMoveUp != null) {
+                        SheetAction(Icons.Default.KeyboardArrowUp, "Move up") {
+                            sheet.dismissThen { request.onMoveUp.invoke() }
+                        }
+                    }
+                    if (request.onMoveDown != null) {
+                        SheetAction(Icons.Default.KeyboardArrowDown, "Move down") {
+                            sheet.dismissThen { request.onMoveDown.invoke() }
+                        }
+                    }
+                    if (request.playlistId != null) {
+                        SheetAction(Icons.Default.Delete, "Remove from this playlist") {
+                            confirm = ConfirmRequest(
+                                "Remove from playlist?",
+                                "\"${song.title}\" will be removed from this playlist.",
+                                "Remove",
+                            ) {
+                                sheet.dismissThen { library.removeFromPlaylist(request.playlistId, song.id) }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -986,18 +1018,19 @@ fun NamePlaylistDialog(
     val validation = PlaylistNameValidator.validate(name, currentPlaylistId, existingPlaylists)
     val isValid = validation is PlaylistNameValidator.ValidationResult.Valid
 
-    fun submit() {
+    fun submit(dialog: VelvetDialogScope) {
         if (isValid) {
-            onConfirmWithDescription(name.trim(), description.trim().ifEmpty { null })
-            onDismiss()
+            dialog.dismissThen {
+                onConfirmWithDescription(name.trim(), description.trim().ifEmpty { null })
+                onDismiss()
+            }
         }
     }
 
-    AlertDialog(
+    VelvetAlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
         title = { Text(title, style = MaterialTheme.typography.headlineSmall) },
-        text = {
+        text = { dialog ->
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = name,
@@ -1007,7 +1040,7 @@ fun NamePlaylistDialog(
                     singleLine = true,
                     isError = validation is PlaylistNameValidator.ValidationResult.Error,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                    keyboardActions = KeyboardActions(onDone = { submit(dialog) }),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1040,23 +1073,23 @@ fun NamePlaylistDialog(
                         label = { Text("Description (optional)") },
                         maxLines = 3,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        keyboardActions = KeyboardActions(onDone = { submit(dialog) }),
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
         },
-        confirmButton = {
+        confirmButton = { dialog ->
             TextButton(
                 enabled = isValid,
-                onClick = { submit() },
+                onClick = { submit(dialog) },
             ) {
                 Text("Save")
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
+        dismissButton = { dialog ->
+            TextButton(onClick = { dialog.dismissThen(onDismiss) }) {
                 Text("Cancel", color = velvetColors.muted)
             }
         },
@@ -1138,6 +1171,321 @@ fun ErrorBox(message: String, onRetry: () -> Unit) {
 }
 
 
+/** Shared silky spring motion constants and container primitives for popups, sheets, dialogs and menus. */
+object VelvetPopupMotion {
+    val DialogShape = RoundedCornerShape(24.dp)
+    val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val MenuShape = RoundedCornerShape(16.dp)
+    val enterSpring = spring<Float>(dampingRatio = 0.80f, stiffness = 540f)
+    val exitTween = tween<Float>(durationMillis = 150, easing = FastOutSlowInEasing)
+    val sliderSpring = spring<Float>(dampingRatio = 0.76f, stiffness = 620f)
+}
+
+class VelvetDialogScope internal constructor(
+    private val closeHandler: (() -> Unit) -> Unit,
+) {
+    /** Smoothly animates the dialog out before running [afterAction]. */
+    fun dismissThen(afterAction: () -> Unit = {}) {
+        closeHandler(afterAction)
+    }
+}
+
+class VelvetSheetScope internal constructor(
+    private val hideHandler: (() -> Unit) -> Unit,
+) {
+    fun dismiss() = hideHandler {}
+
+    /** Smoothly hides the bottom sheet before running [afterHide]. */
+    fun dismissThen(afterHide: () -> Unit) = hideHandler(afterHide)
+}
+
+@Composable
+private fun VelvetDialogOverlayShell(
+    progress: Float,
+    canDismiss: Boolean,
+    onRequestClose: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+    SideEffect {
+        dialogWindow?.setDimAmount(0f)
+        dialogWindow?.setWindowAnimations(0)
+    }
+    BackHandler(enabled = true) {
+        if (canDismiss) onRequestClose()
+    }
+    val clampedAlpha = progress.coerceIn(0f, 1f)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = clampedAlpha * 0.56f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
+                if (canDismiss) onRequestClose()
+            }
+            .imePadding()
+            .padding(horizontal = 24.dp, vertical = 20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(min = 280.dp, max = 420.dp)
+                .fillMaxWidth()
+                .graphicsLayer {
+                    val p = progress.coerceAtLeast(0f)
+                    val s = 0.90f + 0.10f * p
+                    scaleX = s
+                    scaleY = s
+                    alpha = p.coerceIn(0f, 1f)
+                    translationY = (1f - p) * 18.dp.toPx()
+                }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {},
+        ) {
+            content()
+        }
+    }
+}
+
+/** Modal dialog container with unified 120Hz spring entrance and reverse exit animation. */
+@Composable
+fun VelvetAnimatedDialog(
+    onDismissRequest: () -> Unit,
+    canDismiss: Boolean = true,
+    content: @Composable VelvetDialogScope.() -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val progress = remember { Animatable(0f) }
+    var isClosing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        progress.animateTo(1f, VelvetPopupMotion.enterSpring)
+    }
+
+    val closeAndRun: (() -> Unit) -> Unit = { afterAction ->
+        if (!isClosing) {
+            isClosing = true
+            scope.launch {
+                progress.animateTo(0f, VelvetPopupMotion.exitTween)
+                afterAction()
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = { if (canDismiss) closeAndRun(onDismissRequest) },
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        val dialogScope = remember(closeAndRun) { VelvetDialogScope(closeAndRun) }
+        VelvetDialogOverlayShell(
+            progress = progress.value,
+            canDismiss = canDismiss,
+            onRequestClose = { closeAndRun(onDismissRequest) },
+        ) {
+            dialogScope.content()
+        }
+    }
+}
+
+/** Nullable-state dialog host so even external dismissal animates out cleanly before unmounting. */
+@Composable
+fun <T> VelvetDialogHost(
+    target: T?,
+    onDismissRequest: () -> Unit,
+    canDismiss: Boolean = true,
+    content: @Composable VelvetDialogScope.(T) -> Unit,
+) {
+    var active by remember { mutableStateOf(target) }
+    val progress = remember { Animatable(0f) }
+
+    LaunchedEffect(target) {
+        if (target != null) {
+            active = target
+            progress.animateTo(1f, VelvetPopupMotion.enterSpring)
+        } else if (active != null) {
+            progress.animateTo(0f, VelvetPopupMotion.exitTween)
+            active = null
+        }
+    }
+
+    val current = active ?: return
+    val closeAndRun: (() -> Unit) -> Unit = { afterAction ->
+        afterAction()
+        onDismissRequest()
+    }
+
+    Dialog(
+        onDismissRequest = { if (canDismiss) onDismissRequest() },
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        val dialogScope = remember(onDismissRequest) { VelvetDialogScope(closeAndRun) }
+        VelvetDialogOverlayShell(
+            progress = progress.value,
+            canDismiss = canDismiss,
+            onRequestClose = onDismissRequest,
+        ) {
+            dialogScope.content(current)
+        }
+    }
+}
+
+@Composable
+internal fun VelvetAlertDialogCard(
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: (@Composable () -> Unit)? = null,
+) {
+    Surface(
+        shape = VelvetPopupMotion.DialogShape,
+        color = velvetColors.surface,
+        contentColor = velvetColors.text,
+        border = BorderStroke(1.dp, velvetColors.rule),
+        shadowElevation = 16.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(22.dp),
+        ) {
+            title()
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.weight(1f, fill = false)) {
+                text()
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                dismissButton?.invoke()
+                confirmButton()
+            }
+        }
+    }
+}
+
+@Composable
+fun VelvetAlertDialog(
+    onDismissRequest: () -> Unit,
+    canDismiss: Boolean = true,
+    title: @Composable () -> Unit,
+    text: @Composable (VelvetDialogScope) -> Unit,
+    confirmButton: @Composable (VelvetDialogScope) -> Unit,
+    dismissButton: (@Composable (VelvetDialogScope) -> Unit)? = null,
+) {
+    VelvetAnimatedDialog(
+        onDismissRequest = onDismissRequest,
+        canDismiss = canDismiss,
+    ) {
+        val dialog = this
+        VelvetAlertDialogCard(
+            title = title,
+            text = { text(dialog) },
+            confirmButton = { confirmButton(dialog) },
+            dismissButton = dismissButton?.let { btn -> { btn(dialog) } },
+        )
+    }
+}
+
+/** Smooth Material 3 bottom sheet with fluid close helper when dismissing via internal actions. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VelvetModalSheet(
+    onDismissRequest: () -> Unit,
+    skipPartiallyExpanded: Boolean = true,
+    content: @Composable ColumnScope.(VelvetSheetScope) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = skipPartiallyExpanded)
+    val scope = rememberCoroutineScope()
+    var hiding by remember { mutableStateOf(false) }
+
+    val hideAndRun: (() -> Unit) -> Unit = { afterHide ->
+        if (!hiding) {
+            hiding = true
+            scope.launch {
+                try {
+                    sheetState.hide()
+                } finally {
+                    afterHide()
+                    onDismissRequest()
+                }
+            }
+        }
+    }
+    val sheetScope = remember { VelvetSheetScope(hideAndRun) }
+    val reveal = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        reveal.animateTo(1f, tween(durationMillis = 190, easing = FastOutSlowInEasing))
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+        sheetState = sheetState,
+        shape = VelvetPopupMotion.SheetShape,
+        containerColor = velvetColors.surface,
+        tonalElevation = 0.dp,
+        scrimColor = Color(0x99000000),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 12.dp, bottom = 10.dp)
+                    .size(width = 40.dp, height = 4.dp)
+                    .clip(CircleShape)
+                    .background(velvetColors.muted.copy(alpha = 0.34f)),
+            )
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    val p = reveal.value.coerceIn(0f, 1f)
+                    alpha = 0.86f + 0.14f * p
+                    translationY = (1f - p) * 10.dp.toPx()
+                },
+        ) {
+            content(sheetScope)
+        }
+    }
+}
+
+@Composable
+fun VelvetDropdownMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        modifier = modifier,
+        shape = VelvetPopupMotion.MenuShape,
+        containerColor = velvetColors.raised,
+        tonalElevation = 0.dp,
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.dp, velvetColors.glassBorder),
+        content = content,
+    )
+}
+
 /** A destructive action waiting for the user to confirm it. */
 class ConfirmRequest(
     val title: String,
@@ -1149,15 +1497,20 @@ class ConfirmRequest(
 /** Asks before anything is deleted; nothing happens unless the user taps the red button. */
 @Composable
 fun ConfirmDialog(request: ConfirmRequest?, onDismiss: () -> Unit) {
-    request ?: return
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
-        title = { Text(request.title, style = MaterialTheme.typography.headlineSmall) },
-        text = { Text(request.message, style = MaterialTheme.typography.bodyLarge, color = velvetColors.muted) },
-        confirmButton = {
-            TextButton(onClick = { request.action(); onDismiss() }) { Text(request.confirmLabel, color = velvetColors.danger) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = velvetColors.text) } },
-    )
+    VelvetDialogHost(target = request, onDismissRequest = onDismiss) { active ->
+        VelvetAlertDialogCard(
+            title = { Text(active.title, style = MaterialTheme.typography.headlineSmall) },
+            text = { Text(active.message, style = MaterialTheme.typography.bodyLarge, color = velvetColors.muted) },
+            confirmButton = {
+                TextButton(onClick = { active.action(); onDismiss() }) {
+                    Text(active.confirmLabel, color = velvetColors.danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = velvetColors.text)
+                }
+            },
+        )
+    }
 }

@@ -58,6 +58,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -223,12 +225,45 @@ private fun AppRoot() {
         LocalSongMenu provides { menu = it },
         LocalContentColor provides velvetColors.text,
     ) {
-        Box(Modifier.fillMaxSize()) {
+        val isPlayerOpen = nav.nowPlayingOpen && hasPlayer
+        val playerOpenAnim = remember { Animatable(if (isPlayerOpen) 1f else 0f) }
+        var renderNowPlaying by remember { mutableStateOf(isPlayerOpen) }
+        var interactiveMinimize by remember { mutableFloatStateOf(0f) }
+        var rootHeightPx by remember { mutableFloatStateOf(0f) }
+
+        LaunchedEffect(isPlayerOpen) {
+            if (isPlayerOpen) {
+                renderNowPlaying = true
+                interactiveMinimize = 0f
+                playerOpenAnim.animateTo(1f, spring(dampingRatio = 0.84f, stiffness = 500f))
+            } else {
+                if (interactiveMinimize > 0f) {
+                    val remaining = (1f - interactiveMinimize).coerceIn(0f, 1f)
+                    playerOpenAnim.snapTo(remaining * playerOpenAnim.value)
+                    interactiveMinimize = 0f
+                }
+                playerOpenAnim.animateTo(0f, spring(dampingRatio = 0.88f, stiffness = 560f))
+                renderNowPlaying = false
+            }
+        }
+
+        val playerExpandFraction = (playerOpenAnim.value * (1f - interactiveMinimize)).coerceIn(0f, 1f)
+
+        Box(
+            Modifier
+                .fillMaxSize()
+                .onSizeChanged { rootHeightPx = it.height.toFloat() },
+        ) {
             PaperBackground()
 
             Column(
                 Modifier
                     .fillMaxSize()
+                    .graphicsLayer {
+                        val depthScale = 1f - 0.025f * playerExpandFraction
+                        scaleX = depthScale
+                        scaleY = depthScale
+                    }
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .imePadding()
@@ -347,7 +382,20 @@ private fun AppRoot() {
                 }
             }
 
-            Box(Modifier.align(Alignment.BottomCenter).background(velvetColors.background).navigationBarsPadding()) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .graphicsLayer {
+                        val p = playerExpandFraction
+                        val scale = 1f - 0.05f * p
+                        scaleX = scale
+                        scaleY = scale
+                        translationY = -12.dp.toPx() * p
+                        alpha = (1f - p * 1.55f).coerceIn(0f, 1f)
+                    }
+                    .background(velvetColors.background)
+                    .navigationBarsPadding(),
+            ) {
                 Column(
                     Modifier.onSizeChanged { size -> dockHeight = with(density) { size.height.toDp() } },
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -363,18 +411,38 @@ private fun AppRoot() {
                 }
             }
 
-            AnimatedVisibility(
-                visible = nav.nowPlayingOpen && hasPlayer,
-                enter = slideInVertically(
-                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 520f),
-                    initialOffsetY = { it },
-                ) + fadeIn(animationSpec = tween(150)),
-                exit = slideOutVertically(
-                    animationSpec = spring(dampingRatio = 0.88f, stiffness = 580f),
-                    targetOffsetY = { it },
-                ) + fadeOut(animationSpec = tween(130)),
-            ) {
-                NowPlayingScreen(onClose = { nav.nowPlayingOpen = false })
+            if (renderNowPlaying && hasPlayer) {
+                if (playerExpandFraction > 0.01f) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.44f * playerExpandFraction)),
+                    )
+                }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            val p = playerExpandFraction
+                            val travel = (if (rootHeightPx > 0f) rootHeightPx else size.height) * 0.86f
+                            translationY = (1f - p) * travel
+                            val sX = 0.93f + 0.07f * p
+                            val sY = 0.95f + 0.05f * p
+                            scaleX = sX
+                            scaleY = sY
+                            alpha = (p * 3.2f).coerceIn(0f, 1f)
+                            val radius = ((1f - p) * 28f).dp
+                            if (radius > 0.dp) {
+                                shape = RoundedCornerShape(radius)
+                                clip = true
+                            }
+                        },
+                ) {
+                    NowPlayingScreen(
+                        onMinimizeDrag = { fraction -> interactiveMinimize = fraction },
+                        onClose = { nav.nowPlayingOpen = false },
+                    )
+                }
             }
 
             RadioNotificationBanner(

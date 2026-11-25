@@ -663,12 +663,13 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     if (showUpdateDialog && updateDialogInfo != null) {
         val info = updateDialogInfo!!
-        AlertDialog(
+        VelvetAlertDialog(
             onDismissRequest = {
                 if (!isDownloading) {
                     showUpdateDialog = false
                 }
             },
+            canDismiss = !isDownloading,
             title = {
                 Text(
                     text = if (info.hasAppUpdate) "Update Available" else "App is Up to Date",
@@ -677,7 +678,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     color = velvetColors.text,
                 )
             },
-            text = {
+            text = { _ ->
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -767,14 +768,16 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }
             },
-            confirmButton = {
+            confirmButton = { dialog ->
                 if (info.hasAppUpdate) {
                     FilledTonalButton(
                         enabled = !isDownloading,
                         onClick = {
                             if (!info.downloadUrl.endsWith(".apk", ignoreCase = true)) {
-                                openReleases(context, info.downloadUrl)
-                                showUpdateDialog = false
+                                dialog.dismissThen {
+                                    openReleases(context, info.downloadUrl)
+                                    showUpdateDialog = false
+                                }
                                 return@FilledTonalButton
                             }
                             isDownloading = true
@@ -809,7 +812,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                                         when (val result = AppUpdater.installApk(context, apkFile, info.latestVersionCode)) {
                                             is UpdateInstallResult.PromptLaunched -> {
                                                 showToast("Installing update...", Toast.LENGTH_SHORT)
-                                                showUpdateDialog = false
+                                                dialog.dismissThen { showUpdateDialog = false }
                                             }
                                             is UpdateInstallResult.PermissionRequired -> {
                                                 showToast("Please allow Velvet to install unknown apps, then tap Install again", Toast.LENGTH_LONG)
@@ -838,16 +841,16 @@ fun SettingsScreen(onBack: () -> Unit) {
                         Text(if (isDownloading) "Downloading..." else "Download & Install")
                     }
                 } else {
-                    TextButton(onClick = { showUpdateDialog = false }) {
+                    TextButton(onClick = { dialog.dismissThen { showUpdateDialog = false } }) {
                         Text("OK", color = velvetColors.accentText)
                     }
                 }
             },
-            dismissButton = {
+            dismissButton = { dialog ->
                 if (info.hasAppUpdate) {
                     TextButton(
                         enabled = !isDownloading,
-                        onClick = { showUpdateDialog = false }
+                        onClick = { dialog.dismissThen { showUpdateDialog = false } }
                     ) {
                         Text("Later", color = velvetColors.muted)
                     }
@@ -990,13 +993,12 @@ private fun MusicLanguagesDialog(
     )
     val chosen = remember { mutableStateListOf<String>().apply { addAll(selected) } }
 
-    AlertDialog(
+    VelvetAlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
         title = {
             Text("Listening languages", style = MaterialTheme.typography.titleLarge, color = velvetColors.text, fontWeight = FontWeight.Bold)
         },
-        text = {
+        text = { _ ->
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1046,13 +1048,13 @@ private fun MusicLanguagesDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = { onSave(chosen.toList()) }) {
+        confirmButton = { dialog ->
+            TextButton(onClick = { dialog.dismissThen { onSave(chosen.toList()) } }) {
                 Text("Save", color = velvetColors.accentText, fontWeight = FontWeight.Bold)
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
+        dismissButton = { dialog ->
+            TextButton(onClick = { dialog.dismissThen(onDismiss) }) {
                 Text("Cancel", color = velvetColors.muted)
             }
         },
@@ -1068,12 +1070,8 @@ private fun <T> ThemedRadioSelectionDialog(
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    VelvetAlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
-        shape = RoundedCornerShape(24.dp),
-        tonalElevation = 6.dp,
-        modifier = Modifier.border(1.dp, velvetColors.rule, RoundedCornerShape(24.dp)),
         title = {
             Column {
                 Text(
@@ -1092,7 +1090,7 @@ private fun <T> ThemedRadioSelectionDialog(
                 }
             }
         },
-        text = {
+        text = { dialog ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1112,8 +1110,10 @@ private fun <T> ThemedRadioSelectionDialog(
                                 shape = RoundedCornerShape(14.dp),
                             )
                             .clickable {
-                                onSelect(value)
-                                onDismiss()
+                                dialog.dismissThen {
+                                    onSelect(value)
+                                    onDismiss()
+                                }
                             }
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1139,8 +1139,10 @@ private fun <T> ThemedRadioSelectionDialog(
                         RadioButton(
                             selected = isSelected,
                             onClick = {
-                                onSelect(value)
-                                onDismiss()
+                                dialog.dismissThen {
+                                    onSelect(value)
+                                    onDismiss()
+                                }
                             },
                             colors = RadioButtonDefaults.colors(
                                 selectedColor = velvetColors.accent,
@@ -1151,8 +1153,8 @@ private fun <T> ThemedRadioSelectionDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
+        confirmButton = { dialog ->
+            TextButton(onClick = { dialog.dismissThen(onDismiss) }) {
                 Text("Close", color = velvetColors.accentText, fontWeight = FontWeight.SemiBold)
             }
         },

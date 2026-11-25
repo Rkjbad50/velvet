@@ -6,6 +6,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
@@ -24,6 +26,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -217,7 +220,30 @@ fun MiniPlayer(onOpen: () -> Unit) {
     val position = rememberPosition()
     val duration = PlayerConnection.durationMs
     var dragX by remember { mutableFloatStateOf(0f) }
+    var dragUpY by remember { mutableFloatStateOf(0f) }
     val progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    val smoothProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(durationMillis = 220, easing = LinearEasing),
+        label = "miniProgressSmooth",
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.985f else 1f,
+        animationSpec = VelvetPopupMotion.sliderSpring,
+        label = "miniPressScale",
+    )
+    val smoothDragX by animateFloatAsState(
+        targetValue = dragX,
+        animationSpec = if (dragX == 0f) VelvetPopupMotion.sliderSpring else snap(),
+        label = "miniDragX",
+    )
+    val smoothDragUp by animateFloatAsState(
+        targetValue = dragUpY,
+        animationSpec = if (dragUpY == 0f) VelvetPopupMotion.sliderSpring else snap(),
+        label = "miniDragUp",
+    )
     val isDark = velvetColors.surface.luminance() < 0.5f
     val artColor = rememberArtColor(song.thumb, fallback = velvetColors.accent)
 
@@ -237,18 +263,39 @@ fun MiniPlayer(onOpen: () -> Unit) {
         Modifier
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+                translationY = smoothDragUp * 0.25f
+            }
             .clip(RoundedCornerShape(16.dp))
             .background(baseBg)
             .background(gradientBrush)
             .border(1.dp, velvetColors.glassBorder, RoundedCornerShape(16.dp))
-            .clickable(role = Role.Button, onClick = onOpen)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onOpen,
+            )
             .semantics { contentDescription = "Open now playing" }
-            .swipeToSkip({ dragX }, { dragX = it }),
+            .swipeToSkip({ dragX }, { dragX = it })
+            .draggable(
+                orientation = Orientation.Vertical,
+                state = rememberDraggableState { delta ->
+                    dragUpY = (dragUpY + delta).coerceIn(-160f, 0f)
+                },
+                onDragStopped = { velocity ->
+                    val shouldOpen = dragUpY < -48f || velocity < -420f
+                    dragUpY = 0f
+                    if (shouldOpen) onOpen()
+                },
+            ),
     ) {
         Row(
             Modifier
                 .padding(start = 10.dp, top = 9.dp, bottom = 7.dp, end = 10.dp)
-                .graphicsLayer { translationX = dragX / 2 },
+                .graphicsLayer { translationX = smoothDragX / 2 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Artwork(song.thumb, 42.dp, corner = 8.dp)
@@ -278,7 +325,7 @@ fun MiniPlayer(onOpen: () -> Unit) {
         ) {
             Box(
                 Modifier
-                    .fillMaxWidth(progress)
+                    .fillMaxWidth(smoothProgress)
                     .height(3.dp)
                     .background(Brush.horizontalGradient(listOf(velvetColors.accent, artColor))),
             )
@@ -355,7 +402,10 @@ private fun rememberQuality(song: Song, hiRes: Boolean): String {
 }
 
 @Composable
-fun NowPlayingScreen(onClose: () -> Unit) {
+fun NowPlayingScreen(
+    onMinimizeDrag: (Float) -> Unit = {},
+    onClose: () -> Unit,
+) {
     val song = PlayerConnection.current
     if (song == null) {
         LaunchedEffect(Unit) { onClose() }
@@ -382,6 +432,14 @@ fun NowPlayingScreen(onClose: () -> Unit) {
     var showSleep by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var artDrag by remember { mutableFloatStateOf(0f) }
+    val smoothArtDrag by animateFloatAsState(
+        targetValue = artDrag,
+        animationSpec = if (artDrag == 0f) VelvetPopupMotion.sliderSpring else snap(),
+        label = "artDragSmooth",
+    )
+    val scope = rememberCoroutineScope()
+    val pullAnim = remember { Animatable(0f) }
+    val dragRangePx = with(LocalDensity.current) { 420.dp.toPx() }.coerceAtLeast(1f)
     val progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
 
     val openArtist: (() -> Unit)? = song.artistUrl?.let { url ->
@@ -470,6 +528,30 @@ fun NowPlayingScreen(onClose: () -> Unit) {
             Column(
                 Modifier
                     .fillMaxSize()
+                    .draggable(
+                        orientation = Orientation.Vertical,
+                        enabled = !showQueue && !showLyrics && !showSleep,
+                        state = rememberDraggableState { delta ->
+                            val next = (pullAnim.value + delta).coerceAtLeast(0f)
+                            scope.launch {
+                                pullAnim.snapTo(next)
+                                onMinimizeDrag((next / dragRangePx).coerceIn(0f, 0.90f))
+                            }
+                        },
+                        onDragStopped = { velocity ->
+                            val shouldClose = pullAnim.value > dragRangePx * 0.28f || velocity > 650f
+                            if (shouldClose) {
+                                onClose()
+                                scope.launch { pullAnim.snapTo(0f) }
+                            } else {
+                                scope.launch {
+                                    pullAnim.animateTo(0f, VelvetPopupMotion.enterSpring) {
+                                        onMinimizeDrag((value / dragRangePx).coerceIn(0f, 0.90f))
+                                    }
+                                }
+                            }
+                        },
+                    )
                     .systemBarsPadding()
                     .padding(start = 20.dp, end = 20.dp, bottom = bottomPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -614,8 +696,8 @@ fun NowPlayingScreen(onClose: () -> Unit) {
                             modifier = Modifier
                                 .size(artworkSize)
                                 .graphicsLayer {
-                                    translationX = artDrag
-                                    alpha = 1f - (abs(artDrag) / 900f).coerceAtMost(0.5f)
+                                    translationX = smoothArtDrag
+                                    alpha = 1f - (abs(smoothArtDrag) / 900f).coerceAtMost(0.5f)
                                 }
                                 .swipeToSkip({ artDrag }, { artDrag = it }),
                             contentAlignment = Alignment.Center,
@@ -873,7 +955,17 @@ fun NowPlayingScreen(onClose: () -> Unit) {
 
             // Back closes the full-screen lyrics before it closes Now Playing
             BackHandler(enabled = showLyrics) { showLyrics = false }
-            AnimatedVisibility(showLyrics, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
+            AnimatedVisibility(
+                showLyrics,
+                enter = slideInVertically(
+                    initialOffsetY = { it / 12 },
+                    animationSpec = spring(dampingRatio = 0.84f, stiffness = 520f),
+                ) + fadeIn(tween(180)),
+                exit = slideOutVertically(
+                    targetOffsetY = { it / 12 },
+                    animationSpec = tween(150, easing = FastOutSlowInEasing),
+                ) + fadeOut(tween(130)),
+            ) {
                 FullLyrics(lyrics, position, onRequest = requestLyrics, onClose = { showLyrics = false })
             }
 
@@ -1804,18 +1896,15 @@ private fun LyricsText(result: Lyrics.Result, position: Long) {
 @Composable
 private fun SleepSheet(onDismiss: () -> Unit) {
     val state by SleepTimer.state.collectAsStateWithLifecycle()
-    ModalBottomSheet(
+    VelvetModalSheet(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
-        tonalElevation = 0.dp,
-        scrimColor = Color(0x99000000),
-    ) {
+    ) { sheet ->
         Text("Sleep timer", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 22.dp, bottom = 8.dp))
         listOf(5, 15, 30, 45, 60, 90, 120).forEach { minutes ->
-            SheetOption("$minutes minutes") { SleepTimer.start(minutes); onDismiss() }
+            SheetOption("$minutes minutes") { sheet.dismissThen { SleepTimer.start(minutes) } }
         }
-        SheetOption("End of song") { SleepTimer.endOfSong(); onDismiss() }
-        if (state != SleepTimer.State.Off) SheetOption("Turn off timer") { SleepTimer.cancel(); onDismiss() }
+        SheetOption("End of song") { sheet.dismissThen { SleepTimer.endOfSong() } }
+        if (state != SleepTimer.State.Off) SheetOption("Turn off timer") { sheet.dismissThen { SleepTimer.cancel() } }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -1856,10 +1945,7 @@ private fun QueueSheet(
     LaunchedEffect(Unit) {
         sheetHeightAnim.animateTo(
             targetValue = peekHeightPx,
-            animationSpec = spring(
-                dampingRatio = 0.85f,
-                stiffness = Spring.StiffnessMediumLow,
-            ),
+            animationSpec = VelvetPopupMotion.enterSpring,
         )
     }
 

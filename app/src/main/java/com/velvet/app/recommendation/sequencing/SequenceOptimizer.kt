@@ -1,5 +1,6 @@
 package com.velvet.app.recommendation.sequencing
 
+import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 import com.velvet.app.recommendation.model.RankedCandidate
 import com.velvet.app.recommendation.model.RecommendationReason
 import com.velvet.app.recommendation.model.RecommendationRequest
@@ -47,6 +48,7 @@ class DefaultSequenceOptimizer(
         val recentFeatures: List<TrackFeatureRecord>,
         val usedRecordingIds: Set<String>,
         val usedWorkIds: Set<String>,
+        val usedCompositionKeys: Set<String>,
         val artistCounts: Map<String, Int>,
         val cumulativeScore: Double,
     )
@@ -68,6 +70,11 @@ class DefaultSequenceOptimizer(
         val anchor = seedFeatures ?: recentHistoryFeatures.lastOrNull()
 
         val initialExcludedRecordings = request.excludedRecordingIds + request.queueRecordingIds
+        val initialCompositionKeys = if (!request.allowExplicitUserIntentOverride) {
+            (request.seedSongs + listOfNotNull(request.currentSong) + request.queueSongs + request.userQueueSongs)
+                .mapNotNull { RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() } }
+                .toSet()
+        } else emptySet()
         val beamWidth = config.beamWidth.coerceIn(1, 6)
         val useBeam = beamWidth > 1 && pool.size > 1 && targetCount > 1
 
@@ -77,6 +84,7 @@ class DefaultSequenceOptimizer(
                 recentFeatures = recentHistoryFeatures.takeLast(6),
                 usedRecordingIds = initialExcludedRecordings,
                 usedWorkIds = emptySet(),
+                usedCompositionKeys = initialCompositionKeys,
                 artistCounts = emptyMap(),
                 cumulativeScore = 0.0,
             ),
@@ -132,6 +140,10 @@ class DefaultSequenceOptimizer(
                     }
                     val nextRecSet = state.usedRecordingIds + cand.candidate.identity.canonicalRecordingId
                     val nextWorkSet = state.usedWorkIds + cand.candidate.identity.workId
+                    val compKey = RecordingIdentityResolver.canonicalCompositionTitleKey(cand.candidate.song)
+                    val nextCompSet = if (!request.allowExplicitUserIntentOverride && compKey.isNotBlank()) {
+                        state.usedCompositionKeys + compKey
+                    } else state.usedCompositionKeys
                     val nextRecent = if (cand.candidate.features != null) {
                         (state.recentFeatures + cand.candidate.features).takeLast(6)
                     } else state.recentFeatures
@@ -141,6 +153,7 @@ class DefaultSequenceOptimizer(
                         recentFeatures = nextRecent,
                         usedRecordingIds = nextRecSet,
                         usedWorkIds = nextWorkSet,
+                        usedCompositionKeys = nextCompSet,
                         artistCounts = nextArtists,
                         cumulativeScore = state.cumulativeScore + stepScore,
                     )
@@ -243,6 +256,10 @@ class DefaultSequenceOptimizer(
             val cand = ranked.candidate
             if (cand.identity.canonicalRecordingId in state.usedRecordingIds) return@filter false
             if (cand.identity.workId in state.usedWorkIds) return@filter false
+            if (state.usedCompositionKeys.isNotEmpty()) {
+                val compKey = RecordingIdentityResolver.canonicalCompositionTitleKey(cand.song)
+                if (compKey.isNotBlank() && compKey in state.usedCompositionKeys) return@filter false
+            }
 
             val artists = cand.features?.primaryArtistIds.orEmpty()
             if (strictArtistCap && artists.isNotEmpty()) {

@@ -728,7 +728,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                             PanelIconButton(AppIcons.Pencil, "Edit playlist") { showEditSheet = true }
                             Box {
                                 PanelIconButton(Icons.Default.MoreVert, "More options") { showOverflowMenu = true }
-                                DropdownMenu(
+                                VelvetDropdownMenu(
                                     expanded = showOverflowMenu,
                                     onDismissRequest = { showOverflowMenu = false },
                                 ) {
@@ -970,14 +970,11 @@ fun EditPlaylistSheet(
         }
     }
 
-    ModalBottomSheet(
+    VelvetModalSheet(
         onDismissRequest = {
             if (isDirty) showDiscardConfirm = true else onDismiss()
         },
-        containerColor = velvetColors.surface,
-        tonalElevation = 0.dp,
-        scrimColor = Color(0x99000000),
-    ) {
+    ) { sheet ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -991,7 +988,7 @@ fun EditPlaylistSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = {
-                    if (isDirty) showDiscardConfirm = true else onDismiss()
+                    if (isDirty) showDiscardConfirm = true else sheet.dismiss()
                 }) {
                     Text("Cancel", color = velvetColors.muted)
                 }
@@ -999,7 +996,9 @@ fun EditPlaylistSheet(
                 Button(
                     onClick = {
                         if (canSave) {
-                            onSave(trimmedName, description.trim().ifEmpty { null }, coverMode, coverRef)
+                            sheet.dismissThen {
+                                onSave(trimmedName, description.trim().ifEmpty { null }, coverMode, coverRef)
+                            }
                         }
                     },
                     enabled = canSave,
@@ -1148,12 +1147,9 @@ fun ChooseCoverPickerSheet(
         playlist.songs.mapNotNull { it.thumb }.distinct()
     }
 
-    ModalBottomSheet(
+    VelvetModalSheet(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
-        tonalElevation = 0.dp,
-        scrimColor = Color(0x99000000),
-    ) {
+    ) { sheet ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1213,7 +1209,7 @@ fun ChooseCoverPickerSheet(
                                         shape = RoundedCornerShape(12.dp),
                                     )
                                     .clickable {
-                                        onSelect(CoverMode.TRACK_ART, thumbUrl)
+                                        sheet.dismissThen { onSelect(CoverMode.TRACK_ART, thumbUrl) }
                                     },
                             ) {
                                 Artwork(thumbUrl, 100.dp, corner = 12.dp)
@@ -1247,7 +1243,7 @@ fun ChooseCoverPickerSheet(
                         Column(
                             modifier = Modifier
                                 .clickable {
-                                    onSelect(CoverMode.PRESET, preset.id.toString())
+                                    sheet.dismissThen { onSelect(CoverMode.PRESET, preset.id.toString()) }
                                 },
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
@@ -1315,12 +1311,9 @@ fun PlaylistSortSheet(
         }
     }
 
-    ModalBottomSheet(
+    VelvetModalSheet(
         onDismissRequest = onDismiss,
-        containerColor = velvetColors.surface,
-        tonalElevation = 0.dp,
-        scrimColor = Color(0x99000000),
-    ) {
+    ) { sheet ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1341,7 +1334,7 @@ fun PlaylistSortSheet(
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
-                TextButton(onClick = onDismiss) {
+                TextButton(onClick = { sheet.dismiss() }) {
                     Text("Done", color = velvetColors.accentText, style = MaterialTheme.typography.titleMedium)
                 }
             }

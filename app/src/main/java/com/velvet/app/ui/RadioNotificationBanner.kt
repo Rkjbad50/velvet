@@ -72,6 +72,11 @@ fun RadioNotificationBanner(
     val isDark = isSystemInDarkTheme()
     val accent = velvetColors.accent
 
+    var renderedBanner by remember { mutableStateOf(bannerState) }
+    LaunchedEffect(bannerState) {
+        if (bannerState != null) renderedBanner = bannerState
+    }
+
     LaunchedEffect(bannerState?.token) {
         if (bannerState != null) {
             delay(3600)
@@ -83,18 +88,20 @@ fun RadioNotificationBanner(
         visible = bannerState != null,
         enter = slideInVertically(
             initialOffsetY = { -it - 60 },
-            animationSpec = spring(dampingRatio = 0.72f, stiffness = 380f)
-        ) + fadeIn(tween(220)) + scaleIn(initialScale = 0.88f, animationSpec = tween(220)),
+            animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f)
+        ) + fadeIn(tween(200)) + scaleIn(initialScale = 0.90f, animationSpec = spring(dampingRatio = 0.80f, stiffness = 500f)),
         exit = slideOutVertically(
             targetOffsetY = { -it - 60 },
-            animationSpec = tween(220, easing = FastOutLinearInEasing)
-        ) + fadeOut(tween(180)) + scaleOut(targetScale = 0.92f, animationSpec = tween(180)),
+            animationSpec = tween(180, easing = FastOutSlowInEasing)
+        ) + fadeOut(tween(160)) + scaleOut(targetScale = 0.92f, animationSpec = tween(160)),
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
-        if (bannerState != null) {
+        val activeBanner = bannerState ?: renderedBanner
+        if (activeBanner != null) {
+            val bannerState = activeBanner
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

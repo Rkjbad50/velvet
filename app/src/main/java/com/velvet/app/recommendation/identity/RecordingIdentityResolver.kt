@@ -133,6 +133,34 @@ object RecordingIdentityResolver {
             wA.primaryArtists.any { it in wB.primaryArtists }
     }
 
+    private val HONORIFIC_NOISE_WORDS = setOf(
+        "shree", "shri", "sri", "jai", "om", "maa", "mata", "baba", "lord",
+        "the", "a", "an", "of", "vol", "part", "chapter", "full", "original",
+    )
+
+    fun canonicalCompositionTitleKey(song: Song): String = resolveWork(song).comparisonKey
+
+    /**
+     * Detects when two tracks represent the same underlying song/chalisa/bhajan composition title
+     * regardless of singer or uploader (e.g., "Hanuman Chalisa - Hariharan" vs "Shree Hanuman Chalisa - Gulshan Kumar"),
+     * preventing Autoplay / Similar Songs from repeating the same title in a queue.
+     */
+    fun isSameCompositionTitle(a: Song, b: Song): Boolean {
+        val kA = canonicalCompositionTitleKey(a)
+        val kB = canonicalCompositionTitleKey(b)
+        if (kA.isBlank() || kB.isBlank()) return false
+        if (kA == kB) return true
+
+        val tokensA = kA.split(' ').filter { it.length >= 3 && it !in HONORIFIC_NOISE_WORDS }.toSet()
+        val tokensB = kB.split(' ').filter { it.length >= 3 && it !in HONORIFIC_NOISE_WORDS }.toSet()
+        if (tokensA.size >= 2 && tokensB.size >= 2) {
+            val smaller = minOf(tokensA.size, tokensB.size)
+            val overlap = tokensA.intersect(tokensB).size
+            if (overlap == smaller && smaller >= 2) return true
+        }
+        return false
+    }
+
     /**
      * Selects the cleanest verified studio audio upload within a duplicate recording cluster
      * for recommendation surfaces. Returns null if no candidate passes verified studio audio policy.

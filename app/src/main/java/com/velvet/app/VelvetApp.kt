@@ -109,10 +109,17 @@ class VelvetApp : Application(), ImageLoaderFactory {
 
     val recommendationEngine: com.velvet.app.recommendation.engine.DefaultRecommendationEngine by lazy {
         val searchSongsProvider: suspend (String) -> List<com.velvet.app.data.Song> = { query ->
-            com.velvet.app.data.YouTube.Search(query, com.velvet.app.data.YouTube.FILTER_SONGS)
-                .loadNext()
-                .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
-                .map { it.song }
+            val npSongs = runCatching {
+                com.velvet.app.data.YouTube.Search(query, com.velvet.app.data.YouTube.FILTER_SONGS)
+                    .loadNext()
+                    .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
+                    .map { it.song }
+            }.getOrDefault(emptyList())
+            val itSongs = if (npSongs.size < 6) {
+                runCatching { com.velvet.app.data.YouTubeMusicInnertube.searchSongs(query) }
+                    .getOrDefault(emptyList())
+            } else emptyList()
+            (npSongs + itSongs).distinctBy { it.id }
         }
         val sources = listOf(
             com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource(

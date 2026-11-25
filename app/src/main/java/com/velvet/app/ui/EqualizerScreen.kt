@@ -1,7 +1,12 @@
 package com.velvet.app.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -183,6 +189,20 @@ private fun SliderRow(
     val span = range.endInclusive - range.start
     val fill = if (span > 0f) (current - range.start) / span else 0f
     val zero = if (span > 0f) (0f.coerceIn(range) - range.start) / span else 0f
+    val interactionSource = remember { MutableInteractionSource() }
+    val isDragged by interactionSource.collectIsDraggedAsState()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isActive = isDragged || isPressed
+    val animatedFill by animateFloatAsState(
+        targetValue = fill,
+        animationSpec = if (isDragged) snap() else VelvetPopupMotion.sliderSpring,
+        label = "eqFill_$label",
+    )
+    val thumbScale by animateFloatAsState(
+        targetValue = if (isActive) 1.24f else 1f,
+        animationSpec = VelvetPopupMotion.sliderSpring,
+        label = "eqThumb_$label",
+    )
     Column(Modifier.padding(top = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).padding(end = 8.dp))
@@ -193,17 +213,26 @@ private fun SliderRow(
             onValueChange = onChange,
             valueRange = range,
             enabled = enabled,
+            interactionSource = interactionSource,
             modifier = Modifier.fillMaxWidth().semantics {
                 contentDescription = label
                 stateDescription = valueText
             },
             thumb = {
-                Box(Modifier.size(12.dp, 22.dp).background(
-                    if (enabled) velvetColors.accentText else velvetColors.track,
-                    RoundedCornerShape(3.dp),
-                ))
+                Box(
+                    Modifier
+                        .size(12.dp, 22.dp)
+                        .graphicsLayer {
+                            scaleX = thumbScale
+                            scaleY = thumbScale
+                        }
+                        .background(
+                            if (enabled) velvetColors.accentText else velvetColors.track,
+                            RoundedCornerShape(4.dp),
+                        ),
+                )
             },
-            track = { ConsoleMeter(fill, Modifier.fillMaxWidth(), origin = zero, enabled = enabled) },
+            track = { ConsoleMeter(animatedFill, Modifier.fillMaxWidth(), origin = zero, enabled = enabled) },
         )
     }
 }

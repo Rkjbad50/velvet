@@ -349,7 +349,7 @@ fun LibraryScreen() {
                     )
                 }
 
-                DropdownMenu(
+                VelvetDropdownMenu(
                     expanded = showPlusMenu,
                     onDismissRequest = { showPlusMenu = false },
                 ) {
@@ -1041,12 +1041,9 @@ fun LibraryScreen() {
     // 6. Long-press Action Sheet on a Playlist: Edit, Duplicate, Delete
     if (playlistToManage != null) {
         val target = playlistToManage!!
-        ModalBottomSheet(
+        VelvetModalSheet(
             onDismissRequest = { playlistToManage = null },
-            containerColor = velvetColors.surface,
-            tonalElevation = 0.dp,
-            scrimColor = Color(0x99000000),
-        ) {
+        ) { sheet ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1061,8 +1058,7 @@ fun LibraryScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            editingPlaylist = target
-                            playlistToManage = null
+                            sheet.dismissThen { editingPlaylist = target }
                         }
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1077,7 +1073,7 @@ fun LibraryScreen() {
                         .fillMaxWidth()
                         .clickable {
                             val newId = library.duplicatePlaylist(target.id)
-                            playlistToManage = null
+                            sheet.dismiss()
                             if (newId != null) {
                                 Toast.makeText(context, "Playlist duplicated", Toast.LENGTH_SHORT).show()
                             }
@@ -1094,8 +1090,7 @@ fun LibraryScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            confirmDeletePlaylist = target
-                            playlistToManage = null
+                            sheet.dismissThen { confirmDeletePlaylist = target }
                         }
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1126,12 +1121,9 @@ fun LibraryScreen() {
 
     // Sort sheet for Library
     if (showSortSheet) {
-        ModalBottomSheet(
+        VelvetModalSheet(
             onDismissRequest = { showSortSheet = false },
-            containerColor = velvetColors.surface,
-            tonalElevation = 0.dp,
-            scrimColor = Color(0x99000000),
-        ) {
+        ) { sheet ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1153,7 +1145,7 @@ fun LibraryScreen() {
                                     sortKey = key
                                     sortDir = if (key == PlaylistSorter.LibrarySortKey.ALPHABETICAL) SortDirection.ASC else SortDirection.DESC
                                 }
-                                showSortSheet = false
+                                sheet.dismiss()
                             }
                             .padding(vertical = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,

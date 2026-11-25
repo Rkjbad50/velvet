@@ -117,19 +117,18 @@ internal fun ConsoleMeter(
 
 @Composable
 internal fun HistoryDialog(request: ConfirmRequest?, onDismiss: () -> Unit) {
-    request ?: return
-    Dialog(onDismissRequest = onDismiss) {
+    VelvetDialogHost(target = request, onDismissRequest = onDismiss) { active ->
         Column(
-            Modifier.fillMaxWidth().panel(RoundedCornerShape(18.dp)).verticalScroll(rememberScrollState()).padding(20.dp),
+            Modifier.fillMaxWidth().panel(VelvetPopupMotion.DialogShape).verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(request.title, style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
-            Text(request.message, style = MaterialTheme.typography.bodyMedium, color = velvetColors.muted)
+            Text(active.title, style = MaterialTheme.typography.headlineSmall, color = velvetColors.text)
+            Text(active.message, style = MaterialTheme.typography.bodyMedium, color = velvetColors.muted)
             HorizontalDivider(color = velvetColors.rule)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ConsoleKey("Cancel", Modifier.weight(1f), onClick = onDismiss)
-                ConsoleKey(request.confirmLabel, Modifier.weight(1.3f), primary = true) {
-                    request.action()
+                ConsoleKey(active.confirmLabel, Modifier.weight(1.3f), primary = true) {
+                    active.action()
                     onDismiss()
                 }
             }

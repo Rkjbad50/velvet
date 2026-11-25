@@ -1,5 +1,6 @@
 package com.velvet.app.ui
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
@@ -29,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -193,7 +195,27 @@ fun FilterPill(
     }
 }
 
-/** OneUI-style wavy / squiggly seekbar with smooth undulating sine wave and circular playhead. */
+@Composable
+private fun rememberSmoothSeekFraction(
+    songId: String,
+    progress: Float,
+    dragFraction: Float?,
+): Float {
+    val target = (dragFraction ?: progress).coerceIn(0f, 1f)
+    val smooth = remember(songId) { Animatable(target) }
+    LaunchedEffect(songId, dragFraction, target) {
+        if (dragFraction != null) {
+            smooth.snapTo(target)
+        } else if (kotlin.math.abs(target - smooth.value) > 0.04f) {
+            smooth.animateTo(target, spring(dampingRatio = 0.84f, stiffness = 560f))
+        } else {
+            smooth.animateTo(target, tween(durationMillis = 240, easing = LinearEasing))
+        }
+    }
+    return smooth.value.coerceIn(0f, 1f)
+}
+
+/** OneUI-style wavy / squiggly seekbar with smooth 120Hz playhead glide and circular handle. */
 @Composable
 fun WavySeekBar(
     songId: String,
@@ -210,7 +232,18 @@ fun WavySeekBar(
     val currentOnSeek by rememberUpdatedState(onSeek)
     val currentOnPreview by rememberUpdatedState(onSeekPreview)
     var dragFraction by remember(songId) { mutableStateOf<Float?>(null) }
-    val shown = (dragFraction ?: progress).coerceIn(0f, 1f)
+    val shown = rememberSmoothSeekFraction(songId, progress, dragFraction)
+    val isDragging = dragFraction != null
+    val thumbScale by animateFloatAsState(
+        targetValue = if (isDragging) 1.32f else 1f,
+        animationSpec = VelvetPopupMotion.sliderSpring,
+        label = "seekThumbScale",
+    )
+    val haloAlpha by animateFloatAsState(
+        targetValue = if (isDragging) 0.44f else 0.28f,
+        animationSpec = tween(durationMillis = 140),
+        label = "seekHaloAlpha",
+    )
 
     val transition = rememberInfiniteTransition(label = "wave")
     val phase by if (isPlaying) {
@@ -286,13 +319,13 @@ fun WavySeekBar(
                     )
                 }
                 // Tactile vertical pill handle
-                val thumbW = 6.dp.toPx()
-                val thumbH = 22.dp.toPx()
+                val thumbW = 6.dp.toPx() * (0.95f + 0.15f * thumbScale)
+                val thumbH = 22.dp.toPx() * (0.85f + 0.15f * thumbScale)
                 drawRoundRect(
-                    color = playheadColor.copy(alpha = 0.35f),
-                    topLeft = Offset(playheadX - thumbW / 2f - 2.dp.toPx(), centerY - thumbH / 2f - 2.dp.toPx()),
-                    size = Size(thumbW + 4.dp.toPx(), thumbH + 4.dp.toPx()),
-                    cornerRadius = CornerRadius((thumbW + 4.dp.toPx()) / 2f, (thumbW + 4.dp.toPx()) / 2f),
+                    color = playheadColor.copy(alpha = haloAlpha),
+                    topLeft = Offset(playheadX - thumbW / 2f - 2.5.dp.toPx(), centerY - thumbH / 2f - 2.5.dp.toPx()),
+                    size = Size(thumbW + 5.dp.toPx(), thumbH + 5.dp.toPx()),
+                    cornerRadius = CornerRadius((thumbW + 5.dp.toPx()) / 2f, (thumbW + 5.dp.toPx()) / 2f),
                 )
                 drawRoundRect(
                     color = Color.White,
@@ -367,18 +400,18 @@ fun WavySeekBar(
                 }
                 // Refined luminous circular thumb
                 drawCircle(
-                    color = playheadColor.copy(alpha = 0.30f),
-                    radius = 9.dp.toPx(),
+                    color = playheadColor.copy(alpha = haloAlpha),
+                    radius = 9.dp.toPx() * thumbScale,
                     center = Offset(playheadX, centerY),
                 )
                 drawCircle(
                     color = Color.White,
-                    radius = 5.dp.toPx(),
+                    radius = 5.dp.toPx() * (0.90f + 0.14f * thumbScale),
                     center = Offset(playheadX, centerY),
                 )
                 drawCircle(
                     color = playedColor,
-                    radius = 5.dp.toPx(),
+                    radius = 5.dp.toPx() * (0.90f + 0.14f * thumbScale),
                     center = Offset(playheadX, centerY),
                     style = Stroke(width = 1.5.dp.toPx()),
                 )
@@ -403,7 +436,12 @@ fun SegmentedSeekBar(
     val currentOnSeek by rememberUpdatedState(onSeek)
     val currentOnPreview by rememberUpdatedState(onSeekPreview)
     var dragFraction by remember(songId) { mutableStateOf<Float?>(null) }
-    val shown = dragFraction ?: progress
+    val shown = rememberSmoothSeekFraction(songId, progress, dragFraction)
+    val activeHeightBoost by animateFloatAsState(
+        targetValue = if (dragFraction != null) 1.30f else 1f,
+        animationSpec = VelvetPopupMotion.sliderSpring,
+        label = "segmentedBoost",
+    )
 
     Canvas(
         modifier
@@ -444,15 +482,16 @@ fun SegmentedSeekBar(
         val width = (size.width - gap * (segments - 1)) / segments
         val height = 10.dp.toPx()
         repeat(segments) { index ->
+            val segH = if (index == filled - 1) height * activeHeightBoost else height
             drawRoundRect(
                 color = when {
                     index == filled - 1 -> playheadColor
                     index < filled -> playedColor
                     else -> unplayedColor
                 },
-                topLeft = Offset(index * (width + gap), (size.height - height) / 2),
-                size = Size(width, height),
-                cornerRadius = CornerRadius(1.dp.toPx()),
+                topLeft = Offset(index * (width + gap), (size.height - segH) / 2),
+                size = Size(width, segH),
+                cornerRadius = CornerRadius(1.5.dp.toPx()),
             )
         }
     }
