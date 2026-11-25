@@ -129,6 +129,17 @@ class OnboardingShuffleAndHomePersonalizationTest {
         assertTrue("pa" in surveyed.longTerm.languageWeights)
         assertTrue("diljit dosanjh" in surveyed.longTerm.artistWeights)
         assertTrue("arijit singh" in surveyed.explicit.followedArtistIds)
+
+        // Verify all UI survey genre labels canonicalize cleanly
+        val allSurveyGenres = listOf(
+            "Bollywood", "Bhakti & Devotional", "Punjabi Beats", "Sufi & Ghazal",
+            "90s & Retro", "Romantic", "Sad & Soulful", "South Indian",
+            "Indian Indie", "Western Pop", "Hip-Hop & Rap", "Lo-Fi & Chill",
+            "EDM & Party", "Indian Classical", "Rock",
+        )
+        allSurveyGenres.forEach { label ->
+            assertTrue("Missing canonical genre mapping for '$label'", GenreOntology.canonicalize(label) != null)
+        }
     }
 
     @Test

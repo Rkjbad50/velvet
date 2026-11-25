@@ -624,15 +624,16 @@ class TasteProfileBuilder(
         val norm = raw.trim().lowercase(Locale.ROOT)
         if (norm.isBlank()) return SurveyGenreSignals()
         val directGenre = GenreOntology.canonicalize(norm)
+        val canonicalOrNorm = directGenre ?: norm
         return when {
-            norm in setOf("bhakti", "devotional", "bhajan", "aarti", "mantra", GenreOntology.DEVOTIONAL) ->
+            norm in setOf("bhakti", "devotional", "bhakti & devotional", "bhajan", "aarti", "mantra", GenreOntology.DEVOTIONAL) || canonicalOrNorm == GenreOntology.DEVOTIONAL ->
                 SurveyGenreSignals(
                     genres = listOf(GenreOntology.DEVOTIONAL),
                     subgenres = listOf("bhajan", "aarti", "mantra"),
                     musicTypes = listOf(MusicType.BHAJAN, MusicType.DEVOTIONAL, MusicType.AARTI, MusicType.CHALISA, MusicType.MANTRA),
                     moods = listOf("devotional", "peaceful"),
                 )
-            norm in setOf("sufi", "ghazal", "sufi & ghazal", "qawwali", GenreOntology.SUFI_GHAZAL) ->
+            norm in setOf("sufi", "ghazal", "sufi & ghazal", "qawwali", GenreOntology.SUFI_GHAZAL) || canonicalOrNorm == GenreOntology.SUFI_GHAZAL ->
                 SurveyGenreSignals(
                     genres = listOf(GenreOntology.SUFI_GHAZAL),
                     subgenres = listOf("sufi", "ghazal", "qawwali"),
@@ -657,45 +658,45 @@ class TasteProfileBuilder(
                     subgenres = listOf("bollywood_romantic"),
                     moods = listOf("romantic"),
                 )
-            norm in setOf("sad", "heartbreak", "bollywood_sad") ->
+            norm in setOf("sad", "heartbreak", "sad & soulful", "bollywood_sad") ->
                 SurveyGenreSignals(
                     genres = listOf(GenreOntology.BOLLYWOOD, GenreOntology.INDIAN_INDIE),
                     subgenres = listOf("bollywood_sad"),
                     moods = listOf("sad", "melancholic"),
                 )
-            norm in setOf("punjabi", "bhangra", "punjabi beats", GenreOntology.PUNJABI) ->
+            norm in setOf("punjabi", "bhangra", "punjabi beats", GenreOntology.PUNJABI) || canonicalOrNorm == GenreOntology.PUNJABI ->
                 SurveyGenreSignals(
                     genres = listOf(GenreOntology.PUNJABI),
                     subgenres = listOf("punjabi_pop", "punjabi_bhangra"),
                     moods = listOf("energetic", "party"),
                 )
-            norm in setOf("south indian", "tamil & telugu", "tollywood", "kollywood", GenreOntology.SOUTH_INDIAN) ->
+            norm in setOf("south indian", "tamil & telugu", "tollywood", "kollywood", GenreOntology.SOUTH_INDIAN) || canonicalOrNorm == GenreOntology.SOUTH_INDIAN ->
                 SurveyGenreSignals(
                     genres = listOf(GenreOntology.SOUTH_INDIAN),
                     subgenres = listOf("tamil_film", "telugu_film", "malayalam_film", "kannada_film"),
                     musicTypes = listOf(MusicType.FILM_SONG),
                 )
-            norm in setOf("indian indie", "indie", "acoustic", GenreOntology.INDIAN_INDIE) ->
+            norm in setOf("indian indie", "indie", "acoustic", GenreOntology.INDIAN_INDIE) || canonicalOrNorm == GenreOntology.INDIAN_INDIE ->
                 SurveyGenreSignals(
                     genres = listOf(GenreOntology.INDIAN_INDIE),
                     subgenres = listOf("indie_pop", "indie_acoustic"),
                     musicTypes = listOf(MusicType.INDEPENDENT),
                 )
-            norm in setOf("classical", "indian classical", "instrumental", GenreOntology.INDIAN_CLASSICAL) ->
+            norm in setOf("classical", "indian classical", "instrumental", GenreOntology.INDIAN_CLASSICAL) || canonicalOrNorm == GenreOntology.INDIAN_CLASSICAL ->
                 SurveyGenreSignals(
                     genres = listOf(GenreOntology.INDIAN_CLASSICAL),
                     subgenres = listOf("hindustani_classical", "carnatic", "raga_instrumental"),
                     musicTypes = listOf(MusicType.CLASSICAL, MusicType.INSTRUMENTAL),
                 )
-            norm in setOf("pop", "western pop", "international pop", GenreOntology.WESTERN_POP) ->
+            norm in setOf("pop", "western pop", "international pop", GenreOntology.WESTERN_POP) || canonicalOrNorm == GenreOntology.WESTERN_POP ->
                 SurveyGenreSignals(genres = listOf(GenreOntology.WESTERN_POP), subgenres = listOf("synth_pop", "dance_pop"))
-            norm in setOf("hip hop", "hip-hop", "rap", "desi hip hop", GenreOntology.HIP_HOP) ->
+            norm in setOf("hip hop", "hip-hop", "hip-hop & rap", "hip hop & rap", "rap", "desi hip hop", GenreOntology.HIP_HOP) || canonicalOrNorm == GenreOntology.HIP_HOP ->
                 SurveyGenreSignals(genres = listOf(GenreOntology.HIP_HOP), subgenres = listOf("desi_hip_hop"))
-            norm in setOf("rock", "alt rock", GenreOntology.ROCK) ->
+            norm in setOf("rock", "alt rock", GenreOntology.ROCK) || canonicalOrNorm == GenreOntology.ROCK ->
                 SurveyGenreSignals(genres = listOf(GenreOntology.ROCK), subgenres = listOf("alt_rock", "classic_rock"))
-            norm in setOf("edm", "electronic", "dance", "party", GenreOntology.EDM) ->
+            norm in setOf("edm", "electronic", "dance", "party", "edm & party", GenreOntology.EDM) || canonicalOrNorm == GenreOntology.EDM ->
                 SurveyGenreSignals(genres = listOf(GenreOntology.EDM), moods = listOf("energetic", "party"))
-            norm in setOf("lofi", "lo-fi", "lofi & chill", "chill", GenreOntology.LOFI_CHILL) ->
+            norm in setOf("lofi", "lo-fi", "lofi & chill", "lo-fi & chill", "chill", GenreOntology.LOFI_CHILL) || canonicalOrNorm == GenreOntology.LOFI_CHILL ->
                 SurveyGenreSignals(genres = listOf(GenreOntology.LOFI_CHILL), subgenres = listOf("lofi_beats"), moods = listOf("chill", "peaceful"))
             directGenre != null -> {
                 val parent = GenreOntology.parentOf(directGenre)
