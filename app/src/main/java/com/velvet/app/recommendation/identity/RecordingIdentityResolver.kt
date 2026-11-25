@@ -153,6 +153,7 @@ object RecordingIdentityResolver {
 
         val tokensA = kA.split(' ').filter { it.length >= 3 && it !in HONORIFIC_NOISE_WORDS }.toSet()
         val tokensB = kB.split(' ').filter { it.length >= 3 && it !in HONORIFIC_NOISE_WORDS }.toSet()
+        if (tokensA.isNotEmpty() && tokensA == tokensB) return true
         if (tokensA.size >= 2 && tokensB.size >= 2) {
             val smaller = minOf(tokensA.size, tokensB.size)
             val overlap = tokensA.intersect(tokensB).size

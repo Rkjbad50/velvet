@@ -48,6 +48,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /** The UI's handle on PlaybackService, mirrored into Compose state. */
@@ -375,6 +376,11 @@ object PlayerConnection {
                 syncQueueState()
                 syncToExoPlayer()
                 checkAndExtendAutoplay()
+                if (queueManager.upNext.size <= 4) {
+                    (queueManager.upNext.lastOrNull()?.song ?: queueManager.current)?.let {
+                        StreamResolver.prefetchRelated(it)
+                    }
+                }
             }
         }
     }
@@ -394,6 +400,9 @@ object PlayerConnection {
                 } else {
                     current = exoCurrent
                 }
+            }
+            if (queueManager.upNext.size <= 4) {
+                StreamResolver.prefetchRelated(queueManager.upNext.lastOrNull()?.song ?: exoCurrent)
             }
         }
         val isAutoplayOn = VelvetApp.library.data.value.autoplay || isRadioActive
@@ -568,8 +577,13 @@ object PlayerConnection {
         syncToExoPlayer(playlistStart = start, isRadio = radio)
 
         val isAutoplayOn = VelvetApp.library.data.value.autoplay || radio
-        if (isAutoplayOn && queueManager.upNext.isEmpty()) {
-            queueManager.current?.id?.let { checkAndExtendAutoplay(it) }
+        if (isAutoplayOn) {
+            if (queueManager.upNext.size < 4) {
+                queueManager.current?.id?.let { checkAndExtendAutoplay(it) }
+            }
+            (queueManager.upNext.lastOrNull()?.song ?: queueManager.current)?.let {
+                StreamResolver.prefetchRelated(it)
+            }
         }
     }
 
@@ -1034,13 +1048,19 @@ object PlayerConnection {
                 if (force) {
                     VelvetApp.autoplayRefillCoordinator.resetForNewSeed(targetSeed.id)
                 }
-                val decision = VelvetApp.autoplayRefillCoordinator.requestRefill(
-                    initialSnapshot = initialSnapshot,
-                    latestSnapshotProvider = { buildRefillSnapshot() },
-                    seedId = targetSeed.id,
-                    autoPlayNext = autoPlayNext,
-                    force = force,
-                    dismissedFilter = { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) },
+                val decision = withTimeoutOrNull(2_650L) {
+                    VelvetApp.autoplayRefillCoordinator.requestRefill(
+                        initialSnapshot = initialSnapshot,
+                        latestSnapshotProvider = { buildRefillSnapshot() },
+                        seedId = targetSeed.id,
+                        autoPlayNext = autoPlayNext,
+                        force = force,
+                        dismissedFilter = { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) },
+                    )
+                } ?: RefillDecision.SafeEmpty(
+                    requestId = "timeout-$generation",
+                    reason = "Queue refill hit 2.65s latency ceiling",
+                    status = com.velvet.app.recommendation.engine.RefillStatus.IDLE,
                 )
 
                 withContext(Dispatchers.Main) {

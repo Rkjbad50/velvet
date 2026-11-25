@@ -17,6 +17,8 @@ import org.schabi.newpipe.extractor.stream.AudioTrackType
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.io.IOException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -94,10 +96,18 @@ object StreamResolver {
     private fun peek(videoId: String, saver: Boolean): Resolved? =
         cache[key(videoId, saver)]?.takeIf { it.expiresAtMs > System.currentTimeMillis() }
 
-    /** Starts resolving in the background, e.g. the moment a finger touches a song. */
+    /** Starts resolving stream audio URL and warms related recommendations in parallel. */
     fun prefetch(videoId: String) {
-        if (!isValidVideoId(videoId) || peek(videoId) != null) return
-        scope.launch { runCatching { resolve(videoId) } }
+        if (!isValidVideoId(videoId)) return
+        if (peek(videoId) == null) {
+            scope.launch { runCatching { resolve(videoId) } }
+        }
+    }
+
+    /** Proactively warms related song candidates in background so Queue / Autoplay responds instantly. */
+    fun prefetchRelated(song: Song) {
+        if (!isValidVideoId(song.id) || relatedCache[song.id] != null) return
+        scope.launch { runCatching { related(song.id, seedHint = song) } }
     }
 
     /**
@@ -151,63 +161,64 @@ object StreamResolver {
         }
     }
 
-    /** Songs YouTube Music & YouTube relate to this one (hybrid InnerTube + NewPipeExtractor). Blocking; cached; shared in flight. */
-    fun related(videoId: String): List<Song> {
+    /**
+     * Songs YouTube Music & YouTube relate to this one (hybrid InnerTube + NewPipeExtractor).
+     * Returns in <1s typically by returning immediately when InnerTube /next + Related tab yields
+     * >= 8 distinct verified studio songs, and running fallback sources in parallel under a strict ceiling.
+     */
+    fun related(videoId: String, seedHint: Song? = null): List<Song> {
         if (!isValidVideoId(videoId)) return emptyList()
         relatedCache[videoId]?.let { return it }
         synchronized(locks.getOrPut("rel|$videoId") { Any() }) {
             relatedCache[videoId]?.let { return it }
 
-            // 1. Primary: YouTube Music InnerTube Song Radio (RDAMVM) + Related browse tab (ATV studio audio)
+            fun isDistinctFromSeed(seed: Song?, cand: Song): Boolean {
+                if (cand.id == videoId) return false
+                if (seed == null) return true
+                return !com.velvet.app.recommendation.identity.RecordingIdentityResolver.isSameCompositionTitle(seed, cand)
+            }
+
+            // 1. Primary ultra-fast path: YouTube Music InnerTube Song Radio (RDAMVM) + Related tab
             val innertubeRelated = runCatching { YouTubeMusicInnertube.fetchNextRadio(videoId) }
                 .getOrDefault(emptyList())
+                .filter { cand -> cand.isPureMusic() && cand.isOriginalMusicAudio() && isDistinctFromSeed(seedHint, cand) }
 
-            // 2. Companion: NewPipeExtractor streamInfo watch-next related items
-            val info = runCatching { YouTube.streamInfo(videoId) }.getOrNull()
-            val seedSongFromInfo = info?.let { runCatching { YouTube.songFrom(it) }.getOrNull() }
+            val innertubeVerified = innertubeRelated.count {
+                it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
+            }
+            if (innertubeVerified >= 8) {
+                relatedCache[videoId] = innertubeRelated
+                return innertubeRelated
+            }
+
+            // 2. Parallel supplement when InnerTube radio panel was sparse (< 8 verified distinct tracks)
+            val streamInfoFuture = CompletableFuture.supplyAsync {
+                runCatching { YouTube.streamInfo(videoId) }.getOrNull()
+            }
+            val seedArtistHint = seedHint?.artist?.removeSuffix(" - Topic")?.trim().orEmpty()
+            val catalogSearchFuture = if (seedArtistHint.isNotBlank()) {
+                CompletableFuture.supplyAsync {
+                    runCatching { YouTubeMusicInnertube.searchSongs("$seedArtistHint songs") }.getOrDefault(emptyList())
+                }
+            } else null
+
+            val info = runCatching { streamInfoFuture.get(1600, TimeUnit.MILLISECONDS) }.getOrNull()
+            val effectiveSeed = seedHint ?: info?.let { runCatching { YouTube.songFrom(it) }.getOrNull() }
             val newPipeRelated = info?.relatedItems
                 ?.mapNotNull { (it as? StreamInfoItem)?.toSong() }
-                ?.filter { it.id != videoId && it.isPureMusic() && it.isOriginalMusicAudio() }
+                ?.filter { it.isPureMusic() && it.isOriginalMusicAudio() && isDistinctFromSeed(effectiveSeed, it) }
                 ?.sortedByDescending { it.preferredMusicSource || it.isTopicRelease }
                 .orEmpty()
 
-            val mergedBase = (innertubeRelated + newPipeRelated)
+            val catalogSongs = runCatching {
+                catalogSearchFuture?.get(1500, TimeUnit.MILLISECONDS)
+            }.getOrNull().orEmpty().filter {
+                it.isPureMusic() && it.isOriginalMusicAudio() && isDistinctFromSeed(effectiveSeed, it)
+            }
+
+            val finalRelated = (innertubeRelated + newPipeRelated + catalogSongs)
+                .filter { isDistinctFromSeed(effectiveSeed, it) }
                 .distinctBy { it.id }
-                .filter { cand ->
-                    cand.id != videoId &&
-                        (seedSongFromInfo == null ||
-                            !com.velvet.app.recommendation.identity.RecordingIdentityResolver.isSameCompositionTitle(seedSongFromInfo, cand))
-                }
-
-            val verifiedCount = mergedBase.count {
-                it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
-            }
-
-            val finalRelated = if (verifiedCount < 6) {
-                val seedArtist = (info?.uploaderName ?: innertubeRelated.firstOrNull()?.artist ?: "")
-                    .removeSuffix(" - Topic").trim()
-                val query = if (seedArtist.isNotBlank()) "$seedArtist songs" else ""
-                val catalogFallback = if (query.isNotBlank()) {
-                    val npSearch = runCatching {
-                        YouTube.Search(query, YouTube.FILTER_SONGS).loadNext()
-                            .filterIsInstance<BrowseItem.SongItem>()
-                            .map { it.song }
-                    }.getOrDefault(emptyList())
-                    val itSearch = if (npSearch.size < 6) {
-                        runCatching { YouTubeMusicInnertube.searchSongs(query) }.getOrDefault(emptyList())
-                    } else emptyList()
-                    (npSearch + itSearch).filter { cand ->
-                        cand.id != videoId &&
-                            cand.isPureMusic() &&
-                            cand.isOriginalMusicAudio() &&
-                            (seedSongFromInfo == null ||
-                                !com.velvet.app.recommendation.identity.RecordingIdentityResolver.isSameCompositionTitle(seedSongFromInfo, cand))
-                    }
-                } else emptyList()
-                (mergedBase + catalogFallback).distinctBy { it.id }
-            } else {
-                mergedBase
-            }
 
             if (finalRelated.isNotEmpty()) {
                 relatedCache[videoId] = finalRelated

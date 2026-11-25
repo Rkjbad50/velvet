@@ -5,17 +5,25 @@ import com.velvet.app.data.LibraryData
 import com.velvet.app.data.Song
 import com.velvet.app.data.YouTubeMusicInnertube
 import com.velvet.app.recommendation.candidates.CandidatePoolBuilder
+import com.velvet.app.recommendation.candidates.CandidateSourceRequest
 import com.velvet.app.recommendation.candidates.GenreLanguageNeighbourSource
+import com.velvet.app.recommendation.candidates.SameReleaseCandidateSource
 import com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource
 import com.velvet.app.recommendation.engine.DefaultRecommendationEngine
 import com.velvet.app.recommendation.events.InMemoryEventBackend
 import com.velvet.app.recommendation.events.RecommendationEventRepository
 import com.velvet.app.recommendation.identity.RecordingIdentityResolver
+import com.velvet.app.recommendation.model.MusicType
 import com.velvet.app.recommendation.model.RecommendationMode
+import com.velvet.app.recommendation.model.RecommendationRequest
+import com.velvet.app.recommendation.model.TrackFeatureRecord
 import com.velvet.app.recommendation.profile.DefaultUserProfileRepository
+import com.velvet.app.recommendation.profile.UserTasteSnapshot
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -298,5 +306,104 @@ class Phase8DiversityAndInnertubeTest {
         assertEquals("A.R. Rahman", parsed.single().artist)
         assertEquals("Rockstar", parsed.single().album)
         assertEquals(472L, parsed.single().durationSec)
+    }
+
+    @Test
+    fun earlyQuorumFinishesWellUnderThreeSecondsEvenWhenSecondarySourceStalls() = runBlocking {
+        val seed = topic(
+            id = "seed_fast",
+            title = "Shree Shiv Tandav Bhajan",
+            artist = "Hariharan",
+            durationSec = 310L,
+            album = "Sacred Echoes",
+        )
+        val relatedBatch = (1..8).map { i ->
+            topic("rel_$i", "Om Namah Chant $i", "Singer A$i", durationSec = 240L + i, album = "Devotion $i")
+        }
+        val genreBatch = (1..8).map { i ->
+            topic("gen_$i", "Sacred Aarti Stotram $i", "Singer B$i", durationSec = 250L + i, album = "Temple Vol $i")
+        }
+        val pool = CandidatePoolBuilder(
+            sources = listOf(
+                SeedRelatedCandidateSource(relatedProvider = {
+                    delay(15L)
+                    relatedBatch
+                }),
+                GenreLanguageNeighbourSource(querySearchProvider = {
+                    delay(20L)
+                    genreBatch
+                }),
+                SameReleaseCandidateSource(releaseTracksProvider = {
+                    delay(10_000L)
+                    emptyList()
+                }),
+            ),
+            perSourceTimeoutMs = 1_800L,
+            overallDeadlineMs = 2_200L,
+            enableEarlyQuorum = true,
+            earlyQuorumMinCandidates = 14,
+            earlyQuorumGraceMs = 80L,
+        )
+        val profileRepo = DefaultUserProfileRepository(
+            eventRepository = RecommendationEventRepository(backend = InMemoryEventBackend()),
+            libraryDataProvider = { LibraryData() },
+        )
+        val engine = DefaultRecommendationEngine(pool, profileRepo)
+
+        val t0 = System.nanoTime()
+        val res = engine.nextSimilar(seed, mode = RecommendationMode.AUTOPLAY_REFILL, limit = 15)
+        val elapsedMs = (System.nanoTime() - t0) / 1_000_000L
+
+        assertTrue("Early quorum must finish well below 2.2s overall deadline (was ${elapsedMs}ms)", elapsedMs < 1_800L)
+        assertTrue("Queue must be populated with similar studio tracks", res.candidates.size >= 8)
+        assertFalse(res.candidates.any { it.song.id == seed.id })
+    }
+
+    @Test
+    fun secularGenreNeighbourBuildsNonEmptyQueryAcrossFilmAndMoodTracks() {
+        val source = GenreLanguageNeighbourSource(querySearchProvider = { emptyList() })
+        val req = CandidateSourceRequest(
+            request = RecommendationRequest(requestId = "req_sec", mode = RecommendationMode.AUTOPLAY_REFILL),
+            seedFeatures = emptyList(),
+            userProfile = UserTasteSnapshot(),
+            maxCandidates = 20,
+            deadlineMillis = System.currentTimeMillis() + 2_000L,
+        )
+
+        val filmFeatures = TrackFeatureRecord(
+            canonicalRecordingId = "c_film",
+            providerItemId = "s_film",
+            title = "Tum Hi Ho",
+            durationMs = 262_000L,
+            musicTypes = mapOf(MusicType.FILM_SONG to 0.9),
+            languageIds = mapOf("hi" to 0.9),
+        )
+        val filmQuery = source.buildGenreQuery(filmFeatures, req)
+        assertNotNull("Secular Hindi film song must yield a non-null genre query", filmQuery)
+        assertTrue(filmQuery!!.contains("bollywood", ignoreCase = true))
+        assertTrue(filmQuery.contains("Hindi", ignoreCase = true))
+
+        val moodFeatures = TrackFeatureRecord(
+            canonicalRecordingId = "c_mood",
+            providerItemId = "s_mood",
+            title = "Midnight Breeze",
+            durationMs = 210_000L,
+            moodIds = mapOf("romantic" to 0.85),
+            languageIds = mapOf("en" to 0.9),
+        )
+        val moodQuery = source.buildGenreQuery(moodFeatures, req)
+        assertNotNull("Mood-tagged song without explicit genre must still build a G5 query", moodQuery)
+        assertTrue(moodQuery!!.contains("romantic", ignoreCase = true))
+    }
+
+    @Test
+    fun singleWordCompositionAndHonorificVariantsAreDetected() {
+        val honorific = topic("single_a", "Shree Shiva", "Singer Alpha")
+        val bare = topic("single_b", "Shiva", "Singer Beta")
+        val differentA = topic("diff_a", "Kesariya", "Arijit Singh")
+        val differentB = topic("diff_b", "Baarish", "Atif Aslam")
+
+        assertTrue(RecordingIdentityResolver.isSameCompositionTitle(honorific, bare))
+        assertFalse(RecordingIdentityResolver.isSameCompositionTitle(differentA, differentB))
     }
 }

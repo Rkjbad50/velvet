@@ -13,6 +13,7 @@ import com.velvet.app.recommendation.model.SourceHealth
 import com.velvet.app.recommendation.model.TrackFeatureRecord
 import com.velvet.app.recommendation.profile.UserTasteSnapshot
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -40,10 +41,13 @@ class CandidatePoolBuilder(
     private val featureRepository: TrackFeatureRepository = TrackFeatureRepository(),
     private val circuitBreaker: SourceCircuitBreaker = SourceCircuitBreaker(),
     private val clock: () -> Long = System::currentTimeMillis,
-    private val perSourceTimeoutMs: Long = 4_500L,
-    private val overallDeadlineMs: Long = 5_500L,
+    private val perSourceTimeoutMs: Long = 2_000L,
+    private val overallDeadlineMs: Long = 2_300L,
     private val cacheTtlMs: Long = 15 * 60 * 1000L,
     private val maxRawPoolSize: Int = 200,
+    private val enableEarlyQuorum: Boolean = false,
+    private val earlyQuorumMinCandidates: Int = 14,
+    private val earlyQuorumGraceMs: Long = 160L,
 ) {
     private data class CachedPoolEntry(
         val pool: CandidatePool,
@@ -73,6 +77,34 @@ class CandidatePoolBuilder(
 
         val quotas = computeSourceQuotas(request.mode)
         val collected = ConcurrentHashMap<String, CandidateSourceResult>()
+        val completedIds = ConcurrentHashMap.newKeySet<String>()
+        val seenUniqueSongIds = ConcurrentHashMap.newKeySet<String>()
+        val quorumSignal = CompletableDeferred<Unit>()
+
+        fun notifySourceDone(res: CandidateSourceResult) {
+            collected[res.sourceId] = res
+            completedIds.add(res.sourceId)
+            res.candidates.forEach { seenUniqueSongIds.add(it.song.id) }
+            if (!enableEarlyQuorum || quorumSignal.isCompleted) return
+
+            if (completedIds.size >= enabledSources.size) {
+                quorumSignal.complete(Unit)
+                return
+            }
+            val primaryDone = when (request.mode) {
+                RecommendationMode.ARTIST_RADIO ->
+                    ("g3_primary_artist" in completedIds) &&
+                        ("g1_related" in completedIds || seenUniqueSongIds.size >= earlyQuorumMinCandidates)
+                else ->
+                    (("g1_related" in completedIds) && ("g5_genre_neighbours" in completedIds)) ||
+                        ((("g1_related" in completedIds) || ("g5_genre_neighbours" in completedIds)) &&
+                            seenUniqueSongIds.size >= earlyQuorumMinCandidates)
+            }
+            if (primaryDone) {
+                quorumSignal.complete(Unit)
+            }
+        }
+
         val jobs = enabledSources.map { source ->
             async(Dispatchers.IO) {
                 if (!circuitBreaker.allowRequest(source.sourceId)) {
@@ -85,7 +117,7 @@ class CandidatePoolBuilder(
                         errorCode = "circuit_open",
                     )
                     circuitBreaker.recordResult(open)
-                    collected[source.sourceId] = open
+                    notifySourceDone(open)
                     return@async
                 }
                 val quotaMax = quotas[source.sourceId] ?: DEFAULT_SOURCE_QUOTA
@@ -120,11 +152,22 @@ class CandidatePoolBuilder(
                     )
                 }
                 circuitBreaker.recordResult(res)
-                collected[source.sourceId] = res
+                notifySourceDone(res)
             }
         }
-        withTimeoutOrNull(overallDeadlineMs) {
-            jobs.joinAll()
+        if (enableEarlyQuorum) {
+            withTimeoutOrNull(overallDeadlineMs) {
+                quorumSignal.await()
+                if (completedIds.size < enabledSources.size) {
+                    withTimeoutOrNull(earlyQuorumGraceMs) {
+                        jobs.joinAll()
+                    }
+                }
+            }
+        } else {
+            withTimeoutOrNull(overallDeadlineMs) {
+                jobs.joinAll()
+            }
         }
         jobs.forEach { if (it.isActive) it.cancel() }
 

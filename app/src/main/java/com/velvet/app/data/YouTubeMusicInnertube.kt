@@ -12,6 +12,7 @@ import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
 
 /**
  * Lightweight native YouTube Music InnerTube (WEB_REMIX / ANDROID_VR) client working alongside
@@ -98,13 +99,28 @@ object YouTubeMusicInnertube {
         }
     }
 
+    @Volatile
+    private var cachedFastHttp: OkHttpClient? = null
+
+    @Volatile
+    private var cachedFastBase: OkHttpClient? = null
+
+    private fun fastHttpClient(): OkHttpClient? {
+        val base = runCatching { VelvetApp.http }.getOrNull() ?: return null
+        val cached = cachedFastHttp
+        if (cached != null && cachedFastBase === base) return cached
+        val built = base.newBuilder()
+            .connectTimeout(1500, TimeUnit.MILLISECONDS)
+            .readTimeout(1900, TimeUnit.MILLISECONDS)
+            .writeTimeout(1500, TimeUnit.MILLISECONDS)
+            .build()
+        cachedFastBase = base
+        cachedFastHttp = built
+        return built
+    }
+
     private fun postJson(url: String, payload: JsonObject, userAgent: String = YtDownloader.USER_AGENT): JsonObject? {
-        val client = runCatching {
-            VelvetApp.http.newBuilder()
-                .connectTimeout(6, TimeUnit.SECONDS)
-                .readTimeout(8, TimeUnit.SECONDS)
-                .build()
-        }.getOrNull() ?: return null
+        val client = fastHttpClient() ?: return null
 
         val bodyText = JsonWriter.string().`object`(payload).done()
         val req = Request.Builder()

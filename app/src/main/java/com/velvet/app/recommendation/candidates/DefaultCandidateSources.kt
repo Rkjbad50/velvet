@@ -10,6 +10,9 @@ import com.velvet.app.recommendation.model.CandidateSourceStatus
 import com.velvet.app.recommendation.model.MusicType
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.TrackFeatureRecord
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -174,10 +177,15 @@ class CollaboratorCandidateSource(
         val perCoCap = if (request.request.mode == RecommendationMode.ARTIST_RADIO) 5 else 2
         val coLimit = if (request.request.mode == RecommendationMode.ARTIST_RADIO) 4 else 2
         return try {
+            val fetchedPairs = coroutineScope {
+                coArtists.take(coLimit).map { co ->
+                    async { co to artistTracksProvider(co).take(perCoCap) }
+                }.awaitAll()
+            }
             val list = mutableListOf<RawTrackCandidate>()
             var rank = 0
-            for (co in coArtists.take(coLimit)) {
-                for (song in artistTracksProvider(co).take(perCoCap)) {
+            for ((co, songs) in fetchedPairs) {
+                for (song in songs) {
                     list.add(
                         RawTrackCandidate(
                             song = song,
@@ -260,6 +268,7 @@ class GenreLanguageNeighbourSource(
         val topSubgenre = features?.subgenreIds?.maxByOrNull { it.value }?.key
         val topGenre = features?.genreIds?.maxByOrNull { it.value }?.key
         val topType = features?.musicTypes?.maxByOrNull { it.value }?.key
+        val topMood = features?.moodIds?.maxByOrNull { it.value }?.key
         val topLang = req.request.requestedLanguageIds.firstOrNull()
             ?: features?.languageIds?.maxByOrNull { it.value }?.key
 
@@ -287,6 +296,9 @@ class GenreLanguageNeighbourSource(
             topType == MusicType.SUFI -> "sufi soulful songs"
             topSubgenre != null -> "${topSubgenre.replace('_', ' ')} songs"
             topGenre != null -> "${topGenre.replace('_', ' ')} songs"
+            topType == MusicType.FILM_SONG -> if (topMood != null) "bollywood $topMood songs" else "bollywood melodic hit songs"
+            topMood != null -> "$topMood hit songs"
+            langLabel.isNotBlank() -> "top melodic hit songs"
             else -> null
         } ?: return null
 

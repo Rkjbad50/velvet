@@ -108,37 +108,27 @@ class VelvetApp : Application(), ImageLoaderFactory {
     }
 
     val recommendationEngine: com.velvet.app.recommendation.engine.DefaultRecommendationEngine by lazy {
+        // Fast native YT Music InnerTube first (~200-350ms), bounded NewPipe supplement only when sparse.
         val searchSongsProvider: suspend (String) -> List<com.velvet.app.data.Song> = { query ->
-            val npSongs = runCatching {
-                com.velvet.app.data.YouTube.Search(query, com.velvet.app.data.YouTube.FILTER_SONGS)
-                    .loadNext()
-                    .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
-                    .map { it.song }
-            }.getOrDefault(emptyList())
-            val itSongs = if (npSongs.size < 6) {
-                runCatching { com.velvet.app.data.YouTubeMusicInnertube.searchSongs(query) }
-                    .getOrDefault(emptyList())
+            val itSongs = runCatching { com.velvet.app.data.YouTubeMusicInnertube.searchSongs(query) }
+                .getOrDefault(emptyList())
+            val npSongs = if (itSongs.size < 6) {
+                kotlinx.coroutines.withTimeoutOrNull(1_300L) {
+                    runCatching {
+                        com.velvet.app.data.YouTube.Search(query, com.velvet.app.data.YouTube.FILTER_SONGS)
+                            .loadNext()
+                            .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
+                            .map { it.song }
+                    }.getOrDefault(emptyList())
+                }.orEmpty()
             } else emptyList()
-            (npSongs + itSongs).distinctBy { it.id }
+            (itSongs + npSongs).distinctBy { it.id }
         }
         val sources = listOf(
             com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource(
                 relatedProvider = { seed ->
-                    val related = runCatching { com.velvet.app.data.StreamResolver.related(seed.id) }
+                    runCatching { com.velvet.app.data.StreamResolver.related(seed.id, seedHint = seed) }
                         .getOrDefault(emptyList())
-                    val verifiedCount = related.count {
-                        it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
-                    }
-                    if (verifiedCount >= 4) {
-                        related
-                    } else {
-                        val artistQuery = com.velvet.app.playback.normalizePrimaryArtist(seed.artist)
-                            .ifBlank { seed.artist.trim() }
-                        val supplemental = if (artistQuery.isNotBlank()) {
-                            runCatching { searchSongsProvider("$artistQuery songs") }.getOrDefault(emptyList())
-                        } else emptyList()
-                        (supplemental + related).filter { it.id != seed.id }.distinctBy { it.id }
-                    }
                 },
             ),
             com.velvet.app.recommendation.candidates.SameReleaseCandidateSource(
@@ -173,6 +163,11 @@ class VelvetApp : Application(), ImageLoaderFactory {
             candidatePoolBuilder = com.velvet.app.recommendation.candidates.CandidatePoolBuilder(
                 sources = sources,
                 featureRepository = trackFeatureRepository,
+                perSourceTimeoutMs = 1_800L,
+                overallDeadlineMs = 2_200L,
+                enableEarlyQuorum = true,
+                earlyQuorumMinCandidates = 14,
+                earlyQuorumGraceMs = 160L,
             ),
             userProfileRepository = userProfileRepository,
             featureRepository = trackFeatureRepository,
@@ -198,6 +193,7 @@ class VelvetApp : Application(), ImageLoaderFactory {
                 targetUpcomingBuffer = 10,
                 lowWatermarkTrigger = 6,
                 refillBatchSize = 10,
+                minCooldownMs = 300L,
             ),
         )
     }
