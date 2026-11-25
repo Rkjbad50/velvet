@@ -167,7 +167,7 @@ class OriginMotionAndNavTest {
         )
         val v11Payload = UpdatePayload("1.1", 245, "deadbeef", "velvet.apk")
         val state = ReleaseCheck.evaluateAppUpdate(
-            release = officialRelease,
+            targetRelease = officialRelease,
             updatePayload = v11Payload,
             installedVersionCode = 240,
             installedVersionName = "2.7.6",

@@ -439,7 +439,7 @@ class Phase8DiversityAndInnertubeTest {
                     topic("ok_aarti", "Om Jai Jagdish Hare Aarti", "Anuradha Paudwal", durationSec = 320L, album = "Evening Aarti"),
                     topic("club_mismatch", "Midnight Club Party Mix", "DJ Electro", durationSec = 215L, album = "Club Nights"),
                     topic("ok_bw_1", "Tum Hi Ho (From Aashiqui 2)", "Mithoon", durationSec = 262L, album = "Aashiqui 2"),
-                    topic("ok_bw_2", "Agar Tum Saath Ho (From Tamasha)", "Alka Yagnik", durationSec = 341L, album = "Tamasha"),
+                    topic("ok_bw_2", "Agar Tum Saath Ho (From Tamasha)", "Shreya Ghoshal", durationSec = 341L, album = "Tamasha"),
                     unverifiedVideo,
                 ),
             )
