@@ -118,9 +118,17 @@ data class OriginTransformSpec(
 
 object OriginTransformCalculator {
 
-    // Silky critically-damped fluid springs: smooth organic glide without sharp snap or overshoot jerk
-    val windowOpenSpring = spring<Float>(dampingRatio = 0.92f, stiffness = 360f)
-    val windowCloseSpring = spring<Float>(dampingRatio = 0.95f, stiffness = 400f)
+    // Fast, crisp, fluid 120Hz springs: responsive entry & zero end-of-close snap
+    val windowOpenSpring = spring<Float>(
+        dampingRatio = 0.90f,
+        stiffness = 560f,
+        visibilityThreshold = 0.001f,
+    )
+    val windowCloseSpring = spring<Float>(
+        dampingRatio = 0.94f,
+        stiffness = 620f,
+        visibilityThreshold = 0.001f,
+    )
 
     fun compute(
         origin: NavOrigin?,
@@ -138,15 +146,20 @@ object OriginTransformCalculator {
     ): OriginTransformSpec {
         val p = progress.coerceIn(0f, 1.04f)
         val clamped = p.coerceIn(0f, 1f)
+        val shellT = (clamped / 0.16f).coerceIn(0f, 1f)
+        val smoothShell = shellT * shellT * (3f - 2f * shellT)
+        val contentT = ((clamped - 0.20f) / 0.30f).coerceIn(0f, 1f)
+        val smoothContent = contentT * contentT * (3f - 2f * contentT)
 
         if (origin == null || !origin.isValid || containerWidth <= 1f || containerHeight <= 1f) {
+            val fallbackAlpha = (clamped / 0.28f).coerceIn(0f, 1f).let { t -> t * t * (3f - 2f * t) }
             return OriginTransformSpec(
                 translationX = 0f,
                 translationY = (1f - p) * fallbackOffsetYPx,
                 scale = 0.92f + 0.08f * p,
                 cornerDp = targetCornerDp + (1f - clamped) * 18f,
-                shellAlpha = clamped,
-                contentAlpha = if (isExiting) ((clamped - 0.15f) / 0.65f).coerceIn(0f, 1f) else clamped,
+                shellAlpha = fallbackAlpha,
+                contentAlpha = smoothContent.coerceAtLeast(if (!isExiting && clamped > 0.01f) fallbackAlpha else 0f),
                 scrimAlpha = targetScrimAlpha * clamped,
             )
         }
@@ -167,33 +180,26 @@ object OriginTransformCalculator {
         val startCornerDp = (visualOriginCorner / startScale.coerceAtLeast(0.18f)).coerceIn(24f, 120f)
         val cornerDp = targetCornerDp + (startCornerDp - targetCornerDp) * rem
 
-        val shellAlpha = (clamped / 0.16f).coerceIn(0f, 1f)
-        val contentAlpha = if (isExiting) {
-            ((clamped - 0.22f) / 0.62f).coerceIn(0f, 1f)
-        } else {
-            ((clamped - 0.04f) / 0.34f).coerceIn(0f, 1f)
-        }
-
         return OriginTransformSpec(
             translationX = dx * moveX,
             translationY = dy * moveY,
             scale = scale,
             cornerDp = cornerDp,
-            shellAlpha = shellAlpha,
-            contentAlpha = contentAlpha,
+            shellAlpha = smoothShell,
+            contentAlpha = smoothContent,
             scrimAlpha = targetScrimAlpha * clamped,
         )
     }
 }
 
 /**
- * Renders [content] inside an origin-anchored morphing container that unfolds along a smooth
- * parabolic arc out of [origin] when opening and submerges cleanly back into [origin] on close.
+ * Renders [content] inside an origin-anchored morphing container driven purely in GPU graphicsLayer
+ * (zero per-frame recomposition during opening or closing) for full 90/120Hz fluidity.
  */
 @Composable
 fun OriginTransformBox(
     origin: NavOrigin?,
-    progress: Float,
+    progressProvider: () -> Float,
     isExiting: Boolean,
     containerBackground: Color,
     modifier: Modifier = Modifier,
@@ -208,11 +214,12 @@ fun OriginTransformBox(
     var boxH by remember { mutableFloatStateOf(0f) }
     var boxTopLeftInRoot by remember { mutableStateOf(Offset.Zero) }
     val densityPx = LocalDensity.current.density
-    val spec = OriginTransformCalculator.compute(
+
+    fun currentSpec(): OriginTransformSpec = OriginTransformCalculator.compute(
         origin = origin,
         containerWidth = boxW,
         containerHeight = boxH,
-        progress = progress,
+        progress = progressProvider(),
         isExiting = isExiting,
         targetCenterX = boxTopLeftInRoot.x + boxW * 0.5f,
         targetCenterY = boxTopLeftInRoot.y + boxH * 0.5f,
@@ -234,24 +241,28 @@ fun OriginTransformBox(
                 boxH = s.height.toFloat()
             },
     ) {
-        if (showScrim && spec.scrimAlpha > 0.005f) {
+        if (showScrim) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = spec.scrimAlpha)),
+                    .graphicsLayer {
+                        alpha = currentSpec().scrimAlpha
+                    }
+                    .background(Color.Black),
             )
         }
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
+                    val spec = currentSpec()
                     translationX = spec.translationX
                     translationY = spec.translationY
                     scaleX = spec.scale
                     scaleY = spec.scale
                     alpha = spec.shellAlpha
-                    if (spec.cornerDp > 0.25f) {
-                        shape = RoundedCornerShape(spec.cornerDp.dp)
+                    if (spec.cornerDp >= 1f) {
+                        shape = RoundedCornerShape(kotlin.math.round(spec.cornerDp).dp)
                         clip = true
                     }
                 }
@@ -260,13 +271,40 @@ fun OriginTransformBox(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = spec.contentAlpha },
+                    .graphicsLayer { alpha = currentSpec().contentAlpha },
             ) {
                 content()
             }
         }
     }
 }
+
+@Composable
+fun OriginTransformBox(
+    origin: NavOrigin?,
+    progress: Float,
+    isExiting: Boolean,
+    containerBackground: Color,
+    modifier: Modifier = Modifier,
+    minStartScale: Float = 0.16f,
+    maxStartScale: Float = 0.72f,
+    targetCornerDp: Float = 0f,
+    targetScrimAlpha: Float = 0.34f,
+    showScrim: Boolean = true,
+    content: @Composable () -> Unit,
+) = OriginTransformBox(
+    origin = origin,
+    progressProvider = { progress },
+    isExiting = isExiting,
+    containerBackground = containerBackground,
+    modifier = modifier,
+    minStartScale = minStartScale,
+    maxStartScale = maxStartScale,
+    targetCornerDp = targetCornerDp,
+    targetScrimAlpha = targetScrimAlpha,
+    showScrim = showScrim,
+    content = content,
+)
 
 /**
  * Passively records this element's root-window bounds on press/release so any dialog, menu, or

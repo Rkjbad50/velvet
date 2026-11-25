@@ -213,7 +213,9 @@ object YouTubeMusicInnertube {
             put("query", query)
         }
         val root = postJson(YTM_SEARCH_URL, body) ?: return emptyList()
-        return parseArtistsSearchJson(root).take(limit)
+        return parseArtistsSearchJson(root)
+            .sortedByDescending { artistMatchScore(query, it.name) }
+            .take(limit)
     }
 
     /**
@@ -438,11 +440,56 @@ object YouTubeMusicInnertube {
             .distinct()
     }
 
+    internal fun artistNamesMatch(expected: String, actual: String): Boolean {
+        return artistMatchScore(expected, actual) >= 60
+    }
+
+    internal fun artistMatchScore(query: String, candidate: String): Int {
+        fun clean(s: String): String = s.lowercase(Locale.ROOT)
+            .replace(Regex("""[^\p{L}\p{Nd}\s]"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+        val q = clean(query)
+        val c = clean(candidate)
+        if (q.isBlank() || c.isBlank()) return 0
+        if (q == c) return 100
+        val qCompact = q.replace(" ", "")
+        val cCompact = c.replace(" ", "")
+        if (qCompact == cCompact) return 96
+        val qTokens = q.split(' ').filter { it.isNotBlank() }
+        val cTokens = c.split(' ').filter { it.isNotBlank() }
+        if (qTokens.isEmpty() || cTokens.isEmpty()) return 0
+        if (qTokens.all { qt -> cTokens.any { it == qt } }) return 85
+        val overlap = qTokens.count { qt -> cTokens.any { it == qt } }
+        val maxTokens = maxOf(qTokens.size, cTokens.size)
+        return if (overlap > 0 && overlap * 2 >= maxTokens) 65 + overlap * 5 else 0
+    }
+
     internal fun parseArtistsSearchJson(root: JsonObject): List<ArtistRef> {
         val artists = mutableListOf<ArtistRef>()
-        val items = mutableListOf<JsonObject>()
-        collectRenderersRecursive(root, "musicResponsiveListItemRenderer", items)
-        for (renderer in items) {
+        // Walk shelf renderers first to exclude "Songs", "Videos", "Albums", "Playlists" shelves cleanly
+        val shelves = mutableListOf<JsonObject>()
+        collectRenderersRecursive(root, "musicShelfRenderer", shelves)
+        val candidateRenderers = mutableListOf<JsonObject>()
+        if (shelves.isNotEmpty()) {
+            for (shelf in shelves) {
+                val shelfTitle = extractRunsText(
+                    shelf.getObject("title").getArray("runs"),
+                )?.lowercase(Locale.ROOT).orEmpty()
+                if (shelfTitle.isNotBlank() &&
+                    !shelfTitle.contains("artist") &&
+                    !shelfTitle.contains("top result")
+                ) {
+                    continue
+                }
+                collectRenderersRecursive(shelf, "musicResponsiveListItemRenderer", candidateRenderers)
+            }
+        }
+        if (candidateRenderers.isEmpty()) {
+            collectRenderersRecursive(root, "musicResponsiveListItemRenderer", candidateRenderers)
+        }
+
+        for (renderer in candidateRenderers) {
             val navBrowse = renderer.getObject("navigationEndpoint").getObject("browseEndpoint")
             val browseId = navBrowse.getString("browseId")?.takeIf { it.startsWith("UC") } ?: continue
             val pageType = navBrowse.getObject("browseEndpointContextSupportedConfigs")
@@ -459,11 +506,16 @@ object YouTubeMusicInnertube {
                 ?.getObject("text")
                 ?.getArray("runs")
             val subText = extractRunsText(subRuns).orEmpty()
-            val looksLikeArtist = pageType == "MUSIC_PAGE_TYPE_ARTIST" ||
-                subText.contains("artist", ignoreCase = true) ||
-                subText.contains("subscriber", ignoreCase = true) ||
-                pageType.isBlank()
-            if (!looksLikeArtist) continue
+            val subLower = subText.lowercase(Locale.ROOT)
+            // Strictly require explicit MUSIC_PAGE_TYPE_ARTIST OR explicit "Artist" subtitle label (never song/video/album)
+            val isExplicitArtistPage = pageType == "MUSIC_PAGE_TYPE_ARTIST"
+            val isArtistLabelOnly = pageType.isBlank() &&
+                subLower.contains("artist") &&
+                !subLower.contains("song") &&
+                !subLower.contains("video") &&
+                !subLower.contains("album") &&
+                !subLower.contains("single")
+            if (!isExplicitArtistPage && !isArtistLabelOnly) continue
 
             val thumbs = renderer.getObject("thumbnail")
                 .getObject("musicThumbnailRenderer")

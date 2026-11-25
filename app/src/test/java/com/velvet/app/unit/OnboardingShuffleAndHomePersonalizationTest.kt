@@ -345,5 +345,46 @@ class OnboardingShuffleAndHomePersonalizationTest {
         assertEquals(1, parsedArtists.size)
         assertEquals("Diljit Dosanjh", parsedArtists.first().name)
         assertTrue(parsedArtists.first().url.endsWith("/channel/UC1234567890Artist"))
+
+        // Strict artist name matcher prevents wrong-artist profile photo assignment
+        assertTrue(YouTubeMusicInnertube.artistNamesMatch("A.R. Rahman", "A. R. Rahman"))
+        assertTrue(YouTubeMusicInnertube.artistNamesMatch("Diljit Dosanjh", "Diljit Dosanjh"))
+        assertFalse(YouTubeMusicInnertube.artistNamesMatch("Pritam", "T-Series"))
+        assertFalse(YouTubeMusicInnertube.artistNamesMatch("Ankit Tiwari", "Arijit Singh"))
+
+        // Non-artist shelves ("Songs") without MUSIC_PAGE_TYPE_ARTIST must never be mistaken for an artist card
+        val mixedNonArtistJson = """
+            {
+              "contents": {
+                "tabbedSearchResultsRenderer": {
+                  "tabs": [{
+                    "tabRenderer": {
+                      "content": {
+                        "sectionListRenderer": {
+                          "contents": [{
+                            "musicShelfRenderer": {
+                              "title": { "runs": [{ "text": "Songs" }] },
+                              "contents": [{
+                                "musicResponsiveListItemRenderer": {
+                                  "flexColumns": [
+                                    { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Random Song" }] } } },
+                                    { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Song • Some Singer" }] } } }
+                                  ],
+                                  "navigationEndpoint": {
+                                    "browseEndpoint": { "browseId": "UCWrongChannelId999" }
+                                  }
+                                }
+                              }]
+                            }
+                          }]
+                        }
+                      }
+                    }
+                  }]
+                }
+              }
+            }
+        """.trimIndent()
+        assertTrue(YouTubeMusicInnertube.parseArtistsSearchJson(JsonParser.`object`().from(mixedNonArtistJson)).isEmpty())
     }
 }

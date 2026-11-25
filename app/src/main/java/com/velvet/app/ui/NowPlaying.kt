@@ -580,6 +580,7 @@ fun NowPlayingScreen(
 
             val gap = if (maxHeight < 720.dp) 6.dp else 10.dp
             val bottomPadding = if (maxHeight < 720.dp) 14.dp else 22.dp
+            var dragPullPx by remember { mutableFloatStateOf(0f) }
             Column(
                 Modifier
                     .fillMaxSize()
@@ -587,19 +588,19 @@ fun NowPlayingScreen(
                         orientation = Orientation.Vertical,
                         enabled = !showQueue && !showLyrics && !showSleep,
                         state = rememberDraggableState { delta ->
-                            val next = (pullAnim.value + delta).coerceAtLeast(0f)
-                            scope.launch {
-                                pullAnim.snapTo(next)
-                                onMinimizeDrag((next / dragRangePx).coerceIn(0f, 0.90f))
-                            }
+                            dragPullPx = (dragPullPx + delta).coerceAtLeast(0f)
+                            onMinimizeDrag((dragPullPx / dragRangePx).coerceIn(0f, 0.90f))
                         },
                         onDragStopped = { velocity ->
-                            val shouldClose = pullAnim.value > dragRangePx * 0.28f || velocity > 650f
+                            val currentDrag = dragPullPx
+                            val shouldClose = currentDrag > dragRangePx * 0.24f || velocity > 550f
                             if (shouldClose) {
+                                dragPullPx = 0f
                                 onClose()
-                                scope.launch { pullAnim.snapTo(0f) }
                             } else {
+                                dragPullPx = 0f
                                 scope.launch {
+                                    pullAnim.snapTo(currentDrag)
                                     pullAnim.animateTo(0f, VelvetPopupMotion.enterSpring) {
                                         onMinimizeDrag((value / dragRangePx).coerceIn(0f, 0.90f))
                                     }
@@ -966,7 +967,7 @@ fun NowPlayingScreen(
             if (renderLyrics) {
                 OriginTransformBox(
                     origin = lyricsButtonOrigin,
-                    progress = lyricsAnim.value,
+                    progressProvider = { lyricsAnim.value },
                     isExiting = !showLyrics,
                     containerBackground = velvetColors.background,
                     showScrim = true,
@@ -2024,7 +2025,7 @@ private fun QueueSheet(
 
     val dismissWithAnimation: () -> Unit = {
         coroutineScope.launch {
-            sheetHeightAnim.animateTo(0f, spring(dampingRatio = 0.94f, stiffness = 380f))
+            sheetHeightAnim.animateTo(0f, VelvetPopupMotion.exitSpring)
             onDismiss()
         }
     }
@@ -2041,7 +2042,7 @@ private fun QueueSheet(
             coroutineScope.launch {
                 sheetHeightAnim.animateTo(
                     peekHeightPx,
-                    spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                    VelvetPopupMotion.enterSpring,
                 )
             }
         } else {
@@ -2308,34 +2309,40 @@ private fun QueueSheet(
         }
     }
 
-    val currentHeightDp = with(density) { sheetHeightAnim.value.coerceAtLeast(0f).toDp() }
+    val expandedHeightDp = with(density) { expandedHeightPx.coerceAtLeast(1f).toDp() }
+    val peekPaddingBottomDp = with(density) { (expandedHeightPx - peekHeightPx).coerceAtLeast(0f).toDp() }
     val isDark = velvetColors.surface.luminance() < 0.5f
-    val scrimProgress = (sheetHeightAnim.value / expandedHeightPx).coerceIn(0f, 1f)
-    val scrimAlpha = scrimProgress * (if (isDark) 0.65f else 0.45f)
+    val maxScrim = if (isDark) 0.65f else 0.45f
 
     Box(
         modifier = Modifier.fillMaxSize(),
     ) {
-        // Semi-transparent backdrop scrim (tapping dismisses queue)
-        if (scrimAlpha > 0.01f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = scrimAlpha))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = dismissWithAnimation,
-                    ),
-            )
-        }
+        // GPU-only backdrop scrim (zero per-frame allocation)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val p = (sheetHeightAnim.value / expandedHeightPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    alpha = p * maxScrim
+                }
+                .background(Color.Black)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = dismissWithAnimation,
+                ),
+        )
 
-        // Bottom Sheet Surface anchored permanently to physical bottom ("ground")
+        // Pre-laid-out fixed-height Bottom Sheet translated purely on GPU so open/drag/close runs at 120Hz with zero re-layout
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(currentHeightDp)
+                .height(expandedHeightDp)
+                .graphicsLayer {
+                    val vis = sheetHeightAnim.value.coerceAtLeast(0f)
+                    translationY = (expandedHeightPx - vis).coerceAtLeast(0f)
+                }
                 .nestedScroll(nestedScrollConnection),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = velvetColors.surface,
@@ -2364,30 +2371,18 @@ private fun QueueSheet(
                                 val dismissThreshold = peekHeightPx * 0.5f
 
                                 if (velocity < -400f) {
-                                    sheetHeightAnim.animateTo(
-                                        expandedHeightPx,
-                                        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                                    )
+                                    sheetHeightAnim.animateTo(expandedHeightPx, VelvetPopupMotion.enterSpring)
                                 } else if (velocity > 600f) {
                                     if (current > peekHeightPx + 40f) {
-                                        sheetHeightAnim.animateTo(
-                                            peekHeightPx,
-                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                                        )
+                                        sheetHeightAnim.animateTo(peekHeightPx, VelvetPopupMotion.enterSpring)
                                     } else {
                                         dismissWithAnimation()
                                     }
                                 } else {
                                     if (current > midPoint) {
-                                        sheetHeightAnim.animateTo(
-                                            expandedHeightPx,
-                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                                        )
+                                        sheetHeightAnim.animateTo(expandedHeightPx, VelvetPopupMotion.enterSpring)
                                     } else if (current > dismissThreshold) {
-                                        sheetHeightAnim.animateTo(
-                                            peekHeightPx,
-                                            spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                                        )
+                                        sheetHeightAnim.animateTo(peekHeightPx, VelvetPopupMotion.enterSpring)
                                     } else {
                                         dismissWithAnimation()
                                     }
@@ -2461,10 +2456,16 @@ private fun QueueSheet(
                 }
                 LazyColumn(
                     state = listState,
+                    contentPadding = PaddingValues(
+                        bottom = if (sheetHeightAnim.targetValue <= peekHeightPx + 10f) {
+                            peekPaddingBottomDp + 16.dp
+                        } else {
+                            16.dp
+                        },
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
-                        .padding(bottom = 16.dp),
+                        .weight(1f),
                 ) {
                     if (currentItem != null) {
                         item(key = "header_now_playing") {

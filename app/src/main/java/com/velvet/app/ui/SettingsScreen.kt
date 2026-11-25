@@ -322,25 +322,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 )
             }
-
-            HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = velvetColors.rule)
-
-            val tasteSummary = remember(data.preferredArtists, data.preferredGenres) {
-                val artistsPart = data.preferredArtists.take(3).joinToString(", ")
-                val genresPart = data.preferredGenres.take(3).joinToString(", ")
-                listOfNotNull(
-                    artistsPart.takeIf { it.isNotBlank() }?.let { "Artists: $it" },
-                    genresPart.takeIf { it.isNotBlank() }?.let { "Genres: $it" },
-                ).joinToString(" · ").ifBlank { "Pick languages, favorite artists & genres to tune your home feed" }
-            }
-            ActionRow(
-                title = "Taste profile & setup survey",
-                subtitle = tasteSummary,
-                readout = "${data.preferredArtists.size}A · ${data.preferredGenres.size}G",
-            ) {
-                library.reopenOnboarding()
-                nav.selectTab(0)
-            }
         }
 
         SettingsGroup("Playback") {

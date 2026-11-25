@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -50,7 +51,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -58,13 +58,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -75,9 +74,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
@@ -88,6 +90,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.velvet.app.R
 import com.velvet.app.data.ArtistRef
 import com.velvet.app.data.BrowseItem
@@ -280,13 +283,20 @@ fun OnboardingSurveyScreen(
             return@LaunchedEffect
         }
         isSearchingArtists = true
-        delay(280)
+        delay(260)
         val found = withContext(Dispatchers.IO) {
             runCatching {
-                val ytResults = YouTube.Search(q, YouTube.FILTER_ARTISTS).loadNext()
-                    .filterIsInstance<BrowseItem.ArtistItem>()
-                    .map { it.artist }
-                if (ytResults.isNotEmpty()) ytResults else YouTubeMusicInnertube.searchArtists(q, limit = 15)
+                val ytResults = runCatching {
+                    YouTube.Search(q, YouTube.FILTER_ARTISTS).loadNext()
+                        .filterIsInstance<BrowseItem.ArtistItem>()
+                        .map { it.artist }
+                }.getOrDefault(emptyList())
+                val innerResults = if (ytResults.size < 4) {
+                    YouTubeMusicInnertube.searchArtists(q, limit = 15)
+                } else emptyList()
+                (ytResults + innerResults)
+                    .distinctBy { it.name.trim().lowercase() }
+                    .sortedByDescending { YouTubeMusicInnertube.artistMatchScore(q, it.name) }
             }.getOrDefault(emptyList())
         }
         found.forEach { ref ->
@@ -300,22 +310,37 @@ fun OnboardingSurveyScreen(
         isSearchingArtists = false
     }
 
-    // Progressively fetch crisp artist avatars for starter pool on Step 2
+    // Fetch exact artist avatars for starter pool on Step 2 (verify name match strictly before attaching photo)
     LaunchedEffect(step, curatedArtists.size) {
         if (step != 1) return@LaunchedEffect
-        val missing = curatedArtists.filter { avatarMap[it.name.lowercase()]?.thumb.isNullOrBlank() }.take(12)
+        val missing = curatedArtists.filter { avatarMap[it.name.lowercase()]?.thumb.isNullOrBlank() }
         if (missing.isEmpty()) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             missing.chunked(4).forEach { batch ->
                 batch.map { candidate ->
                     async {
-                        runCatching {
-                            YouTubeMusicInnertube.searchArtists(candidate.name, limit = 1).firstOrNull()
-                        }.getOrNull()?.let { fetched ->
+                        val picked = runCatching {
+                            val npMatches = runCatching {
+                                YouTube.Search(candidate.name, YouTube.FILTER_ARTISTS).loadNext()
+                                    .filterIsInstance<BrowseItem.ArtistItem>()
+                                    .map { it.artist }
+                            }.getOrDefault(emptyList())
+                            val pool = npMatches.ifEmpty {
+                                YouTubeMusicInnertube.searchArtists(candidate.name, limit = 5)
+                            }
+                            pool
+                                .filter { ref ->
+                                    !ref.thumb.isNullOrBlank() &&
+                                        YouTubeMusicInnertube.artistNamesMatch(candidate.name, ref.name)
+                                }
+                                .maxByOrNull { YouTubeMusicInnertube.artistMatchScore(candidate.name, it.name) }
+                        }.getOrNull()
+
+                        picked?.let { matched ->
                             val enriched = ArtistRef(
-                                url = fetched.url.ifBlank { candidate.url },
+                                url = matched.url.ifBlank { candidate.url },
                                 name = candidate.name,
-                                thumb = fetched.thumb,
+                                thumb = matched.thumb,
                             )
                             val key = candidate.name.lowercase()
                             resolvedArtistCache[key] = enriched
@@ -779,40 +804,86 @@ private fun ArtistStepPage(
 
             Spacer(Modifier.height(10.dp))
 
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                placeholder = { Text("Search any singer, composer or band...", color = velvetColors.muted) },
-                singleLine = true,
-                leadingIcon = {
-                    Icon(Icons.Default.Search, contentDescription = null, tint = velvetColors.muted)
-                },
-                trailingIcon = {
+            var searchFocused by remember { mutableStateOf(false) }
+            val searchBorder by animateColorAsState(
+                targetValue = if (searchFocused) velvetColors.accent else velvetColors.glassBorder,
+                animationSpec = tween(160),
+                label = "artistSearchBorder",
+            )
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth(0.84f)
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(velvetColors.surface)
+                        .border(1.dp, searchBorder, RoundedCornerShape(19.dp))
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        tint = velvetColors.muted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (query.isEmpty()) {
+                            Text(
+                                "Search singer, composer...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = velvetColors.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        BasicTextField(
+                            value = query,
+                            onValueChange = onQueryChange,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodySmall.copy(
+                                color = velvetColors.text,
+                                fontSize = 13.sp,
+                            ),
+                            cursorBrush = SolidColor(velvetColors.accent),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { searchFocused = it.isFocused },
+                        )
+                    }
                     if (isSearching) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(15.dp),
+                            strokeWidth = 1.8.dp,
                             color = velvetColors.accent,
                         )
                     } else if (query.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear", tint = velvetColors.muted)
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .clickable { onQueryChange("") },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear",
+                                tint = velvetColors.muted,
+                                modifier = Modifier.size(15.dp),
+                            )
                         }
                     }
-                },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = velvetColors.accent,
-                    unfocusedBorderColor = velvetColors.glassBorder,
-                    focusedContainerColor = velvetColors.surface,
-                    unfocusedContainerColor = velvetColors.surface,
-                    focusedTextColor = velvetColors.text,
-                    unfocusedTextColor = velvetColors.text,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
+                }
+            }
 
             if (selectedArtists.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -858,6 +929,7 @@ private fun ArtistStepPage(
 
         Spacer(Modifier.height(8.dp))
 
+        val context = LocalContext.current
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -902,12 +974,19 @@ private fun ArtistStepPage(
                             )
                             val thumbUrl = artist.thumb
                             if (!thumbUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = thumbSized(thumbUrl, px),
-                                    contentDescription = artist.name,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
+                                key("${artist.name}|$thumbUrl") {
+                                    AsyncImage(
+                                        model = remember(thumbUrl, px) {
+                                            ImageRequest.Builder(context)
+                                                .data(thumbSized(thumbUrl, px))
+                                                .crossfade(true)
+                                                .build()
+                                        },
+                                        contentDescription = artist.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
                             }
                         }
 

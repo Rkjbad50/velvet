@@ -57,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -248,19 +249,32 @@ private fun AppRoot() {
             if (isPlayerOpen) {
                 renderNowPlaying = true
                 interactiveMinimize = 0f
-                playerOpenAnim.animateTo(1f, spring(dampingRatio = 0.92f, stiffness = 360f))
+                playerOpenAnim.animateTo(1f, OriginTransformCalculator.windowOpenSpring)
             } else {
                 if (interactiveMinimize > 0f) {
                     val remaining = (1f - interactiveMinimize).coerceIn(0f, 1f)
                     playerOpenAnim.snapTo(remaining * playerOpenAnim.value)
                     interactiveMinimize = 0f
                 }
-                playerOpenAnim.animateTo(0f, spring(dampingRatio = 0.95f, stiffness = 380f))
+                playerOpenAnim.animateTo(0f, OriginTransformCalculator.windowCloseSpring)
                 renderNowPlaying = false
             }
         }
 
-        val playerExpandFraction = (playerOpenAnim.value * (1f - interactiveMinimize)).coerceIn(0f, 1f)
+        fun currentExpandFraction(): Float = (playerOpenAnim.value * (1f - interactiveMinimize)).coerceIn(0f, 1f)
+
+        fun computePlayerSpec(): OriginTransformSpec = OriginTransformCalculator.compute(
+            origin = miniPlayerOrigin,
+            containerWidth = rootWidthPx,
+            containerHeight = rootHeightPx,
+            progress = currentExpandFraction(),
+            isExiting = !isPlayerOpen,
+            minStartScale = 0.86f,
+            maxStartScale = 0.94f,
+            targetCornerDp = 0f,
+            targetScrimAlpha = 0.44f,
+            fallbackOffsetYPx = (if (rootHeightPx > 0f) rootHeightPx * 0.85f else 1200f),
+        )
 
         Box(
             Modifier
@@ -286,7 +300,7 @@ private fun AppRoot() {
                 Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        val depthScale = 1f - 0.025f * playerExpandFraction
+                        val depthScale = 1f - 0.025f * currentExpandFraction()
                         scaleX = depthScale
                         scaleY = depthScale
                     }
@@ -341,7 +355,7 @@ private fun AppRoot() {
                 Modifier
                     .align(Alignment.BottomCenter)
                     .graphicsLayer {
-                        val p = playerExpandFraction
+                        val p = currentExpandFraction()
                         val scale = 1f - 0.04f * p
                         scaleX = scale
                         scaleY = scale
@@ -358,7 +372,7 @@ private fun AppRoot() {
                     MiniPlayer(
                         onOpen = { nav.nowPlayingOpen = true },
                         onBoundsInRoot = { bounds ->
-                            if (playerExpandFraction < 0.05f) {
+                            if (!renderNowPlaying) {
                                 miniPlayerOrigin = bounds
                             }
                         },
@@ -374,36 +388,24 @@ private fun AppRoot() {
             }
 
             if (renderNowPlaying && hasPlayer) {
-                val playerSpec = OriginTransformCalculator.compute(
-                    origin = miniPlayerOrigin,
-                    containerWidth = rootWidthPx,
-                    containerHeight = rootHeightPx,
-                    progress = playerExpandFraction,
-                    isExiting = !isPlayerOpen,
-                    minStartScale = 0.86f,
-                    maxStartScale = 0.94f,
-                    targetCornerDp = 0f,
-                    targetScrimAlpha = 0.44f,
-                    fallbackOffsetYPx = (if (rootHeightPx > 0f) rootHeightPx * 0.85f else 1200f),
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = computePlayerSpec().scrimAlpha }
+                        .background(Color.Black),
                 )
-                if (playerSpec.scrimAlpha > 0.005f) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = playerSpec.scrimAlpha)),
-                    )
-                }
                 Box(
                     Modifier
                         .fillMaxSize()
                         .graphicsLayer {
+                            val playerSpec = computePlayerSpec()
                             translationX = playerSpec.translationX
                             translationY = playerSpec.translationY
                             scaleX = playerSpec.scale
                             scaleY = playerSpec.scale
                             alpha = playerSpec.shellAlpha
-                            if (playerSpec.cornerDp > 0.25f) {
-                                shape = RoundedCornerShape(playerSpec.cornerDp.dp)
+                            if (playerSpec.cornerDp >= 1f) {
+                                shape = RoundedCornerShape(kotlin.math.round(playerSpec.cornerDp).dp)
                                 clip = true
                             }
                         },
@@ -411,7 +413,10 @@ private fun AppRoot() {
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .graphicsLayer { alpha = if (isPlayerOpen) 1f else playerSpec.contentAlpha },
+                            .graphicsLayer {
+                                val p = currentExpandFraction()
+                                alpha = (p / 0.25f).coerceIn(0f, 1f).let { t -> t * t * (3f - 2f * t) }
+                            },
                     ) {
                         NowPlayingScreen(
                             onMinimizeDrag = { fraction -> interactiveMinimize = fraction },
@@ -522,52 +527,50 @@ private fun RouteOverlayHost(
         }
     }
 
-    val topActiveProgress = displayed.lastOrNull()?.anim?.value ?: 0f
-    val isRootCovered = displayed.any { !it.isExiting && it.anim.value >= 0.995f }
+    val isRootCovered by remember {
+        derivedStateOf {
+            displayed.any { !it.isExiting && it.anim.value >= 0.995f }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Box(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer {
+                    val topActiveProgress = displayed.lastOrNull()?.anim?.value ?: 0f
                     val depthScale = 1f - 0.03f * topActiveProgress.coerceIn(0f, 1f)
                     scaleX = depthScale
                     scaleY = depthScale
+                    alpha = if (isRootCovered) 0f else 1f
                 },
         ) {
             PersistentRootTabs(
                 activeTab = activeTab,
-                isRootVisible = !isRootCovered,
                 homeVm = homeVm,
                 searchVm = searchVm,
             )
         }
 
         displayed.forEachIndexed { index, item ->
-            val coveredByAbove = (index + 1 until displayed.size).any { aboveIdx ->
-                val above = displayed[aboveIdx]
-                !above.isExiting && above.anim.value >= 0.995f
+            val coveredByAbove by remember(index, displayed.size) {
+                derivedStateOf {
+                    (index + 1 until displayed.size).any { aboveIdx ->
+                        val above = displayed.getOrNull(aboveIdx)
+                        above != null && !above.isExiting && above.anim.value >= 0.995f
+                    }
+                }
             }
             key(item.entry.uid) {
-                val progress = item.anim.value
                 OriginTransformBox(
                     origin = item.entry.origin,
-                    progress = progress,
+                    progressProvider = { item.anim.value },
                     isExiting = item.isExiting,
                     containerBackground = velvetColors.background,
                     showScrim = true,
                     modifier = Modifier
                         .fillMaxSize()
-                        .layout { measurable, constraints ->
-                            if (coveredByAbove) {
-                                layout(0, 0) {}
-                            } else {
-                                val placeable = measurable.measure(constraints)
-                                layout(placeable.width, placeable.height) {
-                                    placeable.place(0, 0)
-                                }
-                            }
-                        }
+                        .graphicsLayer { alpha = if (coveredByAbove) 0f else 1f }
                         .then(
                             if (!item.isExiting) {
                                 Modifier.pointerInput(Unit) { detectTapGestures { } }
@@ -604,7 +607,6 @@ private fun RenderDetailRoute(route: Route, nav: Navigator) {
 @Composable
 private fun PersistentRootTabs(
     activeTab: Int,
-    isRootVisible: Boolean,
     homeVm: HomeViewModel,
     searchVm: SearchViewModel,
 ) {
@@ -621,47 +623,52 @@ private fun PersistentRootTabs(
             glideAnim.snapTo(0f)
             glideAnim.animateTo(
                 targetValue = 1f,
-                // Critically-damped fluid gliding spring: silky transition without brittle bounce
-                animationSpec = spring(dampingRatio = 0.92f, stiffness = 420f),
+                // Fast, crisp 120Hz critically-damped glide with sub-pixel threshold
+                animationSpec = spring(
+                    dampingRatio = 0.90f,
+                    stiffness = 560f,
+                    visibilityThreshold = 0.001f,
+                ),
             )
             outgoingTab = activeTab
         }
     }
 
-    val p = glideAnim.value
-    val isTransitioning = outgoingTab != settledTab && p < 0.998f
+    val isTransitioning by remember {
+        derivedStateOf { outgoingTab != settledTab && glideAnim.value < 0.999f }
+    }
 
     Layout(
         content = {
             @Composable
             fun tabSlot(tabIndex: Int, content: @Composable () -> Unit) {
-                val isIncoming = tabIndex == settledTab
-                val isOutgoing = isTransitioning && tabIndex == outgoingTab
-                val slotAlpha = when {
-                    isIncoming && isTransitioning -> p.coerceIn(0f, 1f)
-                    isIncoming -> 1f
-                    isOutgoing -> (1f - p * 1.15f).coerceIn(0f, 1f)
-                    else -> 0f
-                }
-                val slotScale = when {
-                    isIncoming && isTransitioning -> 0.976f + 0.024f * p
-                    isIncoming -> 1f
-                    isOutgoing -> 1f - 0.024f * p
-                    else -> 1f
-                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
+                            val p = glideAnim.value
+                            val transitioning = outgoingTab != settledTab && p < 0.999f
+                            val isIncoming = tabIndex == settledTab
+                            val isOutgoing = transitioning && tabIndex == outgoingTab
                             val travelPx = size.width * 0.20f
                             translationX = when {
-                                isIncoming && isTransitioning -> directionSign * travelPx * (1f - p)
+                                isIncoming && transitioning -> directionSign * travelPx * (1f - p)
                                 isOutgoing -> -directionSign * travelPx * 0.55f * p
                                 else -> 0f
                             }
-                            scaleX = slotScale
-                            scaleY = slotScale
-                            alpha = slotAlpha
+                            val s = when {
+                                isIncoming && transitioning -> 0.976f + 0.024f * p
+                                isOutgoing -> 1f - 0.024f * p
+                                else -> 1f
+                            }
+                            scaleX = s
+                            scaleY = s
+                            alpha = when {
+                                isIncoming && transitioning -> p.coerceIn(0f, 1f)
+                                isIncoming -> 1f
+                                isOutgoing -> (1f - p * 1.15f).coerceIn(0f, 1f)
+                                else -> 0f
+                            }
                         },
                 ) {
                     content()
@@ -674,10 +681,9 @@ private fun PersistentRootTabs(
         },
         modifier = Modifier.fillMaxSize(),
     ) { measurables, constraints ->
-        // Only measure & place active / transitioning tabs; unplaced tabs remain hot in composition
-        // with zero draw cost, zero layout cost, and zero touch or semantics interference.
+        // Keep active & transitioning tabs laid out cleanly so closing overlaid routes incurs zero Frame-1 layout hitches
         val placeables = measurables.mapIndexed { idx, measurable ->
-            val shouldPlace = (isRootVisible && (idx == settledTab || (isTransitioning && idx == outgoingTab)))
+            val shouldPlace = (idx == settledTab || (isTransitioning && idx == outgoingTab))
             if (shouldPlace) measurable.measure(constraints) else null
         }
         layout(constraints.maxWidth, constraints.maxHeight) {

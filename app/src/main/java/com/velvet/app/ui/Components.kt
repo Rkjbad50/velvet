@@ -1187,9 +1187,10 @@ object VelvetPopupMotion {
     val DialogShape = RoundedCornerShape(24.dp)
     val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val MenuShape = RoundedCornerShape(16.dp)
-    val enterSpring = spring<Float>(dampingRatio = 0.90f, stiffness = 380f)
-    val exitTween = tween<Float>(durationMillis = 210, easing = FastOutSlowInEasing)
-    val sliderSpring = spring<Float>(dampingRatio = 0.88f, stiffness = 460f)
+    val enterSpring = spring<Float>(dampingRatio = 0.88f, stiffness = 580f, visibilityThreshold = 0.001f)
+    val exitSpring = spring<Float>(dampingRatio = 0.94f, stiffness = 640f, visibilityThreshold = 0.001f)
+    val exitTween = tween<Float>(durationMillis = 160, easing = FastOutSlowInEasing)
+    val sliderSpring = spring<Float>(dampingRatio = 0.86f, stiffness = 620f, visibilityThreshold = 0.001f)
 }
 
 class VelvetDialogScope internal constructor(
@@ -1213,7 +1214,7 @@ class VelvetSheetScope internal constructor(
 @Composable
 private fun VelvetDialogOverlayShell(
     origin: NavOrigin?,
-    progress: Float,
+    progressProvider: () -> Float,
     isExiting: Boolean,
     canDismiss: Boolean,
     onRequestClose: () -> Unit,
@@ -1231,11 +1232,12 @@ private fun VelvetDialogOverlayShell(
     var overlayH by remember { mutableFloatStateOf(0f) }
     var overlayTopLeftInRoot by remember { mutableStateOf(Offset.Zero) }
     val densityPx = LocalDensity.current.density
-    val spec = OriginTransformCalculator.compute(
+
+    fun currentSpec(): OriginTransformSpec = OriginTransformCalculator.compute(
         origin = origin,
         containerWidth = overlayW,
         containerHeight = overlayH,
-        progress = progress,
+        progress = progressProvider(),
         isExiting = isExiting,
         targetCenterX = overlayTopLeftInRoot.x + overlayW * 0.5f,
         targetCenterY = overlayTopLeftInRoot.y + overlayH * 0.5f,
@@ -1245,6 +1247,7 @@ private fun VelvetDialogOverlayShell(
         targetScrimAlpha = 0.56f,
         fallbackOffsetYPx = 24f * densityPx,
     )
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1253,29 +1256,35 @@ private fun VelvetDialogOverlayShell(
                 overlayW = s.width.toFloat()
                 overlayH = s.height.toFloat()
             }
-            .background(Color.Black.copy(alpha = spec.scrimAlpha))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
             ) {
                 if (canDismiss) onRequestClose()
-            }
-            .imePadding()
-            .padding(horizontal = 24.dp, vertical = 20.dp),
+            },
         contentAlignment = Alignment.Center,
     ) {
         Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = currentSpec().scrimAlpha }
+                .background(Color.Black),
+        )
+        Box(
             modifier = Modifier
+                .imePadding()
+                .padding(horizontal = 24.dp, vertical = 20.dp)
                 .widthIn(min = 280.dp, max = 420.dp)
                 .fillMaxWidth()
                 .graphicsLayer {
+                    val spec = currentSpec()
                     translationX = spec.translationX
                     translationY = spec.translationY
                     scaleX = spec.scale
                     scaleY = spec.scale
                     alpha = spec.shellAlpha
-                    if (spec.cornerDp > 0.25f) {
-                        shape = RoundedCornerShape(spec.cornerDp.dp)
+                    if (spec.cornerDp >= 1f) {
+                        shape = RoundedCornerShape(kotlin.math.round(spec.cornerDp).dp)
                         clip = true
                     }
                 }
@@ -1328,7 +1337,7 @@ fun VelvetAnimatedDialog(
         val dialogScope = remember(closeAndRun) { VelvetDialogScope(closeAndRun) }
         VelvetDialogOverlayShell(
             origin = origin,
-            progress = progress.value,
+            progressProvider = { progress.value },
             isExiting = isClosing,
             canDismiss = canDismiss,
             onRequestClose = { closeAndRun(onDismissRequest) },
@@ -1386,7 +1395,7 @@ fun <T> VelvetDialogHost(
         val dialogScope = remember(onDismissRequest) { VelvetDialogScope(closeAndRun) }
         VelvetDialogOverlayShell(
             origin = activeOrigin,
-            progress = progress.value,
+            progressProvider = { progress.value },
             isExiting = isExiting,
             canDismiss = canDismiss,
             onRequestClose = onDismissRequest,
@@ -1474,7 +1483,9 @@ fun VelvetModalSheet(
             hiding = true
             scope.launch {
                 try {
+                    val revealOut = launch { reveal.animateTo(0f, VelvetPopupMotion.exitSpring) }
                     sheetState.hide()
+                    revealOut.join()
                 } finally {
                     afterHide()
                     onDismissRequest()
@@ -1515,8 +1526,8 @@ fun VelvetModalSheet(
                 .graphicsLayer {
                     val p = reveal.value.coerceIn(0f, 1.04f)
                     val clamped = p.coerceIn(0f, 1f)
-                    alpha = 0.35f + 0.65f * clamped
-                    translationY = (1f - p) * 18.dp.toPx()
+                    alpha = (0.35f + 0.65f * clamped).coerceIn(0f, 1f)
+                    translationY = (1f - p) * 14.dp.toPx()
                     if (origin != null && origin.isValid && sheetW > 0f) {
                         translationX = (origin.centerX - sheetW * 0.5f) * 0.08f * (1f - clamped)
                     }
