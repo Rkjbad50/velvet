@@ -374,3 +374,23 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - **Unit Test Results (`:app:testReleaseUnitTest`):** **312 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest > streamFetch`), **0 FAILED** — including all 5 new offline sync & motion tests in `app/src/test/java/com/velvet/app/unit/PlayerSyncAndMotionTest.kt`.
 - **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; physical touch scrubbing feel, visual fluidity on 120Hz panels, and live ExoPlayer stream synchronization await on-device confirmation.
 - **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`0788379`).
+
+### v2.7.6 Personalized 3-Step Setup Survey, Live YouTube Charts, Dynamic More For You & Persistent Shuffle
+- **Status:** **Code & CI Verification Complete** (`main` @ `c9b7802`)
+- **Scope Implemented:**
+  - **3-Step First-Time Personalization Survey (`OnboardingSurveyScreen.kt`, `MainActivity.kt`, `SettingsScreen.kt`, `Library.kt`, `Backup.kt`):**
+    - Added `onboardingCompleted`, `preferredArtists`, `preferredGenres`, `persistedShuffleMode`, `shuffleToastShownOnce`, and `smartShuffleToastShownOnce` to `LibraryData` (with clean backup/merge support and safe defaults).
+    - Built `OnboardingSurveyScreen`: Step 1 **Languages** multi-select, Step 2 dedicated **Artist Picker** (search + language-tailored catalog + live avatar loading, enforcing minimum 3 selected artists), Step 3 dedicated **Genre Picker** ending in **Start Listening** with animated taste analysis (`onAnalyzeStart` pre-fetching in parallel before completing onboarding), plus **Taste profile & setup survey** re-open row in `SettingsScreen`.
+  - **Live YouTube Music Charts + Personalized Cold-Start Home (`YouTubeMusicInnertube.kt`, `YouTube.kt`, `GenreOntology.kt`, `TasteProfileBuilder.kt`, `UserProfileRepository.kt`, `HomeRecommendationComposer.kt`, `HomeScreen.kt`):**
+    - Added `YouTubeMusicInnertube.fetchTrendingCharts` (`FEmusic_charts` + `FEmusic_explore` + regional `VL` chart playlist parsing via `musicTwoRowItemRenderer` & `musicResponsiveListItemRenderer`) running in parallel with NewPipe `trending_music` inside `YouTube.trendingMusic(preferredLanguages)` — strictly filtering for verified studio audio (`MUSIC_VIDEO_TYPE_ATV` / square art + `isPureMusic() && isOriginalMusicAudio()`).
+    - Folded onboarding languages, preferred artists, and preferred genres directly into `TasteProfileBuilder` (`longTerm` & `mediumTerm`) and `HomeRecommendationComposer` (`rankAndFilterTrending`, `composeSpeedDial`, `composeQuickPicks`, `composeMadeForYouMixSeeds`) so each device personalizes Trending Now, Speed Dial, Quick Picks, and Made for You immediately after completing the survey.
+    - Eliminated the session lock in `HomeViewModel.loadMoreForYou` (`if (langs == loadedMoreLanguages && moreForYou.isNotEmpty()) return`), rotating diverse queries across chosen languages, genres, and artists cleanly across visits.
+  - **Persistent Shuffle State & First-Time-Only Toast (`PlayerConnection.kt`, `Library.kt`):**
+    - Restores `persistedShuffleMode` (`OFF` / `STANDARD` / `SMART`) across app restarts in `connect()`, `restoreSavedPlaybackState()`, and `play()` for multi-track playlists (honoring Smart Shuffle on user-created playlists while keeping Standard on non-playlist queues without clobbering the stored preference).
+    - Silenced `"Shuffle is off"` and repeated `"Reshuffled queue"` toasts, gating Shuffle ON and Smart Shuffle ON confirmation toasts behind `shuffleToastShownOnce` and `smartShuffleToastShownOnce`.
+- **CI/CD Verification (`main` @ `c9b7802`):**
+  - **Run ID:** `45591163113` (`Build & Verify (CI)` job `139125434512`, `BUILD_NUMBER=235`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 4m 40s**, `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **318 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest > streamFetch`), **0 FAILED** — including all 6 new suites in `app/src/test/java/com/velvet/app/unit/OnboardingShuffleAndHomePersonalizationTest.kt`.
+- **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; live YouTube Music network chart payloads and interactive onboarding UI transitions on physical devices await on-device confirmation.
+- **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`9f2b5ca`).
