@@ -35,7 +35,6 @@ val gitCommit = try {
 val buildTime = Instant.now().toString()
 
 // CI passes the build number so every build installs as an update over the previous one.
-// Local/repo floor upgraded within v2.7.6 so all builds stay strictly above earlier v2.7.6 releases.
 val buildNumber = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 220
 val upstreamBuildNumber = System.getenv("VELVET_UPSTREAM_BUILD")?.toIntOrNull() ?: 220
 val keystorePath: String? = System.getenv("VELVET_KEYSTORE")
@@ -52,7 +51,7 @@ android {
         minSdk = minSdkVer
         targetSdk = targetSdkVer
         versionCode = buildNumber
-        versionName = "2.7.6"
+        versionName = "1.1"
         buildConfigField("int", "UPSTREAM_BUILD_NUMBER", upstreamBuildNumber.toString())
         buildConfigField("String", "RELEASES_URL", "\"${releaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")

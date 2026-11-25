@@ -140,7 +140,9 @@ class AlbumViewModel : ViewModel() {
         error = null
         viewModelScope.launch {
             try {
-                page = YouTube.albumPage(album.url, album)
+                val loadedPage = YouTube.albumPage(album.url, album)
+                page = loadedPage
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(loadedPage.songs)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

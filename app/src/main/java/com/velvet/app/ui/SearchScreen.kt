@@ -154,13 +154,18 @@ class SearchViewModel : ViewModel() {
                 if (f.ytFilter == null) {
                     val results = YouTube.searchAll(q)
                     top = results
+                    com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(results.songs)
                     if (results.songs.isEmpty() && results.artists.isEmpty() && results.albums.isEmpty()) {
                         error = "Nothing found, or YouTube didn't answer. Check your connection."
                     }
                 } else {
                     val s = withContext(Dispatchers.IO) { YouTube.Search(q, f.ytFilter) }
                     search = s
-                    items = withContext(Dispatchers.IO) { s.loadNext() }.distinctBy(::itemKey)
+                    val loaded = withContext(Dispatchers.IO) { s.loadNext() }.distinctBy(::itemKey)
+                    items = loaded
+                    com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(
+                        loaded.filterIsInstance<BrowseItem.SongItem>().map { it.song },
+                    )
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -180,7 +185,11 @@ class SearchViewModel : ViewModel() {
             try {
                 val more = withContext(Dispatchers.IO) { s.loadNext() }
                 val seen = items.map(::itemKey).toSet()
-                items = items + more.filter { itemKey(it) !in seen }.distinctBy(::itemKey)
+                val appended = more.filter { itemKey(it) !in seen }.distinctBy(::itemKey)
+                items = items + appended
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(
+                    appended.filterIsInstance<BrowseItem.SongItem>().map { it.song },
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

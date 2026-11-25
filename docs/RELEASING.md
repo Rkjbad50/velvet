@@ -50,20 +50,20 @@ Every release published through GitHub Actions computes the SHA-256 hash of `vel
 1. **Bump Version:**
    In `app/build.gradle.kts`, update the `versionName`:
    ```kotlin
-   versionName = "2.7"
+   versionName = "1.1"
    ```
 2. **Commit and Push:**
    Commit the change to `main`:
    ```bash
    git add app/build.gradle.kts
-   git commit -m "chore: bump version to 2.7"
+   git commit -m "chore: bump version to 1.1"
    git push origin main
    ```
 3. **Tag the Release:**
    Tag the commit with a `v`-prefixed tag and push the tag:
    ```bash
-   git tag v2.7
-   git push origin v2.7
+   git tag v1.1
+   git push origin v1.1
    ```
 4. **Automated Pipeline:**
    GitHub Actions workflow (`.github/workflows/build.yml`) triggers automatically on tags matching `v*`:
@@ -72,7 +72,7 @@ Every release published through GitHub Actions computes the SHA-256 hash of `vel
    - Runs the full test suite (`gradle testReleaseUnitTest`).
    - Builds and signs the release APK (`assembleRelease`) with R8 optimization.
    - Computes the SHA-256 checksum.
-   - Creates a GitHub Release for tag `v2.7` with release notes and `velvet.apk` asset.
+   - Creates a GitHub Release for tag `v1.1` with release notes and `velvet.apk` asset.
    - Uploads `velvet-apk` as an action artifact.
 
 ---

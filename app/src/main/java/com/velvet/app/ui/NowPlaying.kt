@@ -2570,16 +2570,38 @@ private fun QueueSheet(
                         }
                     } else if (displayUserQueue.isEmpty()) {
                         item(key = "queue_empty_hint") {
-                            Text(
-                                if (VelvetApp.library.data.value.autoplay || PlayerConnection.isRadioActive) {
-                                    "Finding similar original tracks for your queue..."
-                                } else {
-                                    "Queue is empty. Turn on Autoplay in Settings for continuous similar songs."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = velvetColors.muted,
-                                modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
-                            )
+                            val autoplayEnabled = VelvetApp.library.data.value.autoplay || PlayerConnection.isRadioActive
+                            val isLoadingAutoplay = PlayerConnection.isAutoplayLoading
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    when {
+                                        !autoplayEnabled -> "Queue is empty. Turn on Autoplay in Settings for continuous similar songs."
+                                        isLoadingAutoplay -> "Finding similar original tracks for your queue..."
+                                        else -> "No matching studio tracks loaded yet."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = velvetColors.muted,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (autoplayEnabled && !isLoadingAutoplay) {
+                                    TextButton(
+                                        onClick = {
+                                            PlayerConnection.checkAndExtendAutoplay(
+                                                seedId = PlayerConnection.current?.id,
+                                                force = true,
+                                            )
+                                        },
+                                    ) {
+                                        Text("Retry", color = velvetColors.accentText)
+                                    }
+                                }
+                            }
                         }
                     }
                 }

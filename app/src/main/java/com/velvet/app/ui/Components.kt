@@ -27,12 +27,14 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,6 +42,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -1248,7 +1251,7 @@ private fun VelvetDialogOverlayShell(
         fallbackOffsetYPx = 24f * densityPx,
     )
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .onGloballyPositioned { c -> if (c.isAttached) overlayTopLeftInRoot = c.positionInRoot() }
@@ -1261,9 +1264,13 @@ private fun VelvetDialogOverlayShell(
                 indication = null,
             ) {
                 if (canDismiss) onRequestClose()
-            },
+            }
+            .systemBarsPadding()
+            .displayCutoutPadding()
+            .imePadding(),
         contentAlignment = Alignment.Center,
     ) {
+        val safeMaxDialogHeight = (maxHeight * 0.88f - 28.dp).coerceIn(220.dp, 640.dp)
         Box(
             Modifier
                 .fillMaxSize()
@@ -1272,9 +1279,9 @@ private fun VelvetDialogOverlayShell(
         )
         Box(
             modifier = Modifier
-                .imePadding()
-                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .padding(horizontal = 24.dp, vertical = 14.dp)
                 .widthIn(min = 280.dp, max = 420.dp)
+                .heightIn(max = safeMaxDialogHeight)
                 .fillMaxWidth()
                 .graphicsLayer {
                     val spec = currentSpec()

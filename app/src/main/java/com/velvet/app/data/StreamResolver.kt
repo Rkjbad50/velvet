@@ -104,6 +104,9 @@ object StreamResolver {
         }
     }
 
+    /** Instant 0ms cache lookup for already-fetched related tracks. */
+    fun peekRelated(videoId: String): List<Song>? = relatedCache[videoId]
+
     /** Proactively warms related song candidates in background so Queue / Autoplay responds instantly. */
     fun prefetchRelated(song: Song) {
         if (!isValidVideoId(song.id) || relatedCache[song.id] != null) return
@@ -186,12 +189,13 @@ object StreamResolver {
             val innertubeVerified = innertubeRelated.count {
                 it.isTopicRelease || (it.isYouTubeMusicCatalog && it.hasSquareArtwork)
             }
-            if (innertubeVerified >= 8) {
+            if (innertubeVerified >= 6) {
                 relatedCache[videoId] = innertubeRelated
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(innertubeRelated)
                 return innertubeRelated
             }
 
-            // 2. Parallel supplement when InnerTube radio panel was sparse (< 8 verified distinct tracks)
+            // 2. Parallel supplement when InnerTube radio panel was sparse (< 6 verified distinct tracks)
             val parallelStartMs = System.currentTimeMillis()
             val streamInfoFuture = CompletableFuture.supplyAsync {
                 runCatching { YouTube.streamInfo(videoId) }.getOrNull()
@@ -205,7 +209,7 @@ object StreamResolver {
                 null
             }
 
-            val info = runCatching { streamInfoFuture.get(1_550L, TimeUnit.MILLISECONDS) }.getOrNull()
+            val info = runCatching { streamInfoFuture.get(2_200L, TimeUnit.MILLISECONDS) }.getOrNull()
             val effectiveSeed = seedHint ?: info?.let { runCatching { YouTube.songFrom(it) }.getOrNull() }
             val newPipeRelated = info?.relatedItems
                 ?.mapNotNull { (it as? StreamInfoItem)?.toSong() }
@@ -213,7 +217,7 @@ object StreamResolver {
                 ?.sortedByDescending { it.preferredMusicSource || it.isTopicRelease }
                 .orEmpty()
 
-            val remainingBudgetMs = (1_600L - (System.currentTimeMillis() - parallelStartMs)).coerceAtLeast(120L)
+            val remainingBudgetMs = (2_400L - (System.currentTimeMillis() - parallelStartMs)).coerceAtLeast(180L)
             val catalogSongs = runCatching {
                 catalogSearchFuture?.get(remainingBudgetMs, TimeUnit.MILLISECONDS)
             }.getOrNull().orEmpty().filter {
@@ -226,6 +230,7 @@ object StreamResolver {
 
             if (finalRelated.isNotEmpty()) {
                 relatedCache[videoId] = finalRelated
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(finalRelated)
             }
             return finalRelated
         }

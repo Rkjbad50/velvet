@@ -47,9 +47,9 @@ interface RecommendationCandidateSource {
  */
 class SourceCircuitBreaker(
     private val clock: () -> Long = System::currentTimeMillis,
-    private val failureThreshold: Int = 3,
-    private val baseCooldownMs: Long = 15_000L,
-    private val maxCooldownMs: Long = 300_000L,
+    private val failureThreshold: Int = 5,
+    private val baseCooldownMs: Long = 5_000L,
+    private val maxCooldownMs: Long = 30_000L,
 ) {
     private val states = ConcurrentHashMap<String, SourceHealth>()
 

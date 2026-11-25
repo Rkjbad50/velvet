@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎵 VELVET
+# VELVET
 
 **Minimal Material 3 Audiophile Music Player for Android**  
 *Pure original studio audio streams, zero ads, 100% local privacy.*
@@ -14,40 +14,32 @@
 
 ---
 
-## ✨ What's New in v2.7.6
+## Highlights in v1.1
 
-- **Strict Original Studio Music Audio Only**: Autoplay, Song Radio, Artist Radio, Similar Songs, Smart Shuffle, and Home shelves filter fail-closed to verified `- Topic` audio, official label studio tracks, and OST audio—rejecting official music videos, lyric videos, visualizers, live concerts, and unverified uploads.
-- **Latest Extraction Engine (`NewPipeExtractor v0.27.1`)**: Upgraded stream resolution to `NewPipeExtractor v0.27.1` with VisionOS fast-path + Firefox ESR 153 headers and updated n-sig / client compatibility.
-- **Local Personalized Recommendation Intelligence**: Multi-source discovery (`G1–G7 + G13`), music/genre/mood/tempo-first mode ranker with zero artist bias outside Artist Radio, multi-horizon taste learning (with safe `"Not interested"` and skip handling), and bounded beam sequencing to prevent back-to-back artist or album dumps.
-- **Radio Evolution & Smart Home Filtering**: Persistent Song Radio sessions smoothly adapt from genuinely completed tracks (`45/25/20/10`) without drifting on skips, alongside studio-audio-verified `Quick picks`, `Speed Dial`, `Trending`, and `Made for you`.
-- **Queue Safety & On-Device Inspector**: Concurrent `queueVersion`-safe Autoplay refills honoring `RepeatMode.ONE`, plus a local Recommendation Engine Inspector (`Developer options`) with zero query tracking leaks.
-
----
-
-## 🚀 App Highlights
-
-- **Pure Studio Sound**: Plays verified studio music audio cleanly without video clutter or distractions.
-- **Audiophile Playback**: Gapless transitions, stream prefetching, and a 5-band graphic equalizer with Bass Boost & Virtualizer.
-- **Synced Lyrics**: Time-synced and plain lyrics powered by LRCLIB.
-- **100% Private & On-Device**: Zero ads, zero accounts, zero external telemetry—your library and taste profile stay on your phone.
+- **First-Time Personalization Survey**: 3-step onboarding (Languages, Artist Picker with verified artist profiles, and Genres) that tailors Trending Now, Speed Dial, Quick Picks, Made for You, and More for You from launch.
+- **Strict Original Studio Audio Only**: Autoplay, Song Radio, Artist Radio, Similar Songs, Smart Shuffle, and Home shelves filter fail-closed to verified studio audio (`- Topic` releases, YT Music `ATV` catalog art tracks, and OST/label studio audio)—never music videos or unverified uploads.
+- **Instant Sub-Millisecond Queue Autoplay & Resilient Live Radio**: Hybrid in-memory `InstantTrackCatalog` seeding paired with YouTube Music InnerTube (`RDAMVM` + live `FEmusic_charts` / `FEmusic_explore`) and `NewPipeExtractor v0.27.1` so queues populate instantaneously without waiting or stalling at track end.
+- **Fluid 120Hz Origin Animations**: GPU-driven `graphicsLayer` transitions across route overlays, Now Playing minimize/expand, Queue sheet drag/dismiss, dialogs, and bottom sheets for continuous frame-accurate opening and closing.
+- **Persistent Shuffle State & First-Time Toasts**: Preserves Shuffle / Smart Shuffle across app restarts when playing playlists without repetitive toast popups.
 
 ---
 
-## 💎 Features
+## Core Features
 
-- **Material 3 Expressive UI**: Pitch-black AMOLED & light themes, custom accent palettes, and selectable seekbar styles (`Minimal`, `Wide`, `DotMatrix`).
-- **Smart Home & Radio**: Quick Picks, Speed Dial matrix, contextual mixes, Song Radio, Artist Radio, and standalone Similar Songs.
-- **Precision Queue Controls**: 2-stage expandable queue sheet, smooth inertial scrolling, swipe-to-queue/remove, optional drag-to-reorder, and Smart Shuffle for user playlists.
-- **Offline Playback & Backup**: Playlist/song downloads, persistent audio cache, and JSON library backups.
+- **Audiophile Playback**: AndroidX Media3 (ExoPlayer) gapless audio, live resolution readout, and a 5-band equalizer with Bass Boost & Virtualizer.
+- **Home & Discovery**: Live regional YouTube Music charts (`Trending now`), 9-cell adaptive `Speed Dial`, `Recently played`, `Quick picks`, `Made for you`, and dynamically rotating `More for you`.
+- **Precision Queue Controls**: Expandable peek/full queue sheet, swipe-to-queue/remove, optional drag-to-reorder, queue lock, and user-playlist Smart Shuffle.
+- **Synced Lyrics & Offline Support**: Synchronized/plain lyrics via [LRCLIB](https://lrclib.net), track/playlist downloads, and full JSON library backup/restore.
+- **100% On-Device Privacy**: No accounts, ads, or external tracking; your taste profile and listening history stay locally on your device.
 
 ---
 
-## 🛠️ Technologies
+## Stack
 
 - **UI**: Kotlin & Jetpack Compose (Material 3)
-- **Audio Engine**: AndroidX Media3 (ExoPlayer) + `MediaSessionService`
-- **Source & Lyrics**: [NewPipeExtractor v0.27.1](https://github.com/TeamNewPipe/NewPipeExtractor) & [LRCLIB](https://lrclib.net)
-- **Media & Data**: Coil (with Palette colors) & KotlinX Serialization
+- **Audio**: AndroidX Media3 (`ExoPlayer` + `MediaSessionService`)
+- **Discovery & Extraction**: [NewPipeExtractor v0.27.1](https://github.com/TeamNewPipe/NewPipeExtractor) + native YT Music InnerTube + [LRCLIB](https://lrclib.net)
+- **Imaging & Persistence**: Coil (Palette dynamic theming) & KotlinX Serialization
 
 ---
 

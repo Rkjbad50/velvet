@@ -123,9 +123,9 @@ object YouTubeMusicInnertube {
         val cached = cachedFastHttp
         if (cached != null && cachedFastBase === base) return cached
         val built = base.newBuilder()
-            .connectTimeout(1500, TimeUnit.MILLISECONDS)
-            .readTimeout(1900, TimeUnit.MILLISECONDS)
-            .writeTimeout(1500, TimeUnit.MILLISECONDS)
+            .connectTimeout(3500, TimeUnit.MILLISECONDS)
+            .readTimeout(4000, TimeUnit.MILLISECONDS)
+            .writeTimeout(3000, TimeUnit.MILLISECONDS)
             .build()
         cachedFastBase = base
         cachedFastHttp = built
@@ -571,10 +571,10 @@ object YouTubeMusicInnertube {
             artistUrl = artistUrl,
             preferredMusicSource = hasSquareArt || isAtv,
             album = parsedAlbum,
-            isTopicRelease = false,
+            isTopicRelease = isAtv,
             isUploaderVerified = isAtv,
             rawUploaderName = artist,
-            hasSquareArtwork = hasSquareArt,
+            hasSquareArtwork = hasSquareArt || isAtv,
             isYouTubeMusicCatalog = isAtv || hasSquareArt,
         )
         return if (song.isPureMusic() && song.isOriginalMusicAudio()) song else null
@@ -620,10 +620,10 @@ object YouTubeMusicInnertube {
             artistUrl = artistUrl,
             preferredMusicSource = hasSquareArt || isAtv,
             album = albumTitle,
-            isTopicRelease = false,
+            isTopicRelease = isAtv,
             isUploaderVerified = isAtv,
             rawUploaderName = artist,
-            hasSquareArtwork = hasSquareArt,
+            hasSquareArtwork = hasSquareArt || isAtv,
             isYouTubeMusicCatalog = isAtv || hasSquareArt,
         )
         return if (song.isPureMusic() && song.isOriginalMusicAudio()) song else null
@@ -685,10 +685,10 @@ object YouTubeMusicInnertube {
             artistUrl = artistUrl,
             preferredMusicSource = hasSquareArt || isAtv,
             album = parsedAlbum,
-            isTopicRelease = false,
+            isTopicRelease = isAtv,
             isUploaderVerified = isAtv,
             rawUploaderName = artist,
-            hasSquareArtwork = hasSquareArt,
+            hasSquareArtwork = hasSquareArt || isAtv,
             isYouTubeMusicCatalog = isAtv || hasSquareArt,
         )
         return if (song.isPureMusic() && song.isOriginalMusicAudio()) song else null

@@ -394,3 +394,15 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - **Unit Test Results (`:app:testReleaseUnitTest`):** **318 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest > streamFetch`), **0 FAILED** — including all 6 new suites in `app/src/test/java/com/velvet/app/unit/OnboardingShuffleAndHomePersonalizationTest.kt`.
 - **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; live YouTube Music network chart payloads and interactive onboarding UI transitions on physical devices await on-device confirmation.
 - **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`9f2b5ca`).
+
+### v1.1 Production Release — Sub-Millisecond Autoplay Queue, Resilient Live Radio & Safe-Area Dialog Layout
+- **Status:** **Code Ready — Pending CI Verification & Release Publish**
+- **Scope Implemented:**
+  - **Instant Sub-Millisecond Autoplay Queue Population (`InstantTrackCatalog.kt`, `PlayerConnection.kt`, `HomeScreen.kt`, `SearchScreen.kt`, `CollectionScreens.kt`, `VelvetApp.kt`):**
+    - Introduced `InstantTrackCatalog` (`MAX_ENTRIES = 500`, synced passively across Home shelves, Search results/pagination, Album views, Library tracks, Playback start, and cached Related responses) plus `InstantTrackCatalogCandidateSource` (`g0_instant_catalog`).
+    - Added `tryInstantAutoplaySeed(seed)` in `PlayerConnection` so starting a song, advancing at `Player.STATE_ENDED`, or tapping Next/Retry seeds verified, genre/type-compatible original studio tracks synchronously in `< 2ms` instead of leaving Queue stuck on `"Finding similar original tracks for your queue..."`.
+    - Exposed `PlayerConnection.isAutoplayLoading`, added interactive **Retry** recovery in `NowPlaying.kt`'s `QueueSheet`, relaxed stale `queueVersion` drops for active-seed refills, added `StreamResolver.peekRelated` and direct InnerTube/Related rescue fallback when `AutoplayRefillCoordinator` hits transient `SafeEmpty`/`EXHAUSTED`, and ensured `MUSIC_VIDEO_TYPE_ATV` items in `YouTubeMusicInnertube` retain verified catalog status even when thumbnail JSON lacks explicit dimensions.
+  - **Safe-Area Bounded Settings & Modal Dialogs (`Components.kt`, `SettingsScreen.kt`):**
+    - Added `.systemBarsPadding()`, `.displayCutoutPadding()`, `.imePadding()`, and conservative `(maxHeight * 0.88f - 28.dp).coerceIn(220.dp, 640.dp)` bounds inside `VelvetDialogOverlayShell`, paired with compact `heightIn(max = 320.dp)` scroll framing in `MusicLanguagesDialog` so dialog bottom borders and action buttons never clip behind navigation bars on compact OEM devices.
+  - **Repo & Release Hygiene (`app/build.gradle.kts`, `README.md`):**
+    - Promoted `versionName` to `"1.1"`, cleaned `README.md` for official release `v1.1`, preserved `v2.7.5` as `v1.0-beta`, and retired earlier `v2.x` releases/tags.

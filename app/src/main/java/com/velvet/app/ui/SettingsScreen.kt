@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1009,51 +1010,54 @@ private fun MusicLanguagesDialog(
             Text("Listening languages", style = MaterialTheme.typography.titleLarge, color = velvetColors.text, fontWeight = FontWeight.Bold)
         },
         text = { _ ->
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-            ) {
+            Column(Modifier.fillMaxWidth()) {
                 Text(
                     "Choose one or more languages for your personalized 'More for you' recommendations:",
                     style = MaterialTheme.typography.bodySmall,
                     color = velvetColors.muted,
-                    modifier = Modifier.padding(bottom = 12.dp),
+                    modifier = Modifier.padding(bottom = 10.dp),
                 )
-                allLanguages.forEach { lang ->
-                    val isChecked = lang in chosen
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable {
-                                if (isChecked) {
-                                    if (chosen.size > 1) chosen.remove(lang)
-                                } else {
-                                    chosen.add(lang)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    allLanguages.forEach { lang ->
+                        val isChecked = lang in chosen
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    if (isChecked) {
+                                        if (chosen.size > 1) chosen.remove(lang)
+                                    } else {
+                                        chosen.add(lang)
+                                    }
                                 }
-                            }
-                            .padding(vertical = 10.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            lang,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (isChecked) velvetColors.accentText else velvetColors.text,
-                            fontWeight = if (isChecked) FontWeight.SemiBold else FontWeight.Normal,
-                        )
-                        Checkbox(
-                            checked = isChecked,
-                            onCheckedChange = { check ->
-                                if (check) chosen.add(lang) else if (chosen.size > 1) chosen.remove(lang)
-                            },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = velvetColors.accent,
-                                checkmarkColor = Color.White,
-                                uncheckedColor = velvetColors.muted,
-                            ),
-                        )
+                                .padding(vertical = 4.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                lang,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (isChecked) velvetColors.accentText else velvetColors.text,
+                                fontWeight = if (isChecked) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                            Checkbox(
+                                checked = isChecked,
+                                onCheckedChange = { check ->
+                                    if (check) chosen.add(lang) else if (chosen.size > 1) chosen.remove(lang)
+                                },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = velvetColors.accent,
+                                    checkmarkColor = Color.White,
+                                    uncheckedColor = velvetColors.muted,
+                                ),
+                            )
+                        }
                     }
                 }
             }

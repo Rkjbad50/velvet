@@ -125,6 +125,13 @@ class VelvetApp : Application(), ImageLoaderFactory {
             (itSongs + npSongs).distinctBy { it.id }
         }
         val sources = listOf(
+            com.velvet.app.recommendation.candidates.InstantTrackCatalogCandidateSource(
+                extraSongsProvider = {
+                    val data = library.data.value
+                    (data.liked + data.recent + data.playlists.flatMap { it.songs }).distinctBy { it.id }
+                },
+                featureRepository = trackFeatureRepository,
+            ),
             com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource(
                 relatedProvider = { seed ->
                     runCatching { com.velvet.app.data.StreamResolver.related(seed.id, seedHint = seed) }
@@ -163,11 +170,11 @@ class VelvetApp : Application(), ImageLoaderFactory {
             candidatePoolBuilder = com.velvet.app.recommendation.candidates.CandidatePoolBuilder(
                 sources = sources,
                 featureRepository = trackFeatureRepository,
-                perSourceTimeoutMs = 1_800L,
-                overallDeadlineMs = 2_200L,
+                perSourceTimeoutMs = 3_200L,
+                overallDeadlineMs = 3_600L,
                 enableEarlyQuorum = true,
-                earlyQuorumMinCandidates = 14,
-                earlyQuorumGraceMs = 160L,
+                earlyQuorumMinCandidates = 10,
+                earlyQuorumGraceMs = 150L,
             ),
             userProfileRepository = userProfileRepository,
             featureRepository = trackFeatureRepository,

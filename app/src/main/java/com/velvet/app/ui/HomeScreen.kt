@@ -322,9 +322,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
             if (fetchedSurveySeeds.isNotEmpty()) {
                 surveySeeds = fetchedSurveySeeds
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(fetchedSurveySeeds)
             }
             if (latestTrending.isNotEmpty()) {
                 trending = latestTrending
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(latestTrending)
             } else if (fetchedSurveySeeds.isNotEmpty() && trending.isEmpty()) {
                 trending = fetchedSurveySeeds.take(20)
             }
@@ -565,6 +567,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         .filter { fresh -> fresh.isPureMusic() && userPicks.none { it.id == fresh.id } }
                     (userPicks + freshDiscovery).distinctBy { it.id }.take(9)
                 }
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(
+                    (computedSpeedDial + qPicks + recent + liked + trend + seeds).distinctBy { it.id },
+                )
                 m to sd
             }
             mixSeeds = computedMixes

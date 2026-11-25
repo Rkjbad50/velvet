@@ -266,6 +266,7 @@ class CandidatePoolBuilder(
 
     private fun computeSourceQuotas(mode: RecommendationMode): Map<String, Int> = when (mode) {
         RecommendationMode.ARTIST_RADIO -> mapOf(
+            "g0_instant_catalog" to 20,
             "g3_primary_artist" to 45,
             "g4_collaborators" to 20,
             "g1_related" to 25,
@@ -274,6 +275,7 @@ class CandidatePoolBuilder(
             "g2_same_release" to 15,
         )
         else -> mapOf(
+            "g0_instant_catalog" to 25,
             "g1_related" to 40,
             "g5_genre_neighbours" to 35,
             "g2_same_release" to 20,

@@ -7,6 +7,7 @@ import com.velvet.app.data.YouTubeMusicInnertube
 import com.velvet.app.recommendation.candidates.CandidatePoolBuilder
 import com.velvet.app.recommendation.candidates.CandidateSourceRequest
 import com.velvet.app.recommendation.candidates.GenreLanguageNeighbourSource
+import com.velvet.app.recommendation.candidates.InstantTrackCatalog
 import com.velvet.app.recommendation.candidates.SameReleaseCandidateSource
 import com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource
 import com.velvet.app.recommendation.engine.DefaultRecommendationEngine
@@ -414,5 +415,160 @@ class Phase8DiversityAndInnertubeTest {
         assertTrue(RecordingIdentityResolver.isSameCompositionTitle(honorific, bare))
         assertFalse(RecordingIdentityResolver.isSameCompositionTitle(differentA, differentB))
         assertFalse(RecordingIdentityResolver.isSameCompositionTitle(shortHindiA, shortHindiB))
+    }
+
+    @Test
+    fun instantTrackCatalogMatchesVerifiedStudioGenreAndRejectsDuplicatesUnderTwoMs() {
+        InstantTrackCatalog.clear()
+        try {
+            val devotionalSeed = topic("seed_hc", "Shree Hanuman Chalisa", "Hariharan", durationSec = 580L)
+            val bollywoodSeed = topic("seed_bw", "Kesariya", "Arijit Singh", durationSec = 268L, album = "Brahmastra")
+            val unverifiedVideo = Song(
+                id = "omv_unverified",
+                title = "Gayatri Mantra (Official Video)",
+                artist = "Random Channel",
+                durationSec = 310L,
+                isTopicRelease = false,
+                rawUploaderName = "Random Channel",
+            )
+            InstantTrackCatalog.seed(
+                listOf(
+                    devotionalSeed,
+                    topic("dup_hc", "Hanuman Chalisa", "Gulshan Kumar", durationSec = 570L),
+                    topic("ok_bhajan", "Shiv Tandav Stotram", "Shankar Mahadevan", durationSec = 410L, album = "Sacred Chants"),
+                    topic("ok_aarti", "Om Jai Jagdish Hare Aarti", "Anuradha Paudwal", durationSec = 320L, album = "Evening Aarti"),
+                    topic("club_mismatch", "Midnight Club Party Mix", "DJ Electro", durationSec = 215L, album = "Club Nights"),
+                    topic("ok_bw_1", "Tum Hi Ho (From Aashiqui 2)", "Mithoon", durationSec = 262L, album = "Aashiqui 2"),
+                    topic("ok_bw_2", "Agar Tum Saath Ho (From Tamasha)", "Alka Yagnik", durationSec = 341L, album = "Tamasha"),
+                    unverifiedVideo,
+                ),
+            )
+
+            // Unverified OMV/UGC must never enter the catalog or results
+            assertFalse(InstantTrackCatalog.snapshot().any { it.id == "omv_unverified" })
+
+            val devMatches = InstantTrackCatalog.matchSimilar(seed = devotionalSeed, limit = 10)
+            val devIds = devMatches.map { it.id }.toSet()
+            assertTrue("ok_bhajan" in devIds && "ok_aarti" in devIds)
+            assertFalse("dup_hc" in devIds)
+            assertFalse("club_mismatch" in devIds)
+            assertFalse("omv_unverified" in devIds)
+            assertFalse("seed_hc" in devIds)
+
+            val bwMatches = InstantTrackCatalog.matchSimilar(seed = bollywoodSeed, limit = 10)
+            val bwIds = bwMatches.map { it.id }.toSet()
+            assertTrue("ok_bw_1" in bwIds && "ok_bw_2" in bwIds)
+            assertFalse("seed_bw" in bwIds)
+        } finally {
+            InstantTrackCatalog.clear()
+        }
+    }
+
+    @Test
+    fun innertubeAtvTrackWithoutSquareDimensionsStillClassifiesAsStudioOriginal() {
+        val radioJson = """
+        {
+          "contents": {
+            "singleColumnMusicWatchNextResultsRenderer": {
+              "tabbedRenderer": {
+                "watchNextTabbedResultsRenderer": {
+                  "tabs": [{
+                    "tabRenderer": {
+                      "title": "Up next",
+                      "content": {
+                        "musicQueueRenderer": {
+                          "content": {
+                            "playlistPanelRenderer": {
+                              "contents": [{
+                                "playlistPanelVideoRenderer": {
+                                  "videoId": "atvNoDim001",
+                                  "title": { "runs": [{ "text": "Namo Namo" }] },
+                                  "longBylineText": { "runs": [{ "text": "Amit Trivedi" }, { "text": " • " }, { "text": "Kedarnath" }] },
+                                  "lengthText": { "runs": [{ "text": "5:28" }] },
+                                  "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/plainart" }] },
+                                  "navigationEndpoint": {
+                                    "watchEndpoint": {
+                                      "videoId": "atvNoDim001",
+                                      "watchEndpointMusicSupportedConfigs": {
+                                        "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" }
+                                      }
+                                    }
+                                  }
+                                }
+                              }]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }]
+                }
+              }
+            }
+          }
+        }
+        """.trimIndent()
+
+        val (radioSongs, _) = YouTubeMusicInnertube.parseNextRadioJson(JsonParser.`object`().from(radioJson))
+        assertEquals(1, radioSongs.size)
+        val radioSong = radioSongs.single()
+        assertTrue(radioSong.isTopicRelease)
+        assertTrue(radioSong.isYouTubeMusicCatalog)
+        assertTrue(radioSong.hasSquareArtwork)
+        assertTrue(RecordingIdentityResolver.resolve(radioSong).releaseClassification.isVerifiedOriginalAudio)
+
+        val searchJson = """
+        {
+          "contents": {
+            "tabbedSearchResultsRenderer": {
+              "tabs": [{
+                "tabRenderer": {
+                  "content": {
+                    "sectionListRenderer": {
+                      "contents": [{
+                        "musicShelfRenderer": {
+                          "contents": [{
+                            "musicResponsiveListItemRenderer": {
+                              "playlistItemData": { "videoId": "atvSearch02" },
+                              "flexColumns": [
+                                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Shayad" }] } } },
+                                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Pritam" }, { "text": " • " }, { "text": "Love Aaj Kal" }, { "text": " • " }, { "text": "4:08" }] } } }
+                              ],
+                              "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/searchart" }] } } },
+                              "overlay": {
+                                "musicItemThumbnailOverlayRenderer": {
+                                  "content": {
+                                    "musicPlayButtonRenderer": {
+                                      "playNavigationEndpoint": {
+                                        "watchEndpoint": {
+                                          "videoId": "atvSearch02",
+                                          "watchEndpointMusicSupportedConfigs": {
+                                            "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }]
+                        }
+                      }]
+                    }
+                  }
+                }
+              }]
+            }
+          }
+        }
+        """.trimIndent()
+
+        val searchSongs = YouTubeMusicInnertube.parseSearchOrBrowseSongsJson(JsonParser.`object`().from(searchJson))
+        assertEquals(1, searchSongs.size)
+        val sSong = searchSongs.single()
+        assertTrue(sSong.isTopicRelease)
+        assertTrue(sSong.hasSquareArtwork)
+        assertTrue(RecordingIdentityResolver.resolve(sSong).releaseClassification.isVerifiedOriginalAudio)
     }
 }

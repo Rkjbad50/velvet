@@ -12,11 +12,11 @@ VELVET is a modern, single-activity Android application built with Kotlin, Jetpa
 
 | Component | Technology |
 |---|---|
-| minSdk / targetSdk / compileSdk | 26 / 35 / 35 |
+| minSdk / targetSdk / compileSdk | 31 / 36 / 36 |
 | Language & Runtime | Kotlin 2.1.0, Coroutines, Flow |
 | UI Framework | Jetpack Compose (BOM 2024.12.01), Material 3 Expressive |
 | Media Engine | AndroidX Media3 1.5.1 (ExoPlayer, MediaSession, CacheDataSource) |
-| Audio Extraction | NewPipeExtractor (v0.26.5) |
+| Audio Extraction | NewPipeExtractor (v0.27.1) & native YT Music InnerTube |
 | Image Loading | Coil 2.7 |
 | Networking | OkHttp 4.12 |
 | Persistence | kotlinx.serialization (Encrypted/Local JSON store in internal storage) |

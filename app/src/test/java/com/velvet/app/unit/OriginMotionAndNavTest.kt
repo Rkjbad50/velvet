@@ -157,4 +157,21 @@ class OriginMotionAndNavTest {
         val available = ReleaseCheck.evaluateAppUpdate(release, newerBuildPayload, installedVersionCode = 220, installedVersionName = "2.7.6")
         assertTrue(available is AppUpdateState.UpdateAvailable)
     }
+
+    @Test
+    fun releaseCheckOffersOfficialV11UpdateOverInstalledV276Build() {
+        val officialRelease = GitHubRelease(
+            tag_name = "v1.1",
+            name = "Version 1.1",
+            html_url = "https://github.com/Rkjbad50/velvet/releases/tag/v1.1",
+        )
+        val v11Payload = UpdatePayload("1.1", 245, "deadbeef", "velvet.apk")
+        val state = ReleaseCheck.evaluateAppUpdate(
+            release = officialRelease,
+            updatePayload = v11Payload,
+            installedVersionCode = 240,
+            installedVersionName = "2.7.6",
+        )
+        assertTrue(state is AppUpdateState.UpdateAvailable)
+    }
 }
