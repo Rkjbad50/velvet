@@ -192,17 +192,20 @@ object StreamResolver {
             }
 
             // 2. Parallel supplement when InnerTube radio panel was sparse (< 8 verified distinct tracks)
+            val parallelStartMs = System.currentTimeMillis()
             val streamInfoFuture = CompletableFuture.supplyAsync {
                 runCatching { YouTube.streamInfo(videoId) }.getOrNull()
             }
             val seedArtistHint = seedHint?.artist?.removeSuffix(" - Topic")?.trim().orEmpty()
-            val catalogSearchFuture = if (seedArtistHint.isNotBlank()) {
+            val catalogSearchFuture: CompletableFuture<List<Song>>? = if (seedArtistHint.isNotBlank()) {
                 CompletableFuture.supplyAsync {
                     runCatching { YouTubeMusicInnertube.searchSongs("$seedArtistHint songs") }.getOrDefault(emptyList())
                 }
-            } else null
+            } else {
+                null
+            }
 
-            val info = runCatching { streamInfoFuture.get(1600, TimeUnit.MILLISECONDS) }.getOrNull()
+            val info = runCatching { streamInfoFuture.get(1_550L, TimeUnit.MILLISECONDS) }.getOrNull()
             val effectiveSeed = seedHint ?: info?.let { runCatching { YouTube.songFrom(it) }.getOrNull() }
             val newPipeRelated = info?.relatedItems
                 ?.mapNotNull { (it as? StreamInfoItem)?.toSong() }
@@ -210,8 +213,9 @@ object StreamResolver {
                 ?.sortedByDescending { it.preferredMusicSource || it.isTopicRelease }
                 .orEmpty()
 
+            val remainingBudgetMs = (1_600L - (System.currentTimeMillis() - parallelStartMs)).coerceAtLeast(120L)
             val catalogSongs = runCatching {
-                catalogSearchFuture?.get(1500, TimeUnit.MILLISECONDS)
+                catalogSearchFuture?.get(remainingBudgetMs, TimeUnit.MILLISECONDS)
             }.getOrNull().orEmpty().filter {
                 it.isPureMusic() && it.isOriginalMusicAudio() && isDistinctFromSeed(effectiveSeed, it)
             }
