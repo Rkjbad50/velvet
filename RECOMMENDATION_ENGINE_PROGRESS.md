@@ -275,8 +275,8 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - Phases 8–9 (Radio Evolution, Home Composer, Inspector & Acceptance): `checkpoint/phase-8-modes-home` (`04032de`)
   - Release Merge (`v2.7.6`): User-authorized promotion onto `main`, `versionName = "2.7.6"`, cleaned `README.md`, and upgraded `NewPipeExtractor` to `v0.27.1` (VisionOS fast-path client, Java `record Description` handling, and Firefox ESR 153 headers).
 
-### v2.7.6 Post-Release Fixes — Autoplay Queue Loading, Blank-Queue Shuffle Guard & 120Hz Home Transition Speedup
-- **Status:** **Code & CI Verification Complete** (`main` @ `10d8ec3`)
+### v2.7.6 Post-Release Fixes — Autoplay Queue Loading, Blank-Queue Shuffle Guard, 120Hz Home Speedup, Radio Header & Dynamic 9/9 Speed Dial
+- **Status:** **Code & CI Verification Complete** (`main` @ `643e83b`)
 - **Scope Implemented:**
   - **Autoplay Queue & Similar Songs Loading (`Models.kt`, `YouTube.kt`, `StreamResolver.kt`, `ReleaseAudioClassifier.kt`, `CandidatePoolBuilder.kt`, `ModeRankerConfig.kt`, `VelvetApp.kt`, `PlayerConnection.kt`):**
     - Tagged genuine `YouTube.FILTER_SONGS` (`music_songs`) and official `albumPage` (`isAlbum = true`) audio tracks with `isYouTubeMusicCatalog = true` cleanly (`FILTER_VIDEOS`, generic Watch pages, and unverified uploads remain untagged).
@@ -285,12 +285,16 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - **Next Button & Blank-Queue Shuffle Crash Prevention (`PlayerConnection.kt`, `QueueExoAdapter.kt`, `PlayerQueueManager.kt`, `NowPlaying.kt`):**
     - Fixed `PlayerConnection.next()` so pressing Next on an empty queue triggers `checkAndExtendAutoplay(..., autoPlayNext = true, force = true)` instead of clearing `queueManager.current` to `null` while audio/Now Playing stays active (which previously caused subsequent `cycleShuffle()` taps to wipe ExoPlayer and force-close `NowPlayingScreen`).
     - Hardened `PlayerConnection.cycleShuffle()` with null/empty-queue re-anchoring, safe Toast guards, and automatic autoplay kick-start on blank queues; guarded `QueueExoAdapter.syncToExoPlayer` against `curIdx < 0` / out-of-range indices; added empty-queue guidance row in `QueueSheet`.
-  - **Instant Home Return, 120Hz Refresh Rate & Snappy Jelly Transitions (`MainActivity.kt`, `HomeScreen.kt`):**
+  - **Now Playing Radio Title Overlap & Slimmer Streaming Quality Text (`NowPlaying.kt`, `Theme.kt`):**
+    - Replaced the `48dp`-padded `Box` top bar with a symmetric `Row` allocating balanced `92dp` slots for Left (`Close`) and Right (`Lyrics` + `MoreVert`) controls and `weight(1f)` + `.basicMarquee()` for the centered Radio title, eliminating button overlap.
+    - Registered `FontWeight.Light` variations on `EditorialSerif` (`source_serif_4`) and `SpaceGrotesk` (`space_grotesk`) in `Theme.kt` and styled the centered streaming quality badge (`quality.uppercase()`) with `FontWeight.Light`, `10.5.sp`, and `0.85.sp` letter spacing so it stays slimmer than the selected UI font.
+  - **Instant Home Return, 120Hz Refresh Rate, Snappy Jelly Transitions & Dynamic 9/9 Speed Dial (`MainActivity.kt`, `HomeScreen.kt`, `HomeRecommendationComposer.kt`):**
     - Added `configurePreferredRefreshRate()` in `MainActivity` (`minSdk 31+`) to select the highest supported display refresh rate mode at current panel resolution.
-    - Hoisted `homeVm` (`HomeViewModel`) and replaced destructive tab unmounting with `PersistentRootTabs` + `updateTransition`, preserving `HomeScreen`/`SearchScreen`/`LibraryScreen` + `vm.listState` hot in memory while unplacing obscured idle tabs (`0` draw/layout/touch cost), moving `HomeRecommendationComposer` shelf derivation to `Dispatchers.Default`, deduplicating `loadMoreForYou`, and adding snappy directional jelly-spring gliding (`dampingRatio = 0.78f, stiffness = 620f`).
-- **CI/CD Verification (`main` @ `10d8ec3`):**
-  - **Run ID:** `45518926968` (`Build & Verify (CI)` job `138885513905`).
-  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 3m 23s** (`59 actionable tasks`), `velvet-apk` uploaded.
-  - **Unit Test Results (`:app:testReleaseUnitTest`):** **294 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including 3 new regression tests in `Phase2IdentityAndFeaturesTest`, `Phase4CandidateAndFilterTest`, and `PlayerQueueTest`.
+    - Hoisted `homeVm` (`HomeViewModel`) and replaced destructive tab unmounting with `PersistentRootTabs` + `updateTransition`, preserving `HomeScreen`/`SearchScreen`/`LibraryScreen` + `vm.listState` hot in memory while unplacing obscured idle tabs (`0` draw/layout/touch cost) and adding snappy directional jelly-spring gliding (`dampingRatio = 0.78f, stiffness = 620f`).
+    - Upgraded `HomeRecommendationComposer.composeSpeedDial` and `HomeViewModel` to fill all `9/9` verified studio cells cleanly at once (with `FILTER_SONGS` catalog supplement + `home_feed` Speed Dial cache + atomic updates) and dynamically re-rank cells using listening history, recency, likes, playlists, skip fatigue, and multi-horizon taste weights (`UserTasteSnapshot`).
+- **CI/CD Verification (`main` @ `643e83b`):**
+  - **Run ID:** `45521040929` (`Build & Verify (CI)` job `138892651488`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 4m 56s**, `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **295 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including regression tests in `Phase2IdentityAndFeaturesTest`, `Phase4CandidateAndFilterTest`, `Phase8ModesAndHomeTest`, and `PlayerQueueTest`.
 - **Verification Scope Caveat:** Verified deterministically via JVM tests, Android lint-vital release checks, and R8 Release APK compilation in CI; physical-device UI animation feel, live 120Hz panel locking, and live YouTube Music network queues await on-device confirmation.
 - **Rollback Point:** Previous `v2.7.6` baseline on `main` (`fe498fd`).
