@@ -319,3 +319,20 @@ Existing CI/CD infrastructure in `.github/workflows/build.yml` and `app/build.gr
   - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 2m 45s**, `velvet-apk` uploaded.
   - **Unit Test Results (`:app:testReleaseUnitTest`):** **300 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including all 5 new suites in `app/src/test/java/com/velvet/app/unit/Phase8DiversityAndInnertubeTest.kt`.
 - **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`9f8d1d5`).
+
+### v2.7.6 Home Reordering, Origin-Anchored Open/Submerge Motion & Build Floor Upgrade
+- **Status:** **Code & CI Verification Complete** (`main` @ `49cd80a`)
+- **Scope Implemented:**
+  - **Exact Home Shelf Ordering (`HomeScreen.kt`):**
+    - Reordered the primary Home rails strictly as: **1. Trending now -> 2. Speed Dial -> 3. Recently played -> 4. Quick picks -> 5. Made for you -> 6. More for you** (followed cleanly by `Your artists` if populated).
+  - **Origin-Anchored Container Transform & Fluid App-Wide Transitions (`OriginMotion.kt`, `Nav.kt`, `MainActivity.kt`, `Components.kt`, `Controls.kt`, `BrowseControls.kt`, `LibraryScreen.kt`, `SettingsScreen.kt`, `NowPlaying.kt`):**
+    - Added `NavOrigin`, `OriginRegistry`, `OriginTransformCalculator` (non-linear curved arc trajectory `pow(1.22)`/`pow(0.88)`, uniform scale morph, compensated pill-to-screen corner radius interpolation, and crisp shell/content fade separation avoiding jagged scaled text), `OriginTransformBox`, and passive `Modifier.captureOriginOnPress`.
+    - Replaced `detailTransition.AnimatedContent` in `MainActivity.kt` with `RouteOverlayHost` (`RouteStackEntry` keeping per-route `NavOrigin`), so Settings (from the Settings gear button), History, Equalizer, Library tiles, Albums, Artists, Genres, Import, Developer options, and `FullLyrics` (from the Lyrics button) unfold organically out of their source button/card and submerge smoothly back into that exact root element on close while keeping covered layers laid out at zero overdraw when settled.
+    - Upgraded `VelvetAnimatedDialog`, `VelvetDialogHost`, `VelvetModalSheet`, and `MiniPlayer <-> NowPlayingScreen` with exact root-coordinate `OriginTransformCalculator` transforms.
+  - **Repo Build Floor Upgrade (`app/build.gradle.kts`, `SettingsScreen.kt`):**
+    - Upgraded default `buildNumber` / `upstreamBuildNumber` repo fallback from `2`/`51` to `220`/`220` within `versionName = "2.7.6"` and surfaced `Build ${BuildConfig.VERSION_CODE}` directly in Settings' `Version` row subtitle.
+- **CI/CD Verification (`main` @ `49cd80a`):**
+  - **Run ID:** `45529750099` (`Build & Verify (CI)` job `138921835779`, `BUILD_NUMBER=220`).
+  - **Command Executed:** `gradle testReleaseUnitTest assembleRelease --stacktrace` → **BUILD SUCCESSFUL in 3m 26s**, `velvet-apk` uploaded.
+  - **Unit Test Results (`:app:testReleaseUnitTest`):** **304 PASSED**, **1 pre-existing SKIPPED** (`ExtractionTest.streamFetch`), **0 FAILED** — including all 4 new suites in `app/src/test/java/com/velvet/app/unit/OriginMotionAndNavTest.kt`.
+- **Rollback Point:** Prior verified `v2.7.6` baseline on `main` (`cddc9a3`).
