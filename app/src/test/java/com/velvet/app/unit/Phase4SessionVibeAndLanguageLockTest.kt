@@ -76,10 +76,17 @@ class Phase4SessionVibeAndLanguageLockTest {
         hasSquareArtwork = true,
     )
 
-    private fun buildHindi90sPool(count: Int = 80): List<Song> {
-        val adj = listOf("Nayi", "Meethi", "Gehri", "Chupke", "Pehli", "Sunehri", "Anjani", "Bheegi", "Rang", "Chandni")
+    private fun buildHindi90sPool(count: Int = 120): List<Song> {
+        val adj = listOf(
+            "Nayi", "Meethi", "Gehri", "Chupke", "Pehli", "Sunehri",
+            "Anjani", "Bheegi", "Rang", "Chandni", "Pyaari", "Halke",
+        )
         val nouns = listOf("Baarish", "Raatein", "Hawayein", "Kahaani", "Manzil", "Khamoshi", "Roshni", "Dastaan", "Aashiqui", "Dhadkan")
-        val singers90s = listOf("Kumar Sanu", "Udit Narayan", "Alka Yagnik", "Sonu Nigam", "Abhijeet", "Kavita Krishnamurthy")
+        val singers90s = listOf(
+            "Kumar Sanu", "Udit Narayan", "Alka Yagnik", "Sonu Nigam", "Abhijeet",
+            "Kavita Krishnamurthy", "Sadhana Sargam", "Babul Supriyo", "Lata Mangeshkar",
+            "Kishore Kumar", "Mohammed Rafi", "Asha Bhosle", "Shaan", "KK",
+        )
         return buildList {
             var idx = 0
             for (a in adj) {
@@ -170,16 +177,41 @@ class Phase4SessionVibeAndLanguageLockTest {
     @Test
     fun hindi90sSeedPicks60ConsecutiveHindiTracksZeroEnglishPunjabiOrSouthIndic() = runBlocking {
         val seed = studioSong("seed_hi90", "Tujhe Dekha To Yeh Jaana Sanam", "Kumar Sanu", album = "DDLJ")
-        val hindiPool = buildHindi90sPool(80)
+        val hindiPool = buildHindi90sPool(120)
         val foreignPool = buildEnglishPool(25) + buildPunjabiPool(20) + buildSouthIndicPool(20)
         val fullCatalog = (hindiPool + foreignPool).shuffled(java.util.Random(77L))
 
+        val qm = QueueManager()
+        qm.start(listOf(seed), startIndex = 0)
         val libData = LibraryData(
             musicLanguages = listOf("Hindi", "English"),
             allowMixedLanguagesInAutoplay = false,
             liked = fullCatalog,
         )
-        val engine = buildEngine(fullCatalog, libData)
+        val nextBatchProvider: () -> List<Song> = {
+            val takenIds = buildSet {
+                qm.current?.id?.let(::add)
+                qm.upNext.forEach { add(it.song.id) }
+                qm.history.forEach { add(it.id) }
+            }
+            val remainingHindi = hindiPool.filterNot { it.id in takenIds }.take(25)
+            // Keep foreign tracks in every fetch to verify 0 leaks across all 60 consecutive picks
+            (remainingHindi + foreignPool).shuffled(java.util.Random(77L + qm.history.size))
+        }
+        val poolBuilder = CandidatePoolBuilder(
+            sources = listOf(
+                SeedRelatedCandidateSource(relatedProvider = { nextBatchProvider() }),
+                GenreLanguageNeighbourSource(querySearchProvider = { nextBatchProvider().reversed() }),
+            ),
+            cacheTtlMs = 0L,
+        )
+        val engine = DefaultRecommendationEngine(
+            candidatePoolBuilder = poolBuilder,
+            userProfileRepository = DefaultUserProfileRepository(
+                eventRepository = RecommendationEventRepository(backend = InMemoryEventBackend()),
+                libraryDataProvider = { libData },
+            ),
+        )
         val coordinator = AutoplayRefillCoordinator(
             engine = engine,
             policy = RefillPolicy(
@@ -190,8 +222,6 @@ class Phase4SessionVibeAndLanguageLockTest {
             ),
         )
 
-        val qm = QueueManager()
-        qm.start(listOf(seed), startIndex = 0)
         val consecutivePicks = mutableListOf<Song>()
 
         while (consecutivePicks.size < 60) {
