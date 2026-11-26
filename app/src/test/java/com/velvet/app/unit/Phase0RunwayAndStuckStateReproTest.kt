@@ -116,6 +116,7 @@ class Phase0RunwayAndStuckStateReproTest {
         userQueueSongs = qm.userQueue.map { it.song },
         historySongs = qm.history,
         queueVersion = qm.queueVersion,
+        repeatMode = qm.repeatMode,
         isAutoplayEnabled = true,
     )
 
