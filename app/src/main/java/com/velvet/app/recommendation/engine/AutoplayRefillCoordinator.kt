@@ -3,6 +3,7 @@ package com.velvet.app.recommendation.engine
 import com.velvet.app.data.Song
 import com.velvet.app.playback.RepeatMode
 import com.velvet.app.playback.SongIdentity
+import com.velvet.app.recommendation.features.TrackFeatureRepository
 import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationResult
@@ -13,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class RefillStatus {
     IDLE,
@@ -89,7 +91,9 @@ class AutoplayRefillCoordinator(
     private val engine: RecommendationEngine,
     private val policy: RefillPolicy = RefillPolicy(),
     private val clock: () -> Long = System::currentTimeMillis,
-    private val watchdogTimeoutMs: Long = 8_000L,
+    private val watchdogTimeoutMs: Long = RunwayPolicy.WATCHDOG_TIMEOUT_MS,
+    private val featureRepository: TrackFeatureRepository = TrackFeatureRepository(),
+    private val urgentFallbackProvider: (suspend (Song, QueueRefillSnapshot, Set<String>) -> List<Song>)? = null,
 ) {
     private val stateMutex = Mutex()
     private var state = RefillState()
@@ -204,6 +208,8 @@ class AutoplayRefillCoordinator(
             }
 
             val upNextCount = initialSnapshot.upcomingSongs.size
+            val isRunwayPolicy = policy.targetUpcomingBuffer >= RunwayPolicy.REFILL_BELOW
+            val isUrgent = isRunwayPolicy && upNextCount < RunwayPolicy.URGENT_BELOW
             if (upNextCount >= policy.lowWatermarkTrigger && !force && !autoPlayNext) {
                 return RefillDecision.Skip("buffer_healthy")
             }
@@ -214,7 +220,7 @@ class AutoplayRefillCoordinator(
             val sameAnchor = state.lastAnchorId == anchor.id
             val effectiveEmptyStreak = if (sameAnchor) state.emptyStreakForCurrentAnchor else 0
 
-            if (sameAnchor && effectiveEmptyStreak >= policy.maxEmptyRefillsPerAnchor && !force) {
+            if (sameAnchor && effectiveEmptyStreak >= policy.maxEmptyRefillsPerAnchor && !force && !isUrgent) {
                 state = state.copy(status = RefillStatus.EXHAUSTED, emptyStreakForCurrentAnchor = effectiveEmptyStreak)
                 return RefillDecision.Skip("anchor_exhausted")
             }
@@ -222,11 +228,11 @@ class AutoplayRefillCoordinator(
             if (state.status == RefillStatus.IN_FLIGHT && !force) {
                 return RefillDecision.Skip("already_in_flight")
             }
-            if (!force && !autoPlayNext && now < state.backoffUntilMillis) {
+            if (!force && !autoPlayNext && !isUrgent && now < state.backoffUntilMillis) {
                 state = state.copy(status = RefillStatus.COOLDOWN)
                 return RefillDecision.Skip("cooldown_active")
             }
-            if (!force && !autoPlayNext && sameAnchor && (now - state.lastAttemptedAtMillis) in 0L until policy.minCooldownMs) {
+            if (!force && !autoPlayNext && !isUrgent && sameAnchor && (now - state.lastAttemptedAtMillis) in 0L until policy.minCooldownMs) {
                 return RefillDecision.Skip("min_cooldown_active")
             }
 
@@ -242,10 +248,15 @@ class AutoplayRefillCoordinator(
         }
 
         return try {
-            val neededCount = if (force) {
+            val upNextCount = initialSnapshot.upcomingSongs.size
+            val isRunwayPolicy = policy.targetUpcomingBuffer >= RunwayPolicy.REFILL_BELOW
+            val isUrgent = isRunwayPolicy && upNextCount < RunwayPolicy.URGENT_BELOW
+            val neededCount = if (isRunwayPolicy) {
+                (policy.targetUpcomingBuffer - upNextCount).coerceIn(RunwayPolicy.MIN_BATCH, RunwayPolicy.MAX_BATCH)
+            } else if (force) {
                 policy.refillBatchSize
             } else {
-                (policy.targetUpcomingBuffer - initialSnapshot.upcomingSongs.size).coerceIn(4, policy.refillBatchSize)
+                (policy.targetUpcomingBuffer - upNextCount).coerceIn(4, policy.refillBatchSize)
             }
 
             val contextPool = (
@@ -255,8 +266,10 @@ class AutoplayRefillCoordinator(
                     initialSnapshot.upcomingSongs
                 ).distinctBy { it.id }
 
-            val result = try {
-                withTimeout(watchdogTimeoutMs) {
+            var engineResult: RecommendationResult? = null
+            var failureReason: String? = null
+            try {
+                engineResult = withTimeout(watchdogTimeoutMs) {
                     engine.nextSimilar(
                         seed = anchor,
                         contextSnapshot = contextPool,
@@ -275,31 +288,27 @@ class AutoplayRefillCoordinator(
                     )
                 }
             } catch (_: TimeoutCancellationException) {
-                stateMutex.withLock {
-                    if (state.activeGeneration == generation) {
-                        val failures = state.consecutiveFailures + 1
-                        state = state.copy(
-                            status = RefillStatus.COOLDOWN,
-                            consecutiveFailures = failures,
-                            backoffUntilMillis = clock() + policy.minCooldownMs,
-                        )
-                    }
-                }
-                return RefillDecision.SafeEmpty("", "watchdog_timeout", RefillStatus.COOLDOWN)
+                failureReason = "watchdog_timeout"
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
+                failureReason = "engine_error"
+            }
+
+            val canTryUrgentFallback = isUrgent && urgentFallbackProvider != null
+            if (engineResult == null && !canTryUrgentFallback) {
                 stateMutex.withLock {
                     if (state.activeGeneration == generation) {
                         val failures = state.consecutiveFailures + 1
+                        val delayMs = if (failureReason == "watchdog_timeout") policy.minCooldownMs else policy.failureBackoffMs
                         state = state.copy(
                             status = RefillStatus.COOLDOWN,
                             consecutiveFailures = failures,
-                            backoffUntilMillis = clock() + policy.failureBackoffMs,
+                            backoffUntilMillis = clock() + delayMs,
                         )
                     }
                 }
-                return RefillDecision.SafeEmpty("", "engine_error", RefillStatus.COOLDOWN)
+                return RefillDecision.SafeEmpty("", failureReason ?: "engine_error", RefillStatus.COOLDOWN)
             }
 
             val latest = latestSnapshotProvider()
@@ -326,7 +335,7 @@ class AutoplayRefillCoordinator(
                 }
             }
 
-            val acceptedSongs = result.candidates
+            var acceptedSongs = engineResult?.candidates.orEmpty()
                 .map { it.song }
                 .filterNot { song ->
                     dismissedFilter(song) ||
@@ -336,12 +345,73 @@ class AutoplayRefillCoordinator(
                         SongIdentity.canonicalGroupId(song) in alreadyInQueueIds
                 }
 
+            if (acceptedSongs.isEmpty() && canTryUrgentFallback) {
+                val fallbackRaw = try {
+                    withTimeoutOrNull(1_500L) {
+                        urgentFallbackProvider!!.invoke(anchor, latest, alreadyInQueueIds)
+                    }.orEmpty()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                acceptedSongs = fallbackRaw
+                    .asSequence()
+                    .distinctBy { it.id }
+                    .filter { song ->
+                        if (song.id.isBlank() || song.title.isBlank()) return@filter false
+                        if (song.durationSec in 0L..44L) return@filter false
+                        if (dismissedFilter(song)) return@filter false
+                        if (song.id in latest.excludedProviderIds || song.id in alreadyInQueueIds) return@filter false
+                        val identity = RecordingIdentityResolver.resolve(song)
+                        if (!identity.releaseClassification.isVerifiedOriginalAudio) return@filter false
+                        if (identity.canonicalRecordingId in alreadyInQueueIds ||
+                            SongIdentity.canonicalGroupId(song) in alreadyInQueueIds
+                        ) {
+                            return@filter false
+                        }
+                        if (RecordingIdentityResolver.isSameCompositionTitle(anchor, song)) return@filter false
+                        if (latest.preferredLanguageIds.isNotEmpty()) {
+                            val feat = featureRepository.getCachedOrExtract(song)
+                            if (feat.languageConfidence >= 0.70 &&
+                                feat.languageIds.isNotEmpty() &&
+                                feat.languageIds.keys.none { it in latest.preferredLanguageIds }
+                            ) {
+                                return@filter false
+                            }
+                        }
+                        true
+                    }
+                    .take(neededCount)
+                    .toList()
+            }
+
+            val resolvedResult = engineResult ?: RecommendationResult(
+                requestId = failureReason ?: "urgent-fallback",
+                mode = mode,
+                candidates = emptyList(),
+                modelVersion = "fallback",
+                generatedAtMillis = clock(),
+                sourceHealth = emptyMap(),
+                diagnosticsId = "",
+            )
+
             stateMutex.withLock {
                 if (state.activeGeneration != generation) {
                     return@withLock RefillDecision.Skip("superseded_generation")
                 }
                 val now = clock()
                 if (acceptedSongs.isEmpty()) {
+                    if (failureReason != null) {
+                        val failures = state.consecutiveFailures + 1
+                        val delayMs = if (failureReason == "watchdog_timeout") policy.minCooldownMs else policy.failureBackoffMs
+                        state = state.copy(
+                            status = RefillStatus.COOLDOWN,
+                            consecutiveFailures = failures,
+                            backoffUntilMillis = now + delayMs,
+                        )
+                        return@withLock RefillDecision.SafeEmpty("", failureReason, RefillStatus.COOLDOWN)
+                    }
                     val emptyStreak = if (state.lastAnchorId == anchor.id) state.emptyStreakForCurrentAnchor + 1 else 1
                     val newStatus = if (emptyStreak >= policy.maxEmptyRefillsPerAnchor) {
                         RefillStatus.EXHAUSTED
@@ -354,7 +424,7 @@ class AutoplayRefillCoordinator(
                         emptyStreakForCurrentAnchor = emptyStreak,
                         backoffUntilMillis = now + policy.minCooldownMs,
                     )
-                    RefillDecision.SafeEmpty(result.requestId, "no_eligible_verified_studio_audio", newStatus)
+                    RefillDecision.SafeEmpty(resolvedResult.requestId, "no_eligible_verified_studio_audio", newStatus)
                 } else {
                     state = state.copy(
                         status = RefillStatus.IDLE,
@@ -364,10 +434,10 @@ class AutoplayRefillCoordinator(
                         backoffUntilMillis = 0L,
                     )
                     RefillDecision.AppendSongs(
-                        requestId = result.requestId,
+                        requestId = resolvedResult.requestId,
                         mode = mode,
                         songs = acceptedSongs,
-                        result = result,
+                        result = resolvedResult,
                         replaceUpcomingIfEmptyAndPlayNext = autoPlayNext &&
                             latest.upcomingSongs.isEmpty() &&
                             latest.userQueueSongs.isEmpty(),

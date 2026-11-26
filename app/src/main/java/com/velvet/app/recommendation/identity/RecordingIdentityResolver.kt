@@ -1,5 +1,6 @@
 package com.velvet.app.recommendation.identity
 
+import com.velvet.app.data.BoundedCache
 import com.velvet.app.data.Song
 import com.velvet.app.playback.SongIdentity
 import com.velvet.app.recommendation.model.MusicalWorkRef
@@ -15,6 +16,14 @@ import java.util.Locale
  */
 object RecordingIdentityResolver {
 
+    private val workCache = BoundedCache<String, MusicalWorkRef>(1_500)
+    private val identityCache = BoundedCache<String, TrackIdentity>(1_500)
+
+    private fun songCacheKey(song: Song): String =
+        "${song.id}|${song.title}|${song.artist}|${song.album.orEmpty()}|${song.durationSec}|" +
+            "${song.isTopicRelease}|${song.isUploaderVerified}|${song.rawUploaderName.orEmpty()}|" +
+            "${song.hasSquareArtwork}|${song.releaseDescriptionHint.orEmpty()}|${song.isYouTubeMusicCatalog}"
+
     private val WORK_VERSION_PAREN_REGEX = Regex(
         """[\[(][^)\]]*\b(?:remix|remixed|dj\s+mix|club\s+mix|slowed|reverb|lofi|lo-fi|sped\s+up|speed\s+up|speedup|""" +
             """nightcore|acoustic|unplugged|live|concert|cover|instrumental|karaoke|mashup|remaster|remastered|""" +
@@ -29,24 +38,27 @@ object RecordingIdentityResolver {
     )
 
     fun resolveWork(song: Song): MusicalWorkRef {
-        val rawTitle = song.title.trim()
-        val baseTitle = WORK_VERSION_TAIL_REGEX.replace(
-            WORK_VERSION_PAREN_REGEX.replace(rawTitle, " "),
-            " ",
-        ).trim().ifBlank { rawTitle }
-        val parsed = SongIdentity.normalizeTitle(baseTitle)
-        val rawParsed = SongIdentity.normalizeTitle(rawTitle)
-        val artists = (SongIdentity.normalizeArtists(song.artist) + rawParsed.extraArtists)
-            .filter { it.isNotBlank() }
-            .toSet()
-        val primary = artists.firstOrNull() ?: song.artist.lowercase(Locale.ROOT).trim().take(20)
-        return MusicalWorkRef(
-            workId = "work:${parsed.comparisonKey}|$primary",
-            normalizedTitle = parsed.cleanTitle,
-            comparisonKey = parsed.comparisonKey,
-            primaryArtists = artists,
-            albumOrWorkTitle = rawParsed.movie ?: song.album,
-        )
+        val key = songCacheKey(song)
+        return workCache.getOrPut(key) {
+            val rawTitle = song.title.trim()
+            val baseTitle = WORK_VERSION_TAIL_REGEX.replace(
+                WORK_VERSION_PAREN_REGEX.replace(rawTitle, " "),
+                " ",
+            ).trim().ifBlank { rawTitle }
+            val parsed = SongIdentity.normalizeTitle(baseTitle)
+            val rawParsed = SongIdentity.normalizeTitle(rawTitle)
+            val artists = (SongIdentity.normalizeArtists(song.artist) + rawParsed.extraArtists)
+                .filter { it.isNotBlank() }
+                .toSet()
+            val primary = artists.firstOrNull() ?: song.artist.lowercase(Locale.ROOT).trim().take(20)
+            MusicalWorkRef(
+                workId = "work:${parsed.comparisonKey}|$primary",
+                normalizedTitle = parsed.cleanTitle,
+                comparisonKey = parsed.comparisonKey,
+                primaryArtists = artists,
+                albumOrWorkTitle = rawParsed.movie ?: song.album,
+            )
+        }
     }
 
     fun resolve(
@@ -55,6 +67,10 @@ object RecordingIdentityResolver {
         isrc: String? = null,
         fetchedAtMillis: Long = 0L,
     ): TrackIdentity {
+        val cacheKey = "${songCacheKey(song)}|${musicBrainzRecordingId.orEmpty()}|${isrc.orEmpty()}"
+        if (fetchedAtMillis == 0L) {
+            identityCache[cacheKey]?.let { return it }
+        }
         val parsed = SongIdentity.normalizeTitle(song.title)
         val work = resolveWork(song)
         val classification = ReleaseAudioClassifier.classify(song)
@@ -95,7 +111,7 @@ object RecordingIdentityResolver {
             fetchedAtMillis = fetchedAtMillis,
         )
 
-        return TrackIdentity(
+        val computed = TrackIdentity(
             providerRefs = listOf(providerRef),
             canonicalRecordingId = canonicalRecId,
             workId = work.workId,
@@ -106,6 +122,10 @@ object RecordingIdentityResolver {
             releaseClassification = classification,
             identityEvidence = evidence,
         )
+        if (fetchedAtMillis == 0L) {
+            identityCache[cacheKey] = computed
+        }
+        return computed
     }
 
     /**

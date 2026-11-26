@@ -19,8 +19,12 @@ import com.velvet.app.data.BrowseItem
 import com.velvet.app.data.PlaybackContext
 import com.velvet.app.data.RecentType
 import com.velvet.app.data.Song
+import com.velvet.app.recommendation.engine.ExoSyncSerializer
+import com.velvet.app.recommendation.engine.NextTapCoalescer
 import com.velvet.app.recommendation.engine.QueueRefillSnapshot
 import com.velvet.app.recommendation.engine.RefillDecision
+import com.velvet.app.recommendation.engine.RunwayPolicy
+import com.velvet.app.recommendation.engine.RunwayTrigger
 import com.velvet.app.recommendation.model.PlaybackAttribution
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationSurface
@@ -30,6 +34,7 @@ import com.velvet.app.data.isDuplicateOf
 import com.velvet.app.data.isOriginalMusicAudio
 import com.velvet.app.data.isPureMusic
 import com.velvet.app.data.isSameTrackAs
+import com.velvet.app.playback.DismissedTrackRegistry
 import com.velvet.app.playback.PersistedPlaybackState
 import com.velvet.app.playback.PlaybackService
 import com.velvet.app.playback.PlaybackStateManager
@@ -44,11 +49,9 @@ import com.velvet.app.playback.toMediaItem
 import com.velvet.app.playback.toSong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /** The UI's handle on PlaybackService, mirrored into Compose state. */
@@ -107,9 +110,16 @@ object PlayerConnection {
     fun dismissRadioBanner() {
         radioBannerState = null
     }
-    private var isExtendingAutoplay = false
-    private var autoplayJob: Job? = null
-    private var currentAutoplayGeneration = 0L
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val runwayBgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(2))
+    private val runwayMainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val exoSyncSerializer = ExoSyncSerializer(runwayMainScope)
+    private val nextTapCoalescer = NextTapCoalescer(
+        scope = runwayMainScope,
+        delayMs = RunwayPolicy.NEXT_COALESCE_WINDOW_MS,
+    ) {
+        performNextAdvance()
+    }
 
     /**
      * Whether playback originated from a user-created local playlist.
@@ -268,8 +278,10 @@ object PlayerConnection {
         autoPlay: Boolean = true,
         startPositionMs: Long = 0L,
     ) {
-        withController { c ->
-            QueueExoAdapter.syncToExoPlayer(c, queueManager.state, playlistStart, isRadio, autoPlay, startPositionMs)
+        exoSyncSerializer.submit {
+            withController { c ->
+                QueueExoAdapter.syncToExoPlayer(c, queueManager.state, playlistStart, isRadio, autoPlay, startPositionMs)
+            }
         }
     }
 
@@ -310,6 +322,9 @@ object PlayerConnection {
     fun connect(context: Context) {
         appContext = context.applicationContext
         started = true
+        VelvetApp.runwayControllerOrNull()?.startPeriodicTick(isPlayingProvider = { isPlaying }) {
+            requestRunwayRefill(RunwayTrigger.PERIODIC_TICK)
+        }
         if (current == null) {
             val savedShuffle = persistedShuffleEnum()
             shuffleMode = savedShuffle
@@ -321,6 +336,7 @@ object PlayerConnection {
 
     fun disconnect() {
         started = false
+        nextTapCoalescer.cancel()
         future?.let(MediaController::releaseFuture)
         future = null
         controller = null
@@ -427,18 +443,23 @@ object PlayerConnection {
             ) {
                 val seed = current ?: queueManager.current ?: queueManager.history.lastOrNull()
                 if (seed != null) {
-                    val instantAdded = tryInstantAutoplaySeed(seed)
+                    val instantAdded = takePreparedInstantSeed(seed)
                     if (instantAdded) {
                         recordCurrentPlaybackEnd(endReason = com.velvet.app.data.ListenEndReason.COMPLETED)
                         val adv = queueManager.advance(manual = false)
                         if (adv != null) {
                             syncQueueState()
                             syncToExoPlayer()
-                            checkAndExtendAutoplay()
+                            requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
                             return
                         }
                     }
-                    checkAndExtendAutoplay(seedId = seed.id, autoPlayNext = true, force = true)
+                    requestRunwayRefill(
+                        trigger = RunwayTrigger.TRACK_CHANGE,
+                        seedId = seed.id,
+                        autoPlayNext = true,
+                        force = true,
+                    )
                 }
             }
         }
@@ -455,8 +476,8 @@ object PlayerConnection {
                 queueManager.advance(manual = false)
                 syncQueueState()
                 syncToExoPlayer()
-                checkAndExtendAutoplay()
-                if (queueManager.upNext.size <= 4) {
+                requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
+                if (queueManager.upNext.size < RunwayPolicy.REFILL_BELOW) {
                     (queueManager.upNext.lastOrNull()?.song ?: queueManager.current)?.let {
                         StreamResolver.prefetchRelated(it)
                     }
@@ -476,6 +497,7 @@ object PlayerConnection {
                 pendingSeekTargetMs = null
                 pendingSeekUntilMs = 0L
                 current = exoCurrent
+                requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
             } else if (queueManager.current?.id != exoCurrent.id) {
                 if (queueManager.userQueue.firstOrNull()?.song?.id == exoCurrent.id ||
                     queueManager.upNext.firstOrNull()?.song?.id == exoCurrent.id) {
@@ -484,16 +506,13 @@ object PlayerConnection {
                     queueManager.advance()
                     syncQueueState()
                     syncToExoPlayer()
+                    requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
                 }
                 // Otherwise ignore stale pre-transition events while ExoPlayer catches up to queueManager.current
             }
-            if (queueManager.upNext.size <= 4) {
+            if (queueManager.upNext.size < RunwayPolicy.REFILL_BELOW) {
                 StreamResolver.prefetchRelated(queueManager.upNext.lastOrNull()?.song ?: (queueManager.current ?: exoCurrent))
             }
-        }
-        val isAutoplayOn = VelvetApp.library.data.value.autoplay || isRadioActive
-        if (isAutoplayOn && queueManager.upNext.size < 4) {
-            checkAndExtendAutoplay()
         }
 
         val nowMs = monoNowMs()
@@ -603,15 +622,16 @@ object PlayerConnection {
         }
         syncQueueState(resetPositionOnTrackChange = false)
 
-        c?.let { controller ->
-            QueueExoAdapter.syncToExoPlayer(
-                player = controller,
-                state = queueManager.state,
+        if (c != null) {
+            syncToExoPlayer(
                 playlistStart = null,
                 isRadio = saved.isRadio,
                 autoPlay = false,
                 startPositionMs = saved.positionMs,
             )
+        }
+        if (VelvetApp.library.data.value.autoplay || saved.isRadio) {
+            requestRunwayRefill(RunwayTrigger.APP_START_OR_RESTORE, seedId = song.id)
         }
     }
 
@@ -710,11 +730,13 @@ object PlayerConnection {
             }
         }
 
-        com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(songs)
+        runwayBgScope.launch {
+            com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(songs)
+        }
         val isAutoplayOn = VelvetApp.library.data.value.autoplay || radio
         if (isAutoplayOn && queueManager.upNext.isEmpty()) {
             queueManager.current?.let { seedTrack ->
-                tryInstantAutoplaySeed(seedTrack)
+                takePreparedInstantSeed(seedTrack)
             }
         }
 
@@ -733,10 +755,10 @@ object PlayerConnection {
         }
 
         if (isAutoplayOn) {
-            if (queueManager.upNext.size < 6) {
-                queueManager.current?.id?.let { checkAndExtendAutoplay(it) }
+            queueManager.current?.id?.let {
+                requestRunwayRefill(RunwayTrigger.TRACK_CHANGE, seedId = it)
             }
-            // Prefetch next upcoming track (not current anchor) to avoid lock contention with checkAndExtendAutoplay
+            // Prefetch next upcoming track off main without competing on current anchor
             queueManager.upNext.firstOrNull()?.song?.let {
                 StreamResolver.prefetchRelated(it)
             }
@@ -767,11 +789,8 @@ object PlayerConnection {
         syncQueueState()
         syncToExoPlayer()
 
-        if (queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty() &&
-            newMode != ShuffleMode.OFF &&
-            (VelvetApp.library.data.value.autoplay || isRadioActive)
-        ) {
-            checkAndExtendAutoplay(seedId = activeSong.id)
+        if (newMode != ShuffleMode.OFF && (VelvetApp.library.data.value.autoplay || isRadioActive)) {
+            requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION, seedId = activeSong.id)
         }
 
         showFirstTimeShuffleToast(newMode, context)
@@ -864,6 +883,7 @@ object PlayerConnection {
         queueManager.playNext(song)
         syncQueueState()
         syncToExoPlayer()
+        requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
         if (!isAlreadyQueued) {
             appContext?.let { Toast.makeText(it, "\"${song.title}\" will play next", Toast.LENGTH_SHORT).show() }
         }
@@ -890,6 +910,7 @@ object PlayerConnection {
         }
         syncQueueState()
         syncToExoPlayer()
+        requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
         if (!isAlreadyQueued) {
             appContext?.let { Toast.makeText(it, "Added to queue", Toast.LENGTH_SHORT).show() }
         }
@@ -902,6 +923,7 @@ object PlayerConnection {
         if (moved) {
             syncQueueState()
             syncToExoPlayer()
+            requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
         }
     }
 
@@ -934,6 +956,7 @@ object PlayerConnection {
             }
             syncQueueState()
             syncToExoPlayer()
+            requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
         }
     }
 
@@ -947,6 +970,7 @@ object PlayerConnection {
         if (moved) {
             syncQueueState()
             syncToExoPlayer()
+            requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
         }
         return moved
     }
@@ -968,6 +992,7 @@ object PlayerConnection {
         )
         syncQueueState()
         syncToExoPlayer()
+        requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
     }
 
     fun togglePlay() = withController { c ->
@@ -1034,7 +1059,7 @@ object PlayerConnection {
             queueManager.clearUpcoming()
             syncQueueState()
             syncToExoPlayer(isRadio = true)
-            checkAndExtendAutoplay(seedId = song.id, force = true)
+            requestRunwayRefill(RunwayTrigger.TRACK_CHANGE, seedId = song.id, force = true)
         } else {
             VelvetApp.autoplayPipeline.clearCandidatePoolCache(song.id)
             play(
@@ -1100,6 +1125,7 @@ object PlayerConnection {
         queueManager.clearUpcoming()
         syncQueueState()
         syncToExoPlayer()
+        requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
     }
 
     fun move(from: Int, to: Int) = withController { c ->
@@ -1113,6 +1139,10 @@ object PlayerConnection {
     }
 
     fun next() {
+        nextTapCoalescer.tap()
+    }
+
+    private fun performNextAdvance() {
         val outgoing = current ?: queueManager.current
         val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
         val outgoingDur = durationMs
@@ -1134,7 +1164,7 @@ object PlayerConnection {
             if (nextSong != null) {
                 syncQueueState()
                 syncToExoPlayer()
-                checkAndExtendAutoplay()
+                requestRunwayRefill(RunwayTrigger.MANUAL_NEXT)
                 return
             }
         }
@@ -1142,13 +1172,17 @@ object PlayerConnection {
         val seed = outgoing ?: queueManager.history.lastOrNull() ?: return
         val canAutoplay = VelvetApp.library.data.value.autoplay || isRadioActive
         if (canAutoplay) {
-            // Never null out queueManager.current while ExoPlayer & NowPlaying are still active on the seed song.
-            if (!isExtendingAutoplay) {
+            if (!isAutoplayLoading) {
                 appContext?.let {
                     runCatching { Toast.makeText(it, "Finding similar songs...", Toast.LENGTH_SHORT).show() }
                 }
             }
-            checkAndExtendAutoplay(seed.id, autoPlayNext = true, force = true)
+            requestRunwayRefill(
+                trigger = RunwayTrigger.MANUAL_NEXT,
+                seedId = seed.id,
+                autoPlayNext = true,
+                force = true,
+            )
         } else {
             appContext?.let {
                 runCatching { Toast.makeText(it, "No next track in queue", Toast.LENGTH_SHORT).show() }
@@ -1156,12 +1190,24 @@ object PlayerConnection {
         }
     }
 
+    fun onAutoplayToggledOn() {
+        requestRunwayRefill(RunwayTrigger.AUTOPLAY_TOGGLED)
+    }
+
+    fun onNetworkRegained() {
+        requestRunwayRefill(
+            trigger = RunwayTrigger.NETWORK_REGAINED,
+            force = queueManager.upNext.size < RunwayPolicy.URGENT_BELOW,
+        )
+    }
+
     private fun buildRefillSnapshot(): QueueRefillSnapshot {
         val libData = VelvetApp.library.data.value
         val st = queueManager.state
         val ver = queueManager.queueVersion
+        val activeSong = st.current?.song ?: current
         return QueueRefillSnapshot(
-            currentSong = current ?: st.current?.song,
+            currentSong = activeSong,
             upcomingSongs = st.upNext.map { it.song },
             userQueueSongs = st.userQueue.map { it.song },
             historySongs = st.history.map { it.song },
@@ -1174,7 +1220,7 @@ object PlayerConnection {
             radioSessionId = activeRadioSessionId,
             preferredLanguageIds = mapLanguagesToIso(libData.musicLanguages),
             seedSongsOverride = if (isRadioActive) {
-                val anchor = radioSeedSong ?: current ?: st.current?.song
+                val anchor = radioSeedSong ?: activeSong
                 if (anchor != null) VelvetApp.radioSessionManagerOrNull()?.evolvedSeedSongs(anchor).orEmpty() else emptyList()
             } else emptyList(),
         )
@@ -1231,44 +1277,80 @@ object PlayerConnection {
         )
     }
 
-    private fun tryInstantAutoplaySeed(seed: Song): Boolean {
-        val libData = VelvetApp.library.data.value
-        val activeSongs = listOfNotNull(current, queueManager.current) +
-            queueManager.upNext.map { it.song } +
-            queueManager.userQueue.map { it.song } +
-            queueManager.history
-        val cachedRelated = StreamResolver.peekRelated(seed.id).orEmpty()
-        val instantMatches = computeInstantAutoplayMatches(
+    /**
+     * Schedules off-main preparation of verified matches for [seed] in [RunwayController]
+     * so Main thread reads only precomputed RAM results.
+     */
+    private fun scheduleBackgroundSeedPrep(seed: Song) {
+        val runway = VelvetApp.runwayControllerOrNull() ?: return
+        val st = queueManager.state
+        val activeIds = buildSet {
+            add(seed.id)
+            st.current?.song?.id?.let(::add)
+            st.upNext.forEach { add(it.song.id) }
+            st.userQueue.forEach { add(it.song.id) }
+            st.history.forEach { add(it.song.id) }
+        }
+        val langIds = mapLanguagesToIso(VelvetApp.library.data.value.musicLanguages)
+        runway.prepareSeedInBackground(
             seed = seed,
-            libData = libData,
-            activeSongs = activeSongs,
-            featureRepository = VelvetApp.trackFeatureRepository,
+            libraryDataProvider = { VelvetApp.library.data.value },
+            excludedIdsProvider = { activeIds },
+            preferredLanguageIds = langIds,
             allowArtistHeavy = isArtistRadioActive,
-            cachedRelated = cachedRelated,
+            extraPoolProvider = { StreamResolver.peekRelated(seed.id).orEmpty() },
+        )
+    }
+
+    /**
+     * O(1) main-thread read of background-prepared seed matches. Never scans the library
+     * or parses recording identities synchronously on Main thread.
+     */
+    private fun takePreparedInstantSeed(seed: Song): Boolean {
+        val runway = VelvetApp.runwayControllerOrNull() ?: return false
+        val activeIds = buildSet {
+            current?.id?.let(::add)
+            queueManager.current?.id?.let(::add)
+            queueManager.upNext.forEach { add(it.song.id) }
+            queueManager.userQueue.forEach { add(it.song.id) }
+            queueManager.history.forEach { add(it.id) }
+        }
+        val prepared = runway.takePreparedInstant(
+            seedId = seed.id,
+            excludedIds = activeIds,
+            dismissedFilter = { DismissedTrackRegistry.isDismissed(it) },
             limit = 6,
-        ).filterNot { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) }
-        if (instantMatches.isEmpty()) return false
-        queueManager.appendAutoplay(instantMatches)
+        )
+        if (prepared.isEmpty()) {
+            scheduleBackgroundSeedPrep(seed)
+            return false
+        }
+        queueManager.appendAutoplay(prepared)
         return true
     }
 
-    fun checkAndExtendAutoplay(seedId: String? = null, autoPlayNext: Boolean = false, force: Boolean = false) {
-        val currentSong = current ?: queueManager.history.lastOrNull() ?: return
+    fun requestRunwayRefill(
+        trigger: RunwayTrigger,
+        seedId: String? = null,
+        autoPlayNext: Boolean = false,
+        force: Boolean = false,
+    ) {
+        val currentSong = current ?: queueManager.current ?: queueManager.history.lastOrNull() ?: return
         val targetSeed = if (seedId != null) {
             queueManager.upNext.find { it.song.id == seedId }?.song
                 ?: queueManager.userQueue.find { it.song.id == seedId }?.song
                 ?: queueManager.history.find { it.id == seedId }
                 ?: currentSong
         } else currentSong
+
         val isAutoplayEnabled = VelvetApp.library.data.value.autoplay || isRadioActive
         if (!isAutoplayEnabled) {
             isAutoplayLoading = false
             return
         }
 
-        // Millisecond instant seed path so Queue shows verified studio tracks immediately instead of waiting on network
         if (queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
-            if (tryInstantAutoplaySeed(targetSeed)) {
+            if (takePreparedInstantSeed(targetSeed)) {
                 syncQueueState()
                 syncToExoPlayer()
                 isAutoplayLoading = false
@@ -1278,8 +1360,9 @@ object PlayerConnection {
                     if (advanced != null) {
                         syncQueueState()
                         syncToExoPlayer()
-                        if (queueManager.upNext.size < 6) {
-                            checkAndExtendAutoplay(advanced.id, autoPlayNext = false, force = false)
+                        scheduleBackgroundSeedPrep(advanced)
+                        if (queueManager.upNext.size < RunwayPolicy.REFILL_BELOW) {
+                            requestRunwayRefill(trigger, seedId = advanced.id, autoPlayNext = false, force = false)
                         }
                         return
                     }
@@ -1287,180 +1370,122 @@ object PlayerConnection {
             }
         }
 
-        if (queueManager.upNext.size >= 6 && !autoPlayNext && !force) {
+        scheduleBackgroundSeedPrep(targetSeed)
+        if (queueManager.upNext.size >= RunwayPolicy.REFILL_BELOW && !autoPlayNext && !force) {
             isAutoplayLoading = false
             return
         }
-        if (isExtendingAutoplay && !force) return
 
-        val generation = ++currentAutoplayGeneration
-        val initialSnapshot = buildRefillSnapshot()
-        isExtendingAutoplay = true
+        val runway = VelvetApp.runwayControllerOrNull() ?: return
+        runway.startPeriodicTick(isPlayingProvider = { isPlaying }) {
+            requestRunwayRefill(RunwayTrigger.PERIODIC_TICK)
+        }
         isAutoplayLoading = queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()
-        autoplayJob?.cancel()
-        autoplayJob = CoroutineScope(Dispatchers.IO).launch {
-            try {
-                if (force) {
-                    VelvetApp.autoplayRefillCoordinator.resetForNewSeed(targetSeed.id)
-                }
-                val decision = withTimeoutOrNull(8_500L) {
-                    VelvetApp.autoplayRefillCoordinator.requestRefill(
-                        initialSnapshot = initialSnapshot,
-                        latestSnapshotProvider = { buildRefillSnapshot() },
-                        seedId = targetSeed.id,
-                        autoPlayNext = autoPlayNext,
-                        force = force,
-                        dismissedFilter = { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) },
-                    )
-                } ?: RefillDecision.SafeEmpty(
-                    requestId = "timeout-$generation",
-                    reason = "Queue refill hit 8.5s latency ceiling",
-                    status = com.velvet.app.recommendation.engine.RefillStatus.IDLE,
+
+        val job = runway.triggerRefill(
+            trigger = trigger,
+            snapshotProvider = { buildRefillSnapshot() },
+            libraryDataProvider = { VelvetApp.library.data.value },
+            seedId = targetSeed.id,
+            autoPlayNext = autoPlayNext,
+            force = force,
+            dismissedFilter = { DismissedTrackRegistry.isDismissed(it) },
+        ) { decision ->
+            handleRefillDecision(
+                decision = decision,
+                targetSeed = targetSeed,
+                seedId = seedId,
+                autoPlayNext = autoPlayNext,
+            )
+        }
+        if (job == null) {
+            isAutoplayLoading = false
+        }
+    }
+
+    private fun handleRefillDecision(
+        decision: RefillDecision,
+        targetSeed: Song,
+        seedId: String?,
+        autoPlayNext: Boolean,
+    ) {
+        val activeCurrentId = current?.id ?: queueManager.current?.id
+        if (seedId == null && activeCurrentId != null && activeCurrentId != targetSeed.id) {
+            isAutoplayLoading = false
+            return
+        }
+
+        val candidateSongs = when (decision) {
+            is RefillDecision.AppendSongs -> decision.songs
+            else -> emptyList()
+        }
+        val existingIds = buildSet {
+            current?.id?.let(::add)
+            queueManager.current?.id?.let(::add)
+            queueManager.upNext.forEach { add(it.song.id) }
+            queueManager.userQueue.forEach { add(it.song.id) }
+        }
+        val filtered = candidateSongs.filter {
+            it.id !in existingIds && !DismissedTrackRegistry.isDismissed(it)
+        }
+        if (filtered.isNotEmpty()) {
+            if (decision is RefillDecision.AppendSongs) {
+                VelvetApp.eventRecorderOrNull()?.registerAutoplayCandidates(
+                    requestId = decision.requestId,
+                    candidates = filtered,
+                    mode = decision.mode,
                 )
-
-                val needsDirectRescue = when (decision) {
-                    is RefillDecision.AppendSongs -> decision.songs.isEmpty()
-                    is RefillDecision.SafeEmpty -> true
-                    is RefillDecision.Skip -> decision.reason == "anchor_exhausted" || decision.reason == "stale_queue_version"
+            }
+            runwayBgScope.launch {
+                com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(filtered)
+            }
+            val shouldPlayNow = (autoPlayNext ||
+                (decision is RefillDecision.AppendSongs && decision.replaceUpcomingIfEmptyAndPlayNext)) &&
+                queueManager.upNext.isEmpty() &&
+                queueManager.userQueue.isEmpty()
+            if (shouldPlayNow) {
+                if (queueManager.current != null) {
+                    recordCurrentPlaybackEnd(endReason = null)
+                    queueManager.appendAutoplay(filtered)
+                    val advanced = queueManager.advance(manual = true)
+                    if (advanced == null) {
+                        queueManager.start(filtered, 0, false)
+                    }
+                } else {
+                    queueManager.start(filtered, 0, false)
                 }
-                var rescuedSongs: List<Song> = emptyList()
-                if (needsDirectRescue) {
-                    val relatedRaw = runCatching { StreamResolver.related(targetSeed.id, targetSeed) }
-                        .getOrDefault(emptyList())
-                    val fallbackSearch = if (relatedRaw.size < 4) {
-                        runCatching {
-                            val artistHint = targetSeed.artist.substringBefore(",").substringBefore("&").trim()
-                            val query = "$artistHint ${targetSeed.title}".trim()
-                            com.velvet.app.data.YouTubeMusicInnertube.searchSongs(query, limit = 15)
-                        }.getOrDefault(emptyList())
-                    } else emptyList()
-                    val poolToSeed = (relatedRaw + fallbackSearch).distinctBy { it.id }
-                    com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(poolToSeed)
-                    if (poolToSeed.isNotEmpty()) {
-                        val libData = VelvetApp.library.data.value
-                        val snap = buildRefillSnapshot()
-                        val exclIds = buildSet {
-                            snap.currentSong?.id?.let(::add)
-                            snap.upcomingSongs.forEach { add(it.id) }
-                            snap.userQueueSongs.forEach { add(it.id) }
-                            snap.historySongs.forEach { add(it.id) }
-                        }
-                        val exclRecIds = buildSet {
-                            val allActive = listOfNotNull(snap.currentSong) + snap.upcomingSongs + snap.userQueueSongs + snap.historySongs
-                            allActive.forEach {
-                                add(com.velvet.app.recommendation.identity.RecordingIdentityResolver.resolve(it).canonicalRecordingId)
-                                add(com.velvet.app.playback.SongIdentity.canonicalGroupId(it))
-                            }
-                        }
-                        val rankedRescue = com.velvet.app.recommendation.candidates.InstantTrackCatalog.matchSimilar(
-                            seed = targetSeed,
-                            extraPool = poolToSeed,
-                            excludedIds = exclIds,
-                            excludedRecIds = exclRecIds,
-                            preferredLanguageIds = mapLanguagesToIso(libData.musicLanguages),
-                            featureRepository = VelvetApp.trackFeatureRepository,
-                            allowArtistHeavy = isArtistRadioActive,
-                            limit = 10,
-                        ).filterNot { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) }
-                        rescuedSongs = rankedRescue.ifEmpty {
-                            poolToSeed.filter { cand ->
-                                cand.id != targetSeed.id &&
-                                    cand.id !in exclIds &&
-                                    (cand.durationSec == 0L || cand.durationSec >= 45L) &&
-                                    !com.velvet.app.playback.DismissedTrackRegistry.isDismissed(cand) &&
-                                    !com.velvet.app.recommendation.identity.RecordingIdentityResolver.isSameCompositionTitle(targetSeed, cand) &&
-                                    com.velvet.app.recommendation.identity.RecordingIdentityResolver.resolve(cand).releaseClassification.isVerifiedOriginalAudio
-                            }.take(10)
-                        }
-                    }
-                    if (rescuedSongs.isNotEmpty()) {
-                        VelvetApp.autoplayRefillCoordinator.resetForNewSeed(targetSeed.id)
-                    }
-                }
-
-                withContext(Dispatchers.Main) {
-                    if (!isActive || generation != currentAutoplayGeneration) return@withContext
-                    val activeCurrentId = current?.id ?: queueManager.current?.id
-                    if (seedId == null && activeCurrentId != null && activeCurrentId != targetSeed.id) {
-                        isAutoplayLoading = false
-                        return@withContext
-                    }
-
-                    val candidateSongs = when (decision) {
-                        is RefillDecision.AppendSongs -> decision.songs.ifEmpty { rescuedSongs }
-                        else -> rescuedSongs
-                    }
-                    val existingIds = buildSet {
-                        current?.id?.let(::add)
-                        queueManager.current?.id?.let(::add)
-                        queueManager.upNext.forEach { add(it.song.id) }
-                        queueManager.userQueue.forEach { add(it.song.id) }
-                    }
-                    val filtered = candidateSongs.filter {
-                        it.id !in existingIds && !com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it)
-                    }
-                    if (filtered.isNotEmpty()) {
-                        if (decision is RefillDecision.AppendSongs) {
-                            VelvetApp.eventRecorderOrNull()?.registerAutoplayCandidates(
-                                requestId = decision.requestId,
-                                candidates = filtered,
-                                mode = decision.mode,
-                            )
-                        }
-                        com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(filtered)
-                        val shouldPlayNow = (autoPlayNext ||
-                            (decision is RefillDecision.AppendSongs && decision.replaceUpcomingIfEmptyAndPlayNext)) &&
-                            queueManager.upNext.isEmpty() &&
-                            queueManager.userQueue.isEmpty()
-                        if (shouldPlayNow) {
-                            if (queueManager.current != null) {
-                                recordCurrentPlaybackEnd(endReason = null)
-                                queueManager.appendAutoplay(filtered)
-                                val advanced = queueManager.advance(manual = true)
-                                if (advanced == null) {
-                                    queueManager.start(filtered, 0, false)
-                                }
-                            } else {
-                                queueManager.start(filtered, 0, false)
-                            }
-                            syncQueueState()
-                            syncToExoPlayer()
-                        } else {
-                            queueManager.appendAutoplay(filtered)
-                            syncQueueState()
-                            syncToExoPlayer()
-                        }
-                    } else if (decision is RefillDecision.SafeEmpty) {
-                        com.velvet.app.diagnostics.DiagnosticsLogger.i(
-                            "Autoplay",
-                            "SafeEmpty(${decision.status}): ${decision.reason}",
-                        )
-                        if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
-                            appContext?.let {
-                                runCatching { Toast.makeText(it, "No similar tracks found for this song", Toast.LENGTH_SHORT).show() }
-                            }
-                        }
-                    } else if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
-                        appContext?.let {
-                            runCatching { Toast.makeText(it, "No similar tracks available right now", Toast.LENGTH_SHORT).show() }
-                        }
-                    }
-                    isAutoplayLoading = false
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (_: Exception) {
-            } finally {
-                if (generation == currentAutoplayGeneration) {
-                    isExtendingAutoplay = false
-                    CoroutineScope(Dispatchers.Main).launch {
-                        if (generation == currentAutoplayGeneration) {
-                            isAutoplayLoading = false
-                        }
-                    }
+                syncQueueState()
+                syncToExoPlayer()
+            } else {
+                queueManager.appendAutoplay(filtered)
+                syncQueueState()
+                syncToExoPlayer()
+            }
+        } else if (decision is RefillDecision.SafeEmpty) {
+            com.velvet.app.diagnostics.DiagnosticsLogger.i(
+                "Autoplay",
+                "SafeEmpty(${decision.status}): ${decision.reason}",
+            )
+            if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
+                appContext?.let {
+                    runCatching { Toast.makeText(it, "No similar tracks found for this song", Toast.LENGTH_SHORT).show() }
                 }
             }
+        } else if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
+            appContext?.let {
+                runCatching { Toast.makeText(it, "No similar tracks available right now", Toast.LENGTH_SHORT).show() }
+            }
         }
+        isAutoplayLoading = false
+    }
+
+    fun checkAndExtendAutoplay(seedId: String? = null, autoPlayNext: Boolean = false, force: Boolean = false) {
+        requestRunwayRefill(
+            trigger = if (force) RunwayTrigger.MANUAL_RETRY else RunwayTrigger.QUEUE_MUTATION,
+            seedId = seedId,
+            autoPlayNext = autoPlayNext,
+            force = force,
+        )
     }
 
     fun previous() {
@@ -1486,6 +1511,7 @@ object PlayerConnection {
                     )
                     syncQueueState()
                     syncToExoPlayer()
+                    requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
                 } else {
                     outgoing?.let {
                         VelvetApp.eventRecorderOrNull()?.onManualReplayCurrent(it, pos, dur, currentRepeatLabel())
@@ -1549,6 +1575,9 @@ object PlayerConnection {
         queueManager.setRepeatMode(targetMode)
         syncQueueState()
         syncToExoPlayer()
+        if (targetMode != RepeatMode.ONE) {
+            requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)
+        }
     }
 
     fun positionMs(): Long {

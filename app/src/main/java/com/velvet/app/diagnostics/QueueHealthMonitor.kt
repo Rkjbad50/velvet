@@ -38,6 +38,8 @@ data class QueueHealthSnapshot(
     val runwayState: String = RefillStatus.IDLE.name,
     val lastRefillAtMs: Long? = null,
     val lastRefillDurationMs: Long? = null,
+    val refillLatencyP50Ms: Long = 0L,
+    val refillLatencyP95Ms: Long = 0L,
     val lastRefillResult: String = "Not started",
     val rawPoolSize: Int = 0,
     val eligiblePoolSize: Int = 0,
@@ -204,6 +206,15 @@ object QueueHealthMonitor {
         )
     }
 
+    fun recordLatencyPercentiles(p50Ms: Long, p95Ms: Long) {
+        synchronized(lock) {
+            _state.value = _state.value.copy(
+                refillLatencyP50Ms = p50Ms,
+                refillLatencyP95Ms = p95Ms,
+            )
+        }
+    }
+
     fun formatPlainText(snapshot: QueueHealthSnapshot = _state.value): String {
         val tf = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
         val lastAt = snapshot.lastRefillAtMs?.let { tf.format(Date(it)) } ?: "Never"
@@ -213,7 +224,7 @@ object QueueHealthMonitor {
             appendLine("Ahead Count: ${snapshot.aheadCount} (userQueue=${snapshot.userQueueCount})")
             appendLine("Runway State: ${snapshot.runwayState}")
             appendLine("Last Refill Time: $lastAt")
-            appendLine("Last Refill Duration: ${snapshot.lastRefillDurationMs?.let { "${it}ms" } ?: "N/A"}")
+            appendLine("Last Refill Duration: ${snapshot.lastRefillDurationMs?.let { "${it}ms" } ?: "N/A"} (p50=${snapshot.refillLatencyP50Ms}ms, p95=${snapshot.refillLatencyP95Ms}ms)")
             appendLine("Last Refill Result: ${snapshot.lastRefillResult}")
             appendLine("Pool Size: raw=${snapshot.rawPoolSize}, eligible=${snapshot.eligiblePoolSize}, catalog=${snapshot.instantCatalogSize}")
             appendLine()

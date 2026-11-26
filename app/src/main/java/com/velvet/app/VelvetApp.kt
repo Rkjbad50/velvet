@@ -1,6 +1,13 @@
 package com.velvet.app
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.os.Handler
+import android.os.Looper
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
@@ -15,7 +22,9 @@ import com.velvet.app.data.isPureMusic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -107,6 +116,10 @@ class VelvetApp : Application(), ImageLoaderFactory {
         )
     }
 
+    val libraryIndex by lazy {
+        com.velvet.app.recommendation.candidates.LibraryIndex(trackFeatureRepository)
+    }
+
     val recommendationEngine: com.velvet.app.recommendation.engine.DefaultRecommendationEngine by lazy {
         // Fast native YT Music InnerTube first (~200-350ms), bounded NewPipe supplement only when sparse.
         val searchSongsProvider: suspend (String) -> List<com.velvet.app.data.Song> = { query ->
@@ -126,10 +139,7 @@ class VelvetApp : Application(), ImageLoaderFactory {
         }
         val sources = listOf(
             com.velvet.app.recommendation.candidates.InstantTrackCatalogCandidateSource(
-                extraSongsProvider = {
-                    val data = library.data.value
-                    (data.liked + data.recent + data.playlists.flatMap { it.songs }).distinctBy { it.id }
-                },
+                extraSongsProvider = { libraryIndex.snapshot.allVerifiedSongs },
                 featureRepository = trackFeatureRepository,
             ),
             com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource(
@@ -197,14 +207,39 @@ class VelvetApp : Application(), ImageLoaderFactory {
         com.velvet.app.recommendation.engine.AutoplayRefillCoordinator(
             engine = recommendationEngine,
             policy = com.velvet.app.recommendation.engine.RefillPolicy(
-                targetUpcomingBuffer = 10,
-                lowWatermarkTrigger = 6,
-                refillBatchSize = 10,
+                targetUpcomingBuffer = com.velvet.app.recommendation.engine.RunwayPolicy.TARGET_AHEAD,
+                lowWatermarkTrigger = com.velvet.app.recommendation.engine.RunwayPolicy.REFILL_BELOW,
+                refillBatchSize = com.velvet.app.recommendation.engine.RunwayPolicy.MAX_BATCH,
                 minCooldownMs = 300L,
             ),
+            featureRepository = trackFeatureRepository,
+            urgentFallbackProvider = { anchor, snap, excludedIds ->
+                val seedPool = (
+                    StreamResolver.peekRelated(anchor.id).orEmpty() +
+                        com.velvet.app.recommendation.candidates.InstantTrackCatalog.snapshot()
+                    ).distinctBy { it.id }
+                libraryIndex.findSimilarFromIndex(
+                    seed = anchor,
+                    excludedIds = excludedIds,
+                    excludedRecIds = excludedIds,
+                    preferredLanguageIds = snap.preferredLanguageIds,
+                    allowArtistHeavy = snap.isArtistRadioActive,
+                    extraPool = seedPool,
+                    limit = com.velvet.app.recommendation.engine.RunwayPolicy.MIN_BATCH,
+                )
+            },
         )
     }
 
+    val runwayController by lazy {
+        com.velvet.app.recommendation.engine.RunwayController(
+            coordinator = autoplayRefillCoordinator,
+            libraryIndex = libraryIndex,
+            featureRepository = trackFeatureRepository,
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -248,6 +283,45 @@ class VelvetApp : Application(), ImageLoaderFactory {
             library.data.map { it.dataSaver }.distinctUntilChanged().collect { StreamResolver.dataSaver = it }
         }
 
+        CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)).launch {
+            library.data.collect { data ->
+                libraryIndex.updateIncremental(data)
+            }
+        }
+
+        CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
+            library.data.map { it.autoplay }.distinctUntilChanged().drop(1).collect { enabled ->
+                if (enabled) {
+                    com.velvet.app.ui.PlayerConnection.onAutoplayToggledOn()
+                }
+            }
+        }
+
+        runCatching {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            if (cm != null) {
+                var lostSinceLastAvailable = false
+                val mainHandler = Handler(Looper.getMainLooper())
+                val req = NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build()
+                cm.registerNetworkCallback(req, object : ConnectivityManager.NetworkCallback() {
+                    override fun onLost(network: Network) {
+                        lostSinceLastAvailable = true
+                    }
+
+                    override fun onAvailable(network: Network) {
+                        if (lostSinceLastAvailable) {
+                            lostSinceLastAvailable = false
+                            mainHandler.post {
+                                com.velvet.app.ui.PlayerConnection.onNetworkRegained()
+                            }
+                        }
+                    }
+                })
+            }
+        }
+
         if (library.data.value.autoUpdateCheck) {
             com.velvet.app.data.UpdateCheckJobService.schedule(this)
         }
@@ -286,8 +360,12 @@ class VelvetApp : Application(), ImageLoaderFactory {
             get() = instance.radioSessionManager
         val homeRecommendationComposer: com.velvet.app.recommendation.home.HomeRecommendationComposer
             get() = instance.homeRecommendationComposer
+        val libraryIndex: com.velvet.app.recommendation.candidates.LibraryIndex
+            get() = instance.libraryIndex
         val autoplayRefillCoordinator: com.velvet.app.recommendation.engine.AutoplayRefillCoordinator
             get() = instance.autoplayRefillCoordinator
+        val runwayController: com.velvet.app.recommendation.engine.RunwayController
+            get() = instance.runwayController
 
         fun eventRecorderOrNull(): com.velvet.app.recommendation.events.EventRecorder? =
             if (::instance.isInitialized) runCatching { instance.eventRecorder }.getOrNull() else null
@@ -297,6 +375,9 @@ class VelvetApp : Application(), ImageLoaderFactory {
 
         fun radioSessionManagerOrNull(): com.velvet.app.recommendation.modes.RadioSessionManager? =
             if (::instance.isInitialized) runCatching { instance.radioSessionManager }.getOrNull() else null
+
+        fun runwayControllerOrNull(): com.velvet.app.recommendation.engine.RunwayController? =
+            if (::instance.isInitialized) runCatching { instance.runwayController }.getOrNull() else null
 
         fun homeRecommendationComposerOrNull(): com.velvet.app.recommendation.home.HomeRecommendationComposer? =
             if (::instance.isInitialized) runCatching { instance.homeRecommendationComposer }.getOrNull() else null
