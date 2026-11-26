@@ -166,8 +166,13 @@ class Phase3StateCheckpointsTest {
             assertEquals(45_000L, PlaybackStateManager.loadFromDirectory(tempDir)?.positionMs)
 
             isPlaying.set(false)
-            delay(150L)
-            assertEquals("Periodic checkpoints should idle while paused", countWhilePlaying, persistCount.get())
+            // Allow any already-dispatched tick on IO to settle before observing paused baseline
+            delay(100L)
+            val pausedBaseline = persistCount.get()
+            posMs.set(99_000L)
+            delay(200L)
+            assertEquals("Periodic checkpoints should idle while paused", pausedBaseline, persistCount.get())
+            assertEquals(45_000L, PlaybackStateManager.loadFromDirectory(tempDir)?.positionMs)
             scheduler.stop()
         } finally {
             scope.cancel()
