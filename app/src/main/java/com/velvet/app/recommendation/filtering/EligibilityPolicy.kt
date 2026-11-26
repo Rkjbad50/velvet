@@ -1,15 +1,20 @@
 package com.velvet.app.recommendation.filtering
 
 import com.velvet.app.playback.SongIdentity
+import com.velvet.app.playback.normalizePrimaryArtist
 import com.velvet.app.recommendation.features.GenreOntology
 import com.velvet.app.recommendation.model.CandidateTrack
 import com.velvet.app.recommendation.model.EligibilityDecision
 import com.velvet.app.recommendation.model.MusicType
+import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationRequest
 import com.velvet.app.recommendation.model.ReleaseAudioClass
 import com.velvet.app.recommendation.model.TrackFeatureRecord
 import com.velvet.app.recommendation.model.VersionKind
 import com.velvet.app.recommendation.profile.UserTasteSnapshot
+import com.velvet.app.recommendation.vibe.ArtistLanguageMap
+import com.velvet.app.recommendation.vibe.SessionVibe
+import java.util.Locale
 
 interface EligibilityPolicy {
     fun evaluate(
@@ -134,12 +139,71 @@ class DefaultEligibilityPolicy : EligibilityPolicy {
             }
         }
 
-        // 6. Explicit requested language hard gate (high-confidence conflicts only; unknown stays uncertain, not vetoed)
-        if (request.requestedLanguageIds.isNotEmpty() && !request.allowExplicitUserIntentOverride && features != null) {
-            if (features.languageConfidence >= 0.70 && features.languageIds.isNotEmpty()) {
-                val overlaps = features.languageIds.keys.any { it in request.requestedLanguageIds }
-                if (!overlaps) {
-                    reasons.add("explicit_language_mismatch")
+        // 6. SessionVibe & Language hard gate + raised genre/type compatibility gate (C3)
+        val isContinuationMode = request.mode in CONTINUATION_MODES
+        val isSelectedArtistInArtistRadio = request.mode == RecommendationMode.ARTIST_RADIO &&
+            !request.selectedArtistId.isNullOrBlank() &&
+            normalizePrimaryArtist(song.artist).let { candNorm ->
+                val selNorm = normalizePrimaryArtist(request.selectedArtistId)
+                candNorm.isNotBlank() && selNorm.isNotBlank() &&
+                    (candNorm == selNorm || candNorm.contains(selNorm) || selNorm.contains(candNorm))
+            }
+
+        val vibe = request.sessionVibe
+        val effectiveAllowedLangs: Set<String> = when {
+            vibe != null && isContinuationMode -> vibe.effectiveAllowedLanguages
+            request.requestedLanguageIds.isNotEmpty() -> request.requestedLanguageIds.mapTo(linkedSetOf()) { it.lowercase(Locale.ROOT) }
+            else -> emptySet()
+        }
+        val mixedAllowed = vibe?.allowMixedLanguages == true && isContinuationMode
+
+        val seedType = seedFeatures?.musicTypes?.maxByOrNull { it.value }?.key ?: MusicType.UNKNOWN
+        val candType = topMusicType ?: MusicType.UNKNOWN
+        val typeCompat = GenreOntology.musicTypeCompatibility(seedType, candType)
+        val vibeGenres = when {
+            vibe != null && isContinuationMode && vibe.genreWeights.isNotEmpty() -> vibe.genreWeights.keys
+            seedFeatures != null -> seedFeatures.genreIds.keys
+            else -> emptySet()
+        }
+        val candGenres = features?.genreIds?.keys.orEmpty()
+        val hasBothGenres = vibeGenres.isNotEmpty() && candGenres.isNotEmpty()
+        val maxGenreSim = if (hasBothGenres) SessionVibe.maxGenreSimilarity(vibeGenres, candGenres) else 1.0
+
+        if (!request.allowExplicitUserIntentOverride && features != null) {
+            val candArtistLang = ArtistLanguageMap.inferArtistLanguage(song.artist, request.artistLanguageMap)
+            val (candLangs, candLangConf) = SessionVibe.resolveSongLanguage(song, features, request.artistLanguageMap)
+
+            if (effectiveAllowedLangs.isNotEmpty()) {
+                when {
+                    candArtistLang != null && candArtistLang.second >= 0.72 && candArtistLang.first !in effectiveAllowedLangs -> {
+                        reasons.add("artist_language_mismatch")
+                    }
+                    candLangs.isNotEmpty() && candLangConf >= 0.65 && candLangs.none { it in effectiveAllowedLangs } -> {
+                        reasons.add(if (vibe != null && isContinuationMode) "vibe_language_mismatch" else "explicit_language_mismatch")
+                    }
+                    candLangs.isEmpty() && isContinuationMode && !mixedAllowed && !isSelectedArtistInArtistRadio -> {
+                        val hasTrustedLineage = candidate.sourceIds.any { it in SessionVibe.TRUSTED_LINEAGE_SOURCES }
+                        val minGenreOk = !hasBothGenres || maxGenreSim >= SessionVibe.MIN_UNKNOWN_LANG_GENRE_SIMILARITY
+                        val moodClash = seedFeatures != null &&
+                            ((seedFeatures.moodIds.containsKey("sad_melancholic") && features.moodIds.containsKey("party_celebratory")) ||
+                                (seedFeatures.moodIds.containsKey("party_celebratory") && features.moodIds.containsKey("sad_melancholic")) ||
+                                (seedFeatures.moodIds.containsKey("devotional_spiritual") && features.moodIds.containsKey("party_celebratory")))
+                        val highCompatibility = minGenreOk &&
+                            typeCompat >= SessionVibe.MIN_UNKNOWN_LANG_TYPE_COMPATIBILITY &&
+                            !moodClash
+                        if (!hasTrustedLineage || !highCompatibility) {
+                            reasons.add("unknown_language_low_vibe_or_untrusted_lineage")
+                        }
+                    }
+                }
+            }
+
+            if (isContinuationMode && !isSelectedArtistInArtistRadio && seedFeatures != null) {
+                if (seedType != MusicType.UNKNOWN && candType != MusicType.UNKNOWN && typeCompat < SessionVibe.MIN_TYPE_COMPATIBILITY) {
+                    reasons.add("music_type_genre_mismatch")
+                }
+                if (hasBothGenres && maxGenreSim < SessionVibe.MIN_GENRE_SIMILARITY) {
+                    reasons.add("genre_compatibility_below_threshold")
                 }
             }
         }
@@ -148,6 +212,16 @@ class DefaultEligibilityPolicy : EligibilityPolicy {
             eligible = reasons.isEmpty(),
             reasons = reasons,
             confidence = releaseCls.confidence,
+        )
+    }
+
+    companion object {
+        private val CONTINUATION_MODES = setOf(
+            RecommendationMode.AUTOPLAY_REFILL,
+            RecommendationMode.SIMILAR_SONGS,
+            RecommendationMode.SONG_RADIO,
+            RecommendationMode.ARTIST_RADIO,
+            RecommendationMode.NEXT_SONG,
         )
     }
 }

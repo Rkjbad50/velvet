@@ -261,7 +261,7 @@ class CandidatePoolBuilder(
         val seedKey = req.primarySeed?.let { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
             ?: req.seedRecordingIds.joinToString(",")
         return "$seedKey|${req.mode.name}|${req.locale.orEmpty()}|${req.selectedArtistId.orEmpty()}|" +
-            "${req.requestedLanguageIds.sorted().joinToString(",")}|v${TrackFeatureRecord.CURRENT_FEATURE_SCHEMA_VERSION}"
+            "${req.requestedLanguageIds.sorted().joinToString(",")}|${req.allowMixedLanguages}|${req.artistLanguageMap.size}|v${TrackFeatureRecord.CURRENT_FEATURE_SCHEMA_VERSION}"
     }
 
     private fun computeSourceQuotas(mode: RecommendationMode): Map<String, Int> = when (mode) {

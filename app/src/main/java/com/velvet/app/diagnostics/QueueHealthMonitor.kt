@@ -190,7 +190,7 @@ object QueueHealthMonitor {
             val k = key.lowercase()
             when {
                 "lang" in k -> language += count
-                "genre" in k || "devotional" in k || "spoken" in k || "podcast" in k -> genre += count
+                "genre" in k || "type" in k || "devotional" in k || "spoken" in k || "podcast" in k -> genre += count
                 "dup" in k || "excluded" in k || "fatigued" in k -> duplicate += count
                 "omv" in k || "lyric" in k || "live" in k || "unverified" in k ||
                     "alternate" in k || "visualizer" in k || "rejected_" in k -> notStudio += count

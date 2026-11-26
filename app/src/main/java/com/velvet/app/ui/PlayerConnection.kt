@@ -1244,6 +1244,8 @@ object PlayerConnection {
             radioSeedSong = radioSeedSong,
             radioSessionId = activeRadioSessionId,
             preferredLanguageIds = mapLanguagesToIso(libData.musicLanguages),
+            allowMixedLanguages = libData.allowMixedLanguagesInAutoplay,
+            artistLanguageMap = libData.artistLanguageMap,
             seedSongsOverride = if (isRadioActive) {
                 val anchor = radioSeedSong ?: activeSong
                 if (anchor != null) VelvetApp.radioSessionManagerOrNull()?.evolvedSeedSongs(anchor).orEmpty() else emptyList()
@@ -1299,6 +1301,8 @@ object PlayerConnection {
             featureRepository = featureRepository,
             allowArtistHeavy = allowArtistHeavy,
             limit = limit,
+            allowMixedLanguages = libData.allowMixedLanguagesInAutoplay,
+            artistLanguageMap = libData.artistLanguageMap,
         )
     }
 
@@ -1316,7 +1320,8 @@ object PlayerConnection {
             st.userQueue.forEach { add(it.song.id) }
             st.history.forEach { add(it.song.id) }
         }
-        val langIds = mapLanguagesToIso(VelvetApp.library.data.value.musicLanguages)
+        val libData = VelvetApp.library.data.value
+        val langIds = mapLanguagesToIso(libData.musicLanguages)
         runway.prepareSeedInBackground(
             seed = seed,
             libraryDataProvider = { VelvetApp.library.data.value },
@@ -1324,6 +1329,8 @@ object PlayerConnection {
             preferredLanguageIds = langIds,
             allowArtistHeavy = isArtistRadioActive,
             extraPoolProvider = { StreamResolver.peekRelated(seed.id).orEmpty() },
+            allowMixedLanguages = libData.allowMixedLanguagesInAutoplay,
+            artistLanguageMap = libData.artistLanguageMap,
         )
     }
 

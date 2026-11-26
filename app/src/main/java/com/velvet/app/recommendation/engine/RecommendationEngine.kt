@@ -36,6 +36,8 @@ interface RecommendationEngine {
         requestedLanguageIds: Set<String> = emptySet(),
         allowExplicitUserIntentOverride: Boolean = false,
         seedSongsOverride: List<Song> = emptyList(),
+        allowMixedLanguages: Boolean = false,
+        artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> = emptyMap(),
     ): RecommendationResult
 
     fun invalidateCandidateCache(seedId: String? = null)
@@ -65,10 +67,16 @@ class DefaultRecommendationEngine(
 
         val primarySeed = request.primarySeed
         val seedFeatures = buildWeightedSeedFeatures(request, primarySeed)
+        val vibe = request.sessionVibe ?: com.velvet.app.recommendation.vibe.SessionVibe.fromRequest(
+            request = request,
+            featureRepository = featureRepository,
+            artistLanguageMap = request.artistLanguageMap,
+        )
+        val effectiveRequest = if (request.sessionVibe != null) request else request.copy(sessionVibe = vibe)
 
         val rejectionCounts = linkedMapOf<String, Int>()
         val eligible = pool.candidates.filter { cand ->
-            val decision = eligibilityPolicy.evaluate(cand, request, profile, seedFeatures)
+            val decision = eligibilityPolicy.evaluate(cand, effectiveRequest, profile, seedFeatures)
             if (!decision.eligible) {
                 decision.reasons.forEach { reason ->
                     rejectionCounts[reason] = (rejectionCounts[reason] ?: 0) + 1
@@ -77,21 +85,21 @@ class DefaultRecommendationEngine(
             decision.eligible
         }
 
-        val dedupedResult = duplicateFilter.filter(eligible, request)
-        val ranked = ranker.rank(dedupedResult.kept, request, profile, seedFeatures)
+        val dedupedResult = duplicateFilter.filter(eligible, effectiveRequest)
+        val ranked = ranker.rank(dedupedResult.kept, effectiveRequest, profile, seedFeatures)
 
         val chronologicalLeadIn = (
-            request.recentSongs.takeLast(4) +
+            effectiveRequest.recentSongs.takeLast(4) +
                 listOfNotNull(primarySeed) +
-                request.userQueueSongs +
-                request.queueSongs
+                effectiveRequest.userQueueSongs +
+                effectiveRequest.queueSongs
             ).distinctBy { it.id }.takeLast(6)
         val recentFeatures = chronologicalLeadIn
             .map { featureRepository.getCachedOrExtract(it) }
         val seamAnchorFeatures = recentFeatures.lastOrNull() ?: seedFeatures
         val sequenced = sequenceOptimizer.optimize(
             ranked = ranked,
-            request = request,
+            request = effectiveRequest,
             recentHistoryFeatures = recentFeatures,
             seedFeatures = seamAnchorFeatures,
         )
@@ -148,6 +156,8 @@ class DefaultRecommendationEngine(
         requestedLanguageIds: Set<String>,
         allowExplicitUserIntentOverride: Boolean,
         seedSongsOverride: List<Song>,
+        allowMixedLanguages: Boolean,
+        artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile>,
     ): RecommendationResult {
         val snapshotRecs = contextSnapshot.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
         val snapshotIds = contextSnapshot.map { it.id }
@@ -170,6 +180,8 @@ class DefaultRecommendationEngine(
             limit = limit,
             allowExplicitUserIntentOverride = allowExplicitUserIntentOverride,
             requireVerifiedOriginalAudio = true,
+            allowMixedLanguages = allowMixedLanguages,
+            artistLanguageMap = artistLanguageMap,
             createdAtMillis = clock(),
         )
         return recommend(request)

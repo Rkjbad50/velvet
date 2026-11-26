@@ -16,6 +16,9 @@ import java.util.Locale
  */
 class MetadataFeatureExtractor(
     private val clock: () -> Long = System::currentTimeMillis,
+    private val artistLanguageLookup: ((String) -> Pair<String, Double>?)? = {
+        com.velvet.app.recommendation.vibe.ArtistLanguageMap.inferArtistLanguage(it)
+    },
 ) {
     fun extract(
         song: Song,
@@ -165,6 +168,10 @@ class MetadataFeatureExtractor(
             genreIds[GenreOntology.BOLLYWOOD] = maxOf(genreIds[GenreOntology.BOLLYWOOD] ?: 0.0, 0.75)
             subgenreIds["bollywood_90s"] = 0.70
         }
+        if (TWO_THOUSANDS_ARTISTS.any { artistNorm.contains(it) } && GenreOntology.DEVOTIONAL !in genreIds) {
+            genreIds[GenreOntology.BOLLYWOOD] = maxOf(genreIds[GenreOntology.BOLLYWOOD] ?: 0.0, 0.72)
+            subgenreIds["bollywood_2000s"] = 0.70
+        }
         if (MODERN_ROMANTIC_ARTISTS.any { artistNorm.contains(it) } && GenreOntology.DEVOTIONAL !in genreIds) {
             genreIds[GenreOntology.BOLLYWOOD] = maxOf(genreIds[GenreOntology.BOLLYWOOD] ?: 0.0, 0.68)
             subgenreIds["bollywood_romantic"] = 0.65
@@ -263,30 +270,45 @@ class MetadataFeatureExtractor(
                 languageConf = 0.80
                 provenance["language"] = "explicit_token"
             }
-            "Deva" in scriptIds -> {
-                // Devanagari can be Hindi, Sanskrit, or Marathi — keep multi-label and moderate confidence
-                languageIds["hi"] = 0.55
-                languageIds["sa"] = if (MusicType.MANTRA in musicTypes || MusicType.CHALISA in musicTypes) 0.40 else 0.20
-                languageConf = 0.55
-                provenance["language"] = "devanagari_script_ambiguous"
-            }
-            GenreOntology.PUNJABI in genreIds -> {
-                languageIds["pa"] = 0.65
-                languageConf = 0.65
-                provenance["language"] = "punjabi_genre_prior"
-            }
-            GenreOntology.BOLLYWOOD in genreIds || GenreOntology.DEVOTIONAL in genreIds -> {
-                languageIds["hi"] = 0.55
-                languageConf = 0.55
-                provenance["language"] = "bollywood_or_devotional_prior"
-            }
-            GenreOntology.WESTERN_POP in genreIds -> {
-                languageIds["en"] = 0.60
-                languageConf = 0.60
-                provenance["language"] = "western_pop_prior"
+            containsToken(titleAlbumText, listOf("english")) -> {
+                languageIds["en"] = 0.85
+                languageConf = 0.85
+                provenance["language"] = "explicit_token"
             }
             else -> {
-                provenance["language"] = "unknown"
+                val artistLang = artistLanguageLookup?.invoke(song.artist)
+                when {
+                    artistLang != null -> {
+                        languageIds[artistLang.first] = artistLang.second
+                        languageConf = artistLang.second
+                        provenance["language"] = "artist_language_map"
+                    }
+                    "Deva" in scriptIds -> {
+                        // Devanagari can be Hindi, Sanskrit, or Marathi — keep multi-label and moderate confidence
+                        languageIds["hi"] = 0.55
+                        languageIds["sa"] = if (MusicType.MANTRA in musicTypes || MusicType.CHALISA in musicTypes) 0.40 else 0.20
+                        languageConf = 0.55
+                        provenance["language"] = "devanagari_script_ambiguous"
+                    }
+                    GenreOntology.PUNJABI in genreIds -> {
+                        languageIds["pa"] = 0.65
+                        languageConf = 0.65
+                        provenance["language"] = "punjabi_genre_prior"
+                    }
+                    GenreOntology.BOLLYWOOD in genreIds || GenreOntology.DEVOTIONAL in genreIds -> {
+                        languageIds["hi"] = 0.55
+                        languageConf = 0.55
+                        provenance["language"] = "bollywood_or_devotional_prior"
+                    }
+                    GenreOntology.WESTERN_POP in genreIds -> {
+                        languageIds["en"] = 0.60
+                        languageConf = 0.60
+                        provenance["language"] = "western_pop_prior"
+                    }
+                    else -> {
+                        provenance["language"] = "unknown"
+                    }
+                }
             }
         }
 

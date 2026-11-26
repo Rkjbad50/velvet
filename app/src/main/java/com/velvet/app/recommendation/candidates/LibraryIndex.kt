@@ -118,6 +118,9 @@ class LibraryIndex(
         allowArtistHeavy: Boolean = false,
         extraPool: List<Song> = emptyList(),
         limit: Int = 15,
+        allowMixedLanguages: Boolean = false,
+        artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> =
+            com.velvet.app.recommendation.vibe.ArtistLanguageRegistry.snapshot(),
     ): List<Song> {
         val currentSnap = snapshot
         val seedFeat = featureRepository.getCachedOrExtract(seed)
@@ -134,7 +137,11 @@ class LibraryIndex(
         seedFeat.genreIds.keys.forEach { addBucket(currentSnap.byGenre[it]) }
         val seedArtistNorm = normalizePrimaryArtist(seed.artist)
         if (seedArtistNorm.isNotBlank()) addBucket(currentSnap.byArtist[seedArtistNorm])
-        val targetLangs = preferredLanguageIds.ifEmpty { seedFeat.languageIds.keys }
+        val targetLangs = if (allowMixedLanguages && preferredLanguageIds.isNotEmpty()) {
+            preferredLanguageIds
+        } else {
+            seedFeat.languageIds.keys.ifEmpty { preferredLanguageIds }
+        }
         targetLangs.forEach { addBucket(currentSnap.byLanguage[it]) }
         if (bucketPool.size < 40) {
             addBucket(currentSnap.allVerifiedSongs.take(80))
@@ -149,6 +156,8 @@ class LibraryIndex(
             featureRepository = featureRepository,
             allowArtistHeavy = allowArtistHeavy,
             limit = limit,
+            allowMixedLanguages = allowMixedLanguages,
+            artistLanguageMap = artistLanguageMap,
         )
     }
 

@@ -9,7 +9,12 @@ import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 import com.velvet.app.recommendation.model.CandidateSourceStatus
 import com.velvet.app.recommendation.model.MusicType
 import com.velvet.app.recommendation.model.RecommendationMode
+import com.velvet.app.recommendation.vibe.ArtistLanguageMap
+import com.velvet.app.recommendation.vibe.ArtistLanguageProfile
+import com.velvet.app.recommendation.vibe.ArtistLanguageRegistry
+import com.velvet.app.recommendation.vibe.SessionVibe
 import kotlinx.coroutines.CancellationException
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -54,10 +59,20 @@ object InstantTrackCatalog {
         featureRepository: TrackFeatureRepository = TrackFeatureRepository(),
         allowArtistHeavy: Boolean = false,
         limit: Int = 10,
+        allowMixedLanguages: Boolean = false,
+        artistLanguageMap: Map<String, ArtistLanguageProfile> = ArtistLanguageRegistry.snapshot(),
     ): List<Song> {
         val combined = (pool.values + extraPool).distinctBy { it.id }
         if (combined.isEmpty() || limit <= 0) return emptyList()
 
+        val vibe = SessionVibe.fromSessionTracks(
+            tracks = listOf(seed),
+            featureRepository = featureRepository,
+            artistLanguageMap = artistLanguageMap,
+            requestedLanguageIds = preferredLanguageIds,
+            allowMixedLanguages = allowMixedLanguages,
+        )
+        val allowedLangs = vibe.effectiveAllowedLanguages
         val seedFeat = featureRepository.getCachedOrExtract(seed)
         val seedTopType = seedFeat.musicTypes.maxByOrNull { it.value }?.key
         val seedIsDevotional = GenreOntology.DEVOTIONAL in seedFeat.genreIds ||
@@ -93,7 +108,20 @@ object InstantTrackCatalog {
                 if ((feat.moodIds["party_celebratory"] ?: 0.0) >= 0.5) return@mapNotNull null
             }
 
+            // Hard C3 language gate on local/instant path too
+            val candArtistLang = ArtistLanguageMap.inferArtistLanguage(cand.artist, artistLanguageMap)
+            val (candLangs, candLangConf) = SessionVibe.resolveSongLanguage(cand, feat, artistLanguageMap)
+            if (allowedLangs.isNotEmpty()) {
+                if (candArtistLang != null && candArtistLang.second >= 0.72 && candArtistLang.first !in allowedLangs) {
+                    return@mapNotNull null
+                }
+                if (candLangs.isNotEmpty() && candLangConf >= 0.65 && candLangs.none { it in allowedLangs }) {
+                    return@mapNotNull null
+                }
+            }
+
             // Score: Genre first, then Category/Type, Mood, Language, Era, Tier
+            val hasBothGenres = seedFeat.genreIds.isNotEmpty() && feat.genreIds.isNotEmpty()
             val genreSim = seedFeat.genreIds.keys.maxOfOrNull { sg ->
                 feat.genreIds.keys.maxOfOrNull { cg -> GenreOntology.similarity(sg, cg) } ?: 0.0
             } ?: 0.0
@@ -102,26 +130,28 @@ object InstantTrackCatalog {
                 seedTopType != MusicType.UNKNOWN && candType != MusicType.UNKNOWN
             ) {
                 GenreOntology.musicTypeCompatibility(seedTopType, candType)
-            } else 0.30
+            } else 0.50
             val moodOverlap = seedFeat.moodIds.keys.intersect(feat.moodIds.keys).size.toDouble() /
                 maxOf(1, maxOf(seedFeat.moodIds.size, feat.moodIds.size))
-            val langBonus = when {
-                seedFeat.languageIds.keys.any { it in feat.languageIds } -> 0.16
-                preferredLanguageIds.isNotEmpty() && feat.languageIds.keys.any { it in preferredLanguageIds } -> 0.12
-                else -> 0.0
-            }
             val candArtistNorm = normalizePrimaryArtist(cand.artist)
             val sameArtist = allowArtistHeavy && seedArtistNorm.isNotBlank() && candArtistNorm == seedArtistNorm
-            val sharedLanguage = seedFeat.languageIds.keys.any { it in feat.languageIds }
-            val hasMinimumAffinity = when {
-                seedIsDevotional -> true
-                sameArtist -> true
-                seedFeat.languageIds.isNotEmpty() ->
-                    genreSim >= 0.25 || sharedLanguage || (moodOverlap >= 0.25 && typeSim >= 0.5)
-                else ->
-                    genreSim >= 0.25 || subgenreBonus > 0.0 || moodOverlap >= 0.2 || typeSim >= 0.65
+
+            // Raised C3 genre/type gate (no broad shared-language loophole)
+            if (!seedIsDevotional && !sameArtist) {
+                if (typeSim < SessionVibe.MIN_TYPE_COMPATIBILITY) return@mapNotNull null
+                if (hasBothGenres && genreSim < SessionVibe.MIN_GENRE_SIMILARITY) return@mapNotNull null
             }
-            if (!hasMinimumAffinity) return@mapNotNull null
+
+            val langBonus = when {
+                candLangs.any { it in allowedLangs } -> 0.16
+                seedFeat.languageIds.keys.any { it in feat.languageIds } -> 0.14
+                preferredLanguageIds.any { it in feat.languageIds } -> 0.10
+                else -> 0.0
+            }
+            val sharedLangUnknownBlocked = allowedLangs.isNotEmpty() && !allowMixedLanguages && candLangs.isEmpty() &&
+                !(hasBothGenres && genreSim >= SessionVibe.MIN_UNKNOWN_LANG_GENRE_SIMILARITY && typeSim >= SessionVibe.MIN_UNKNOWN_LANG_TYPE_COMPATIBILITY) &&
+                !(moodOverlap >= 0.25 && typeSim >= 0.65) && !sameArtist
+            if (sharedLangUnknownBlocked) return@mapNotNull null
 
             val eraBonus = if (seedFeat.eraBucket != null && seedFeat.eraBucket == feat.eraBucket) 0.08 else 0.0
             val artistBonus = if (sameArtist) 0.35 else 0.0
@@ -173,6 +203,8 @@ class InstantTrackCatalogCandidateSource(
                 featureRepository = featureRepository,
                 allowArtistHeavy = request.request.mode == RecommendationMode.ARTIST_RADIO,
                 limit = request.maxCandidates,
+                allowMixedLanguages = request.request.allowMixedLanguages,
+                artistLanguageMap = request.request.artistLanguageMap,
             )
             val wrapped = matches.mapIndexed { idx, song ->
                 RawTrackCandidate(

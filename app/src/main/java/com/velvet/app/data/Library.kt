@@ -77,6 +77,8 @@ data class LibraryData(
     val persistedShuffleMode: String = "OFF",
     val shuffleToastShownOnce: Boolean = false,
     val smartShuffleToastShownOnce: Boolean = false,
+    val allowMixedLanguagesInAutoplay: Boolean = false,
+    val artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> = emptyMap(),
 ) {
     companion object {
         const val CURRENT_VERSION = 2
@@ -244,6 +246,7 @@ class Library(dir: File) {
         _data.map { d -> d.downloads.mapTo(HashSet()) { it.id } }.stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     init {
+        com.velvet.app.recommendation.vibe.ArtistLanguageRegistry.setDeviceMap(_data.value.artistLanguageMap)
         // one writer: rapid changes (EQ sliders, likes) collapse into a single write of the latest state
         scope.launch {
             for (signal in saveSignals) {
@@ -577,6 +580,16 @@ class Library(dir: File) {
 
     fun setMusicLanguages(languages: List<String>) = update { it.copy(musicLanguages = languages) }
 
+    fun setAllowMixedLanguagesInAutoplay(enabled: Boolean) = update {
+        it.copy(allowMixedLanguagesInAutoplay = enabled)
+    }
+
+    fun updateArtistLanguageMap(profiles: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile>) {
+        if (profiles == _data.value.artistLanguageMap) return
+        com.velvet.app.recommendation.vibe.ArtistLanguageRegistry.setDeviceMap(profiles)
+        update { it.copy(artistLanguageMap = profiles) }
+    }
+
     fun completeOnboarding(
         languages: List<String>,
         artists: List<ArtistRef>,
@@ -683,7 +696,8 @@ class Library(dir: File) {
     // ---------------------------------------------------------------- storage
 
     private fun update(change: (LibraryData) -> LibraryData) {
-        _data.updateAndGet(change)
+        val next = _data.updateAndGet(change)
+        com.velvet.app.recommendation.vibe.ArtistLanguageRegistry.setDeviceMap(next.artistLanguageMap)
         saveSignals.trySend(Unit)
     }
 

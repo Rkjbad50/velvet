@@ -88,6 +88,11 @@ fun mergeLibraries(current: LibraryData, incoming: LibraryData): LibraryData {
         persistedShuffleMode = if (incoming.persistedShuffleMode != "OFF") incoming.persistedShuffleMode else current.persistedShuffleMode,
         shuffleToastShownOnce = current.shuffleToastShownOnce || incoming.shuffleToastShownOnce,
         smartShuffleToastShownOnce = current.smartShuffleToastShownOnce || incoming.smartShuffleToastShownOnce,
+        allowMixedLanguagesInAutoplay = incoming.allowMixedLanguagesInAutoplay,
+        artistLanguageMap = com.velvet.app.recommendation.vibe.ArtistLanguageMap.mergeMaps(
+            current.artistLanguageMap,
+            incoming.artistLanguageMap,
+        ),
     )
 }
 

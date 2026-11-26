@@ -226,6 +226,8 @@ class VelvetApp : Application(), ImageLoaderFactory {
                     allowArtistHeavy = snap.isArtistRadioActive,
                     extraPool = seedPool,
                     limit = com.velvet.app.recommendation.engine.RunwayPolicy.MIN_BATCH,
+                    allowMixedLanguages = snap.allowMixedLanguages,
+                    artistLanguageMap = snap.artistLanguageMap,
                 )
             },
         )
@@ -283,9 +285,18 @@ class VelvetApp : Application(), ImageLoaderFactory {
             library.data.map { it.dataSaver }.distinctUntilChanged().collect { StreamResolver.dataSaver = it }
         }
 
+        var lastLangLearningDigest = ""
         CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)).launch {
             library.data.collect { data ->
                 libraryIndex.updateIncremental(data)
+                val langDigest = "${data.liked.size}:${data.playlists.sumOf { it.resolvedSongs.size }}:${data.listenEvents.size}"
+                if (langDigest != lastLangLearningDigest) {
+                    lastLangLearningDigest = langDigest
+                    val updatedMap = com.velvet.app.recommendation.vibe.ArtistLanguageMap.learnFromLibrary(data)
+                    if (updatedMap != data.artistLanguageMap) {
+                        library.updateArtistLanguageMap(updatedMap)
+                    }
+                }
             }
         }
 

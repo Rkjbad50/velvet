@@ -175,6 +175,9 @@ class RunwayController(
         preferredLanguageIds: Set<String>,
         allowArtistHeavy: Boolean,
         extraPoolProvider: () -> List<Song> = { emptyList() },
+        allowMixedLanguages: Boolean = false,
+        artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> =
+            com.velvet.app.recommendation.vibe.ArtistLanguageRegistry.snapshot(),
     ) {
         scope.launch {
             libraryIndex.updateIncremental(libraryDataProvider())
@@ -186,6 +189,8 @@ class RunwayController(
                 allowArtistHeavy = allowArtistHeavy,
                 extraPool = extraPoolProvider(),
                 limit = RunwayPolicy.MAX_BATCH,
+                allowMixedLanguages = allowMixedLanguages,
+                artistLanguageMap = artistLanguageMap,
             )
             if (matches.isNotEmpty()) {
                 preparedSeedCache[seed.id] = matches

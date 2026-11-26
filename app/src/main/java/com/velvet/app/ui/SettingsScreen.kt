@@ -328,6 +328,12 @@ fun SettingsScreen(onBack: () -> Unit) {
         SettingsGroup("Playback") {
             ToggleRow("Autoplay", "Keep playing similar songs when your queue ends", data.autoplay, library::setAutoplay)
             ToggleRow(
+                "Mix languages in Autoplay",
+                "Allow Autoplay to mix across all listening languages instead of locking to the current session vibe",
+                data.allowMixedLanguagesInAutoplay,
+                library::setAllowMixedLanguagesInAutoplay,
+            )
+            ToggleRow(
                 "Queue drag to move {BETA}",
                 "Allow long-pressing and dragging songs to reorder the playback queue",
                 data.queueDragReorderEnabled,

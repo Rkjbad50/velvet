@@ -59,6 +59,8 @@ data class QueueRefillSnapshot(
     val preferredLanguageIds: Set<String> = emptySet(),
     val excludedProviderIds: Set<String> = emptySet(),
     val seedSongsOverride: List<Song> = emptyList(),
+    val allowMixedLanguages: Boolean = false,
+    val artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> = emptyMap(),
 )
 
 sealed class RefillDecision {
@@ -285,6 +287,8 @@ class AutoplayRefillCoordinator(
                         } else null,
                         requestedLanguageIds = initialSnapshot.preferredLanguageIds,
                         seedSongsOverride = initialSnapshot.seedSongsOverride,
+                        allowMixedLanguages = initialSnapshot.allowMixedLanguages,
+                        artistLanguageMap = initialSnapshot.artistLanguageMap,
                     )
                 }
             } catch (_: TimeoutCancellationException) {
@@ -355,6 +359,14 @@ class AutoplayRefillCoordinator(
                 } catch (_: Exception) {
                     emptyList()
                 }
+                val vibe = com.velvet.app.recommendation.vibe.SessionVibe.fromSessionTracks(
+                    tracks = listOf(anchor) + latest.historySongs.takeLast(4).reversed(),
+                    featureRepository = featureRepository,
+                    artistLanguageMap = latest.artistLanguageMap,
+                    requestedLanguageIds = latest.preferredLanguageIds,
+                    allowMixedLanguages = latest.allowMixedLanguages,
+                )
+                val allowedVibeLangs = vibe.effectiveAllowedLanguages
                 acceptedSongs = fallbackRaw
                     .asSequence()
                     .distinctBy { it.id }
@@ -371,12 +383,21 @@ class AutoplayRefillCoordinator(
                             return@filter false
                         }
                         if (RecordingIdentityResolver.isSameCompositionTitle(anchor, song)) return@filter false
-                        if (latest.preferredLanguageIds.isNotEmpty()) {
+                        if (allowedVibeLangs.isNotEmpty()) {
                             val feat = featureRepository.getCachedOrExtract(song)
-                            if (feat.languageConfidence >= 0.70 &&
-                                feat.languageIds.isNotEmpty() &&
-                                feat.languageIds.keys.none { it in latest.preferredLanguageIds }
-                            ) {
+                            val (candLangs, candLangConf) = com.velvet.app.recommendation.vibe.SessionVibe.resolveSongLanguage(
+                                song = song,
+                                features = feat,
+                                artistLanguageMap = latest.artistLanguageMap,
+                            )
+                            val artistLang = com.velvet.app.recommendation.vibe.ArtistLanguageMap.inferArtistLanguage(
+                                song.artist,
+                                latest.artistLanguageMap,
+                            )
+                            if (artistLang != null && artistLang.second >= 0.72 && artistLang.first !in allowedVibeLangs) {
+                                return@filter false
+                            }
+                            if (candLangs.isNotEmpty() && candLangConf >= 0.65 && candLangs.none { it in allowedVibeLangs }) {
                                 return@filter false
                             }
                         }
