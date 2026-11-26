@@ -318,28 +318,27 @@ class Phase2RunwayAndOffMainTest {
         val featureRepo = TrackFeatureRepository()
         val libraryIndex = LibraryIndex(featureRepo)
         val seed = studioSong("seed_1", "Tum Hi Ho", "Arijit Singh")
-        val englishForeign = Song(
-            id = "foreign_en",
-            title = "English Anthem Tonight",
-            artist = "Drake",
+        val foreignTa = Song(
+            id = "foreign_ta",
+            title = "தமிழ் Kollywood Hit",
+            artist = "Anirudh Ravichander",
             durationSec = 200L,
-            album = "Foreign Hits",
+            album = "Kollywood Chartbusters",
             isTopicRelease = true,
-            rawUploaderName = "Drake - Topic",
+            rawUploaderName = "Anirudh Ravichander - Topic",
             preferredMusicSource = true,
             isYouTubeMusicCatalog = true,
             hasSquareArtwork = true,
         )
         val unverifiedOmv = Song(
             id = "omv_bad",
-            title = "Official Music Video Track",
+            title = "Tum Hi Ho (Official Music Video)",
             artist = "Arijit Singh",
             durationSec = 210L,
             isTopicRelease = false,
-            isOfficialMusicVideo = true,
-            rawUploaderName = "SomeChannel",
+            rawUploaderName = "T-Series",
         )
-        val libData = LibraryData(liked = catalog + englishForeign + unverifiedOmv)
+        val libData = LibraryData(liked = catalog + foreignTa + unverifiedOmv)
         libraryIndex.updateIncremental(libData)
 
         // Failing engine simulates complete network loss while upNext < URGENT_BELOW (6)
@@ -373,7 +372,7 @@ class Phase2RunwayAndOffMainTest {
             featureRepository = featureRepo,
             urgentFallbackProvider = { anchor, snap, excludedIds ->
                 // Return unverified OMV & foreign track alongside valid Hindi tracks to prove strict filtering
-                listOf(unverifiedOmv, englishForeign) + libraryIndex.findSimilarFromIndex(
+                listOf(unverifiedOmv, foreignTa) + libraryIndex.findSimilarFromIndex(
                     seed = anchor,
                     excludedIds = excludedIds,
                     excludedRecIds = excludedIds,
@@ -410,7 +409,7 @@ class Phase2RunwayAndOffMainTest {
         val songs = (urgentDecision as RefillDecision.AppendSongs).songs
         assertTrue("Expected fallback songs >= 10, got ${songs.size}", songs.size >= 10)
         assertTrue("OMV track must be strictly rejected", songs.none { it.id == unverifiedOmv.id })
-        assertTrue("Foreign high-confidence track must be rejected for hi lock", songs.none { it.id == englishForeign.id })
+        assertTrue("Foreign high-confidence track must be rejected for hi lock", songs.none { it.id == foreignTa.id })
     }
 
     @Test
