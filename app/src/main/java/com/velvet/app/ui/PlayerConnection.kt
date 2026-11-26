@@ -1303,7 +1303,7 @@ object PlayerConnection {
                 if (force) {
                     VelvetApp.autoplayRefillCoordinator.resetForNewSeed(targetSeed.id)
                 }
-                val decision = withTimeoutOrNull(4_500L) {
+                val decision = withTimeoutOrNull(8_500L) {
                     VelvetApp.autoplayRefillCoordinator.requestRefill(
                         initialSnapshot = initialSnapshot,
                         latestSnapshotProvider = { buildRefillSnapshot() },
@@ -1314,7 +1314,7 @@ object PlayerConnection {
                     )
                 } ?: RefillDecision.SafeEmpty(
                     requestId = "timeout-$generation",
-                    reason = "Queue refill hit 4.5s latency ceiling",
+                    reason = "Queue refill hit 8.5s latency ceiling",
                     status = com.velvet.app.recommendation.engine.RefillStatus.IDLE,
                 )
 

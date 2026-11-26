@@ -95,10 +95,12 @@ class Phase7EngineAndQueueTest {
     }
 
     @Test
-    fun coordinatorDiscardsStaleRefillOnConcurrentQueueVersionMutation() = runBlocking {
+    fun coordinatorRevalidatesAndPreservesUserQueueWithoutStaleDiscardOnConcurrentMutation() = runBlocking {
         val seed = topicSong("s1", "Tum Hi Ho", "Arijit Singh")
+        val manualSong = topicSong("manual_1", "Pehla Nasha", "Udit Narayan")
         val validRec = topicSong("rec1", "Agar Tum Saath Ho", "Alka Yagnik")
-        val engine = buildEngine(listOf(validRec), relatedDelayMs = 200L)
+        // Engine returns both validRec and a duplicate of the concurrently added manualSong
+        val engine = buildEngine(listOf(manualSong, validRec), relatedDelayMs = 200L)
         val coordinator = AutoplayRefillCoordinator(engine)
 
         val queueManager = QueueManager()
@@ -118,15 +120,17 @@ class Phase7EngineAndQueueTest {
             coordinator.requestRefill(initial, latestSnapshotProvider = ::snapshot)
         }
         delay(35L)
-        // Mutate QueueManager mid-flight (user queues a manual song)
-        queueManager.playNext(topicSong("manual_1", "Pehla Nasha", "Udit Narayan"))
+        // Mutate QueueManager mid-flight (user queues a manual song -> queueVersion bumps)
+        queueManager.playNext(manualSong)
 
         val decision = deferred.await()
-        assertTrue(decision is RefillDecision.Skip)
-        assertEquals("stale_queue_version", (decision as RefillDecision.Skip).reason)
-        // Only the manual playNext song should sit in userQueue; stale autoplay must not corrupt it
-        assertTrue(queueManager.upNext.isEmpty())
+        assertTrue("Valid refill must NOT be discarded on queueVersion change, got $decision", decision is RefillDecision.AppendSongs)
+        val appended = (decision as RefillDecision.AppendSongs).songs
+        assertEquals("Commit-time revalidation must exclude concurrently added manual_1 and keep valid rec1", listOf("rec1"), appended.map { it.id })
+        assertEquals(RefillStatus.IDLE, coordinator.currentState().status)
+        queueManager.appendAutoplay(appended)
         assertEquals(listOf("manual_1"), queueManager.userQueue.map { it.song.id })
+        assertEquals(listOf("rec1"), queueManager.upNext.map { it.song.id })
     }
 
     @Test

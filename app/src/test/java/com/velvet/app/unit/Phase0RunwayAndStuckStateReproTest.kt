@@ -179,7 +179,7 @@ class Phase0RunwayAndStuckStateReproTest {
             studioSong("remote_$i", "Khamoshiyan Track $i", artists[(i + 2) % artists.size], album = "Film Vol $i")
         }
 
-        val engine = buildEngine(remoteCatalog, relatedDelayMs = 240L)
+        val engine = buildEngine(remoteCatalog, relatedDelayMs = 150L)
         val coordinator = AutoplayRefillCoordinator(
             engine = engine,
             policy = RefillPolicy(targetUpcomingBuffer = 10, lowWatermarkTrigger = 6, refillBatchSize = 10, minCooldownMs = 0L),
@@ -190,7 +190,7 @@ class Phase0RunwayAndStuckStateReproTest {
         var queueDrained = false
         coroutineScope {
             var activeRefillJob: kotlinx.coroutines.Job? = null
-            for (step in 1..9) {
+            for (step in 1..11) {
                 val adv = qm.advance(manual = true)
                 if (adv == null) {
                     queueDrained = true
@@ -205,7 +205,7 @@ class Phase0RunwayAndStuckStateReproTest {
                         }
                     }
                 }
-                delay(35L)
+                delay(70L)
             }
             activeRefillJob?.join()
         }
@@ -386,5 +386,61 @@ class Phase0RunwayAndStuckStateReproTest {
         assertEquals(20, QueueHealthMonitor.state.value.recentDecisions.size)
         assertTrue(text.contains("seed=Track 25"))
         assertFalse("Oldest decision beyond 20 must evict", text.lines().any { it.trimEnd().endsWith("seed=Track 1") })
+    }
+
+    @Test
+    fun watchdogCancelsHungRefillAndResetsStatusFromInFlight() = runBlocking {
+        var now = 90_000_000L
+        val clock = { now }
+        val seed = studioSong("w_seed", "Kesariya", "Arijit Singh")
+        val catalog = listOf(studioSong("w_rec", "Tum Hi Ho", "Arijit Singh"))
+        var simulateHang = true
+        val engine = DefaultRecommendationEngine(
+            candidatePoolBuilder = CandidatePoolBuilder(
+                sources = listOf(
+                    SeedRelatedCandidateSource(
+                        relatedProvider = {
+                            if (simulateHang) delay(600L)
+                            catalog
+                        },
+                        clock = clock,
+                    ),
+                ),
+                clock = clock,
+            ),
+            userProfileRepository = DefaultUserProfileRepository(
+                eventRepository = RecommendationEventRepository(backend = InMemoryEventBackend()),
+                libraryDataProvider = { LibraryData() },
+                clock = clock,
+            ),
+            clock = clock,
+        )
+        val coordinator = AutoplayRefillCoordinator(
+            engine = engine,
+            policy = RefillPolicy(minCooldownMs = 0L),
+            clock = clock,
+            watchdogTimeoutMs = 90L,
+        )
+        val snap = QueueRefillSnapshot(
+            currentSong = seed,
+            upcomingSongs = emptyList(),
+            queueVersion = 1L,
+            isAutoplayEnabled = true,
+        )
+        val timedOutDecision = coordinator.requestRefill(snap, { snap }, force = false)
+        assertTrue(timedOutDecision is RefillDecision.SafeEmpty)
+        assertEquals("watchdog_timeout", (timedOutDecision as RefillDecision.SafeEmpty).reason)
+        assertNotEquals(
+            "Watchdog timeout must NEVER leave coordinator IN_FLIGHT",
+            RefillStatus.IN_FLIGHT,
+            coordinator.currentState().status,
+        )
+
+        // Same coordinator recovers cleanly on next non-forced refill without getting stuck IN_FLIGHT
+        simulateHang = false
+        now += 10L
+        val recoveredDecision = coordinator.requestRefill(snap, { snap }, force = false)
+        assertTrue("Expected recovered AppendSongs, got $recoveredDecision", recoveredDecision is RefillDecision.AppendSongs)
+        assertEquals(RefillStatus.IDLE, coordinator.currentState().status)
     }
 }

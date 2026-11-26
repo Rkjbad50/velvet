@@ -2,12 +2,17 @@ package com.velvet.app.recommendation.engine
 
 import com.velvet.app.data.Song
 import com.velvet.app.playback.RepeatMode
+import com.velvet.app.playback.SongIdentity
 import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 enum class RefillStatus {
     IDLE,
@@ -84,6 +89,7 @@ class AutoplayRefillCoordinator(
     private val engine: RecommendationEngine,
     private val policy: RefillPolicy = RefillPolicy(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val watchdogTimeoutMs: Long = 8_000L,
 ) {
     private val stateMutex = Mutex()
     private var state = RefillState()
@@ -235,126 +241,151 @@ class AutoplayRefillCoordinator(
             nextGen
         }
 
-        val neededCount = if (force) {
-            policy.refillBatchSize
-        } else {
-            (policy.targetUpcomingBuffer - initialSnapshot.upcomingSongs.size).coerceIn(4, policy.refillBatchSize)
-        }
+        return try {
+            val neededCount = if (force) {
+                policy.refillBatchSize
+            } else {
+                (policy.targetUpcomingBuffer - initialSnapshot.upcomingSongs.size).coerceIn(4, policy.refillBatchSize)
+            }
 
-        val contextPool = (
-            initialSnapshot.historySongs +
-                listOfNotNull(initialSnapshot.currentSong) +
-                initialSnapshot.userQueueSongs +
-                initialSnapshot.upcomingSongs
-            ).distinctBy { it.id }
+            val contextPool = (
+                initialSnapshot.historySongs +
+                    listOfNotNull(initialSnapshot.currentSong) +
+                    initialSnapshot.userQueueSongs +
+                    initialSnapshot.upcomingSongs
+                ).distinctBy { it.id }
 
-        val result = try {
-            engine.nextSimilar(
-                seed = anchor,
-                contextSnapshot = contextPool,
-                mode = mode,
-                limit = neededCount,
-                radioSessionId = initialSnapshot.radioSessionId,
-                excludedProviderIds = initialSnapshot.excludedProviderIds,
-                queueSongs = initialSnapshot.upcomingSongs,
-                userQueueSongs = initialSnapshot.userQueueSongs,
-                recentSongs = initialSnapshot.historySongs.takeLast(8),
-                selectedArtistId = if (mode == RecommendationMode.ARTIST_RADIO) {
-                    (initialSnapshot.radioSeedSong ?: anchor).artist
-                } else null,
-                requestedLanguageIds = initialSnapshot.preferredLanguageIds,
-                seedSongsOverride = initialSnapshot.seedSongsOverride,
+            val result = try {
+                withTimeout(watchdogTimeoutMs) {
+                    engine.nextSimilar(
+                        seed = anchor,
+                        contextSnapshot = contextPool,
+                        mode = mode,
+                        limit = neededCount,
+                        radioSessionId = initialSnapshot.radioSessionId,
+                        excludedProviderIds = initialSnapshot.excludedProviderIds,
+                        queueSongs = initialSnapshot.upcomingSongs,
+                        userQueueSongs = initialSnapshot.userQueueSongs,
+                        recentSongs = initialSnapshot.historySongs.takeLast(8),
+                        selectedArtistId = if (mode == RecommendationMode.ARTIST_RADIO) {
+                            (initialSnapshot.radioSeedSong ?: anchor).artist
+                        } else null,
+                        requestedLanguageIds = initialSnapshot.preferredLanguageIds,
+                        seedSongsOverride = initialSnapshot.seedSongsOverride,
+                    )
+                }
+            } catch (_: TimeoutCancellationException) {
+                stateMutex.withLock {
+                    if (state.activeGeneration == generation) {
+                        val failures = state.consecutiveFailures + 1
+                        state = state.copy(
+                            status = RefillStatus.COOLDOWN,
+                            consecutiveFailures = failures,
+                            backoffUntilMillis = clock() + policy.minCooldownMs,
+                        )
+                    }
+                }
+                return RefillDecision.SafeEmpty("", "watchdog_timeout", RefillStatus.COOLDOWN)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                stateMutex.withLock {
+                    if (state.activeGeneration == generation) {
+                        val failures = state.consecutiveFailures + 1
+                        state = state.copy(
+                            status = RefillStatus.COOLDOWN,
+                            consecutiveFailures = failures,
+                            backoffUntilMillis = clock() + policy.failureBackoffMs,
+                        )
+                    }
+                }
+                return RefillDecision.SafeEmpty("", "engine_error", RefillStatus.COOLDOWN)
+            }
+
+            val latest = latestSnapshotProvider()
+            val staleReason = validatePostFlightState(
+                latest = latest,
+                expectedAnchorId = anchor.id,
+                generation = generation,
+                force = force,
             )
-        } catch (e: CancellationException) {
-            stateMutex.withLock {
-                if (state.activeGeneration == generation && state.status == RefillStatus.IN_FLIGHT) {
-                    state = state.copy(status = RefillStatus.IDLE)
+            if (staleReason != null) {
+                return RefillDecision.Skip(staleReason)
+            }
+
+            // Commit-time identity revalidation against the LATEST live queue snapshot
+            val alreadyInQueueIds = buildSet {
+                val activeSongs = listOfNotNull(latest.currentSong) +
+                    latest.upcomingSongs +
+                    latest.userQueueSongs +
+                    latest.historySongs
+                for (s in activeSongs) {
+                    add(s.id)
+                    add(RecordingIdentityResolver.resolve(s).canonicalRecordingId)
+                    add(SongIdentity.canonicalGroupId(s))
                 }
             }
-            throw e
-        } catch (_: Exception) {
+
+            val acceptedSongs = result.candidates
+                .map { it.song }
+                .filterNot { song ->
+                    dismissedFilter(song) ||
+                        song.id in latest.excludedProviderIds ||
+                        song.id in alreadyInQueueIds ||
+                        RecordingIdentityResolver.resolve(song).canonicalRecordingId in alreadyInQueueIds ||
+                        SongIdentity.canonicalGroupId(song) in alreadyInQueueIds
+                }
+
             stateMutex.withLock {
-                if (state.activeGeneration == generation) {
-                    val failures = state.consecutiveFailures + 1
+                if (state.activeGeneration != generation) {
+                    return@withLock RefillDecision.Skip("superseded_generation")
+                }
+                val now = clock()
+                if (acceptedSongs.isEmpty()) {
+                    val emptyStreak = if (state.lastAnchorId == anchor.id) state.emptyStreakForCurrentAnchor + 1 else 1
+                    val newStatus = if (emptyStreak >= policy.maxEmptyRefillsPerAnchor) {
+                        RefillStatus.EXHAUSTED
+                    } else {
+                        RefillStatus.COOLDOWN
+                    }
                     state = state.copy(
-                        status = RefillStatus.COOLDOWN,
-                        consecutiveFailures = failures,
-                        backoffUntilMillis = clock() + policy.failureBackoffMs,
+                        status = newStatus,
+                        consecutiveFailures = 0,
+                        emptyStreakForCurrentAnchor = emptyStreak,
+                        backoffUntilMillis = now + policy.minCooldownMs,
+                    )
+                    RefillDecision.SafeEmpty(result.requestId, "no_eligible_verified_studio_audio", newStatus)
+                } else {
+                    state = state.copy(
+                        status = RefillStatus.IDLE,
+                        lastSuccessAtMillis = now,
+                        consecutiveFailures = 0,
+                        emptyStreakForCurrentAnchor = 0,
+                        backoffUntilMillis = 0L,
+                    )
+                    RefillDecision.AppendSongs(
+                        requestId = result.requestId,
+                        mode = mode,
+                        songs = acceptedSongs,
+                        result = result,
+                        replaceUpcomingIfEmptyAndPlayNext = autoPlayNext &&
+                            latest.upcomingSongs.isEmpty() &&
+                            latest.userQueueSongs.isEmpty(),
                     )
                 }
             }
-            return RefillDecision.SafeEmpty("", "engine_error", RefillStatus.COOLDOWN)
-        }
-
-        val latest = latestSnapshotProvider()
-        val staleReason = validatePostFlightState(
-            initial = initialSnapshot,
-            latest = latest,
-            expectedAnchorId = anchor.id,
-            generation = generation,
-            force = force,
-        )
-        if (staleReason != null) {
-            return RefillDecision.Skip(staleReason)
-        }
-
-        val alreadyInQueueIds = (
-            listOfNotNull(latest.currentSong) +
-                latest.upcomingSongs +
-                latest.userQueueSongs +
-                latest.historySongs.takeLast(10)
-            ).map { RecordingIdentityResolver.resolve(it).canonicalRecordingId }.toSet()
-
-        val acceptedSongs = result.candidates
-            .map { it.song }
-            .filterNot { song ->
-                dismissedFilter(song) ||
-                    song.id in latest.excludedProviderIds ||
-                    RecordingIdentityResolver.resolve(song).canonicalRecordingId in alreadyInQueueIds
-            }
-
-        return stateMutex.withLock {
-            if (state.activeGeneration != generation) {
-                return@withLock RefillDecision.Skip("superseded_generation")
-            }
-            val now = clock()
-            if (acceptedSongs.isEmpty()) {
-                val emptyStreak = if (state.lastAnchorId == anchor.id) state.emptyStreakForCurrentAnchor + 1 else 1
-                val newStatus = if (emptyStreak >= policy.maxEmptyRefillsPerAnchor) {
-                    RefillStatus.EXHAUSTED
-                } else {
-                    RefillStatus.COOLDOWN
+        } finally {
+            withContext(NonCancellable) {
+                stateMutex.withLock {
+                    if (state.activeGeneration == generation && state.status == RefillStatus.IN_FLIGHT) {
+                        state = state.copy(status = RefillStatus.IDLE)
+                    }
                 }
-                state = state.copy(
-                    status = newStatus,
-                    consecutiveFailures = 0,
-                    emptyStreakForCurrentAnchor = emptyStreak,
-                    backoffUntilMillis = now + policy.minCooldownMs,
-                )
-                RefillDecision.SafeEmpty(result.requestId, "no_eligible_verified_studio_audio", newStatus)
-            } else {
-                state = state.copy(
-                    status = RefillStatus.IDLE,
-                    lastSuccessAtMillis = now,
-                    consecutiveFailures = 0,
-                    emptyStreakForCurrentAnchor = 0,
-                    backoffUntilMillis = 0L,
-                )
-                RefillDecision.AppendSongs(
-                    requestId = result.requestId,
-                    mode = mode,
-                    songs = acceptedSongs,
-                    result = result,
-                    replaceUpcomingIfEmptyAndPlayNext = autoPlayNext &&
-                        latest.upcomingSongs.isEmpty() &&
-                        latest.userQueueSongs.isEmpty(),
-                )
             }
         }
     }
 
     private suspend fun validatePostFlightState(
-        initial: QueueRefillSnapshot,
         latest: QueueRefillSnapshot,
         expectedAnchorId: String,
         generation: Long,
@@ -364,10 +395,14 @@ class AutoplayRefillCoordinator(
         if (currentGen != generation) return "superseded_generation"
         if (!latest.isAutoplayEnabled && !latest.isRadioActive) return "autoplay_disabled_during_fetch"
         if (latest.repeatMode == RepeatMode.ONE && !force) return "repeat_one_enabled_during_fetch"
-        if (latest.queueVersion != initial.queueVersion) return "stale_queue_version"
-        val currentOrLastId = latest.currentSong?.id ?: latest.historySongs.lastOrNull()?.id
-        if (currentOrLastId != expectedAnchorId && latest.radioSeedSong?.id != expectedAnchorId) {
-            return "active_seed_changed"
+        val anchorStillInSession =
+            latest.currentSong?.id == expectedAnchorId ||
+                latest.radioSeedSong?.id == expectedAnchorId ||
+                latest.historySongs.any { it.id == expectedAnchorId } ||
+                latest.upcomingSongs.any { it.id == expectedAnchorId } ||
+                latest.userQueueSongs.any { it.id == expectedAnchorId }
+        if (!force && !anchorStillInSession) {
+            return "session_replaced"
         }
         return null
     }
