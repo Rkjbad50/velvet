@@ -78,6 +78,15 @@ class PlaybackService : MediaSessionService() {
     private val healingLadder = PlaybackHealingLadder()
     private var transientRetryJob: Job? = null
     private var playbackGeneration: Long = 0L
+    private val serviceCheckpointScheduler = PlaybackCheckpointScheduler(
+        scope = scope,
+        debounceMs = 300L,
+        periodicIntervalMs = 15_000L,
+        mainDispatcher = Dispatchers.Main.immediate,
+        ioDispatcher = Dispatchers.IO,
+        snapshotProvider = { buildCurrentPersistedStateOrNull() },
+        onPersist = { state -> PlaybackStateManager.saveToDirectory(filesDir, state) },
+    )
 
     /** Bumped whenever the queue is replaced. */
     private var queueGeneration = 0
@@ -138,12 +147,14 @@ class PlaybackService : MediaSessionService() {
             .setCallback(callback)
             .setSessionActivity(openApp)
             .build()
+        serviceCheckpointScheduler.startPeriodic { ::exo.isInitialized && exo.isPlaying }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        serviceCheckpointScheduler.stop()
         persistCurrentState()
         exo.pause()
         exo.stop()
@@ -153,6 +164,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        serviceCheckpointScheduler.stop()
         persistCurrentState()
         transientRetryJob?.cancel()
         transientRetryJob = null
@@ -169,21 +181,29 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    private fun persistCurrentState() {
-        if (!::exo.isInitialized) return
-        val currentSong = exo.currentMediaItem?.toSong() ?: return
-        PlaybackStateManager.save(
-            context = this,
+    private fun buildCurrentPersistedStateOrNull(): PersistedPlaybackState? {
+        if (!::exo.isInitialized) return null
+        val currentSong = exo.currentMediaItem?.toSong() ?: return null
+        return PersistedPlaybackState(
             song = currentSong,
             positionMs = exo.currentPosition.coerceAtLeast(0L),
             durationMs = exo.duration.coerceAtLeast(0L),
-            upNext = com.velvet.app.ui.PlayerConnection.upNext.map { it.song },
-            userQueue = com.velvet.app.ui.PlayerConnection.userQueue.map { it.song },
-            history = com.velvet.app.ui.PlayerConnection.history.map { it.song },
-            playlistId = com.velvet.app.ui.PlayerConnection.currentPlaylistId,
-            isRadio = com.velvet.app.ui.PlayerConnection.isRadioActive,
-            shuffleMode = com.velvet.app.ui.PlayerConnection.shuffleMode,
+            upNext = PlayerConnection.upNext.map { it.song },
+            userQueue = PlayerConnection.userQueue.map { it.song },
+            history = PlayerConnection.history.map { it.song },
+            sourceList = PlayerConnection.queueManager.sourceList,
+            playlistId = PlayerConnection.currentPlaylistId,
+            isRadio = PlayerConnection.isRadioActive,
+            isArtistRadio = PlayerConnection.isArtistRadioActive,
+            radioSeedSong = PlayerConnection.radioSeedSong,
+            shuffleMode = PlayerConnection.queueManager.shuffleMode,
+            repeatMode = PlayerConnection.queueManager.repeatMode,
         )
+    }
+
+    private fun persistCurrentState() {
+        val snap = buildCurrentPersistedStateOrNull() ?: return
+        PlaybackStateManager.saveToDirectory(filesDir, snap)
     }
 
     /** Effects and external equalizers follow the player's real audio session. */
@@ -376,6 +396,7 @@ class PlaybackService : MediaSessionService() {
             prefetchNext()
             exo.volume = 1.0f
             updateLikeButton()
+            serviceCheckpointScheduler.scheduleDebounced()
         }
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {}
@@ -391,6 +412,8 @@ class PlaybackService : MediaSessionService() {
                 exo.currentMediaItem?.mediaId?.let { id ->
                     healingLadder.onPlaybackSuccess(id)
                 }
+            } else {
+                serviceCheckpointScheduler.flushNow()
             }
         }
 

@@ -278,6 +278,10 @@ class QueueManager(initialState: QueueState = QueueState()) {
         update { Companion.clear(it) }
     }
 
+    fun restore(saved: PersistedPlaybackState, allowSmartShuffle: Boolean = false) {
+        update { Companion.restore(it, saved, allowSmartShuffle) }
+    }
+
     // Properties for UI and test callers
     val current: Song? get() = state.current?.song
     val history: List<Song> get() = state.history.map { it.song }
@@ -889,6 +893,35 @@ class QueueManager(initialState: QueueState = QueueState()) {
         fun clear(state: QueueState): QueueState = QueueState(
             autoplayOn = state.autoplayOn,
         )
+
+        /**
+         * Restores the exact track, position-associated runway [upNext], [userQueue], [history],
+         * original [sourceList] context, shuffle mode, and repeat mode from a persisted checkpoint.
+         */
+        fun restore(
+            state: QueueState,
+            saved: PersistedPlaybackState,
+            allowSmartShuffle: Boolean = false,
+        ): QueueState {
+            val sourceSongs = saved.sourceList.ifEmpty {
+                (saved.history + listOf(saved.song) + saved.upNext).distinctBy { it.id }
+            }
+            val effectiveShuffle = if (saved.shuffleMode == ShuffleMode.SMART && !allowSmartShuffle) {
+                ShuffleMode.STANDARD
+            } else {
+                saved.shuffleMode
+            }
+            return QueueState(
+                sourceList = sourceSongs.map { QueueItem(it) },
+                history = saved.history.map { QueueItem(it) },
+                current = QueueItem(saved.song),
+                userQueue = saved.userQueue.map { QueueItem(it) },
+                upNext = saved.upNext.map { QueueItem(it) },
+                shuffleMode = effectiveShuffle,
+                repeatMode = saved.repeatMode,
+                autoplayOn = state.autoplayOn,
+            )
+        }
 
         /**
          * Fisher-Yates random shuffle algorithm.

@@ -36,6 +36,7 @@ import com.velvet.app.data.isPureMusic
 import com.velvet.app.data.isSameTrackAs
 import com.velvet.app.playback.DismissedTrackRegistry
 import com.velvet.app.playback.PersistedPlaybackState
+import com.velvet.app.playback.PlaybackCheckpointScheduler
 import com.velvet.app.playback.PlaybackService
 import com.velvet.app.playback.PlaybackStateManager
 import com.velvet.app.playback.PlaylistStart
@@ -121,6 +122,19 @@ object PlayerConnection {
     ) {
         performNextAdvance()
     }
+    @Volatile
+    private var restoringPlaybackState = false
+    private val checkpointScheduler = PlaybackCheckpointScheduler(
+        scope = runwayBgScope,
+        debounceMs = 300L,
+        periodicIntervalMs = 15_000L,
+        mainDispatcher = Dispatchers.Main.immediate,
+        ioDispatcher = Dispatchers.IO,
+        snapshotProvider = { buildPersistedStateOrNull() },
+        onPersist = { state ->
+            appContext?.let { ctx -> PlaybackStateManager.saveToDirectory(ctx.filesDir, state) }
+        },
+    )
 
     /**
      * Whether playback originated from a user-created local playlist.
@@ -271,6 +285,9 @@ object PlayerConnection {
             requestedLanguages = langIds,
             featureRepository = featRepo,
         )
+        if (!restoringPlaybackState && current != null) {
+            checkpointScheduler.scheduleDebounced()
+        }
     }
 
     private fun syncToExoPlayer(
@@ -326,6 +343,7 @@ object PlayerConnection {
         VelvetApp.runwayControllerOrNull()?.startPeriodicTick(isPlayingProvider = { isPlaying }) {
             requestRunwayRefill(RunwayTrigger.PERIODIC_TICK)
         }
+        checkpointScheduler.startPeriodic { isPlaying }
         if (current == null) {
             val savedShuffle = persistedShuffleEnum()
             shuffleMode = savedShuffle
@@ -338,6 +356,8 @@ object PlayerConnection {
     fun disconnect() {
         started = false
         nextTapCoalescer.cancel()
+        checkpointScheduler.flushNow()
+        checkpointScheduler.stop()
         future?.let(MediaController::releaseFuture)
         future = null
         controller = null
@@ -567,22 +587,29 @@ object PlayerConnection {
         }
     }
 
-    fun persistState() {
-        val cur = current ?: return
-        val ctx = appContext ?: return
+    private fun buildPersistedStateOrNull(): PersistedPlaybackState? {
+        val cur = current ?: queueManager.current ?: return null
         val pos = controller?.currentPosition ?: savedInitialPositionMs
-        PlaybackStateManager.save(
-            context = ctx,
+        return PersistedPlaybackState(
             song = cur,
-            positionMs = pos,
-            durationMs = durationMs,
-            upNext = upNext.map { it.song },
-            userQueue = userQueue.map { it.song },
-            history = history.map { it.song },
+            positionMs = pos.coerceAtLeast(0L),
+            durationMs = durationMs.coerceAtLeast(0L),
+            upNext = queueManager.upNext.map { it.song },
+            userQueue = queueManager.userQueue.map { it.song },
+            history = queueManager.history,
+            sourceList = queueManager.sourceList,
             playlistId = currentPlaylistId,
             isRadio = isRadioActive,
-            shuffleMode = shuffleMode,
+            isArtistRadio = isArtistRadioActive,
+            radioSeedSong = radioSeedSong,
+            shuffleMode = queueManager.shuffleMode,
+            repeatMode = queueManager.repeatMode,
         )
+    }
+
+    fun persistState() {
+        if (appContext == null) return
+        checkpointScheduler.flushNow()
     }
 
     fun restoreSavedPlaybackState(c: MediaController? = controller) {
@@ -595,44 +622,41 @@ object PlayerConnection {
                 )
             } ?: return
 
-        val song = saved.song
-        current = song
-        currentPlaylistId = saved.playlistId
-        isRadioActive = saved.isRadio
-        isArtistRadioActive = false
-        radioSeedSong = if (saved.isRadio) song else null
-        savedInitialPositionMs = saved.positionMs
-        durationMs = if (saved.durationMs > 0L) saved.durationMs else (song.durationSec * 1000L)
+        restoringPlaybackState = true
+        try {
+            val song = saved.song
+            current = song
+            currentPlaylistId = saved.playlistId
+            isRadioActive = saved.isRadio
+            isArtistRadioActive = saved.isRadio && saved.isArtistRadio
+            radioSeedSong = saved.radioSeedSong ?: if (saved.isRadio) song else null
+            savedInitialPositionMs = saved.positionMs
+            durationMs = if (saved.durationMs > 0L) saved.durationMs else (song.durationSec * 1000L)
 
-        val fullList = (saved.history + listOf(song) + saved.upNext).distinctBy { it.id }
-        val startIndex = fullList.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-        queueManager.start(fullList, startIndex = startIndex, shuffled = false)
-        if (saved.userQueue.isNotEmpty()) {
-            saved.userQueue.forEach { queueManager.playNext(it) }
-        }
-        val targetShuffleMode = if (saved.shuffleMode != ShuffleMode.OFF) saved.shuffleMode else persistedShuffleEnum()
-        if (fullList.size > 1) {
-            if (targetShuffleMode == ShuffleMode.STANDARD) {
-                queueManager.setShuffleMode(ShuffleMode.STANDARD, allowSmartShuffle = false)
-            } else if (targetShuffleMode == ShuffleMode.SMART) {
-                queueManager.setShuffleMode(
-                    if (isUserPlaylistActive) ShuffleMode.SMART else ShuffleMode.STANDARD,
-                    allowSmartShuffle = isUserPlaylistActive,
+            val resolvedSavedShuffle = if (saved.shuffleMode != ShuffleMode.OFF) {
+                saved.shuffleMode
+            } else if (saved.upNext.isEmpty() && saved.sourceList.isEmpty()) {
+                persistedShuffleEnum()
+            } else {
+                ShuffleMode.OFF
+            }
+            val effectiveSaved = saved.copy(shuffleMode = resolvedSavedShuffle)
+            queueManager.restore(effectiveSaved, allowSmartShuffle = isUserPlaylistActive)
+            syncQueueState(resetPositionOnTrackChange = false)
+
+            if (c != null) {
+                syncToExoPlayer(
+                    playlistStart = null,
+                    isRadio = saved.isRadio,
+                    autoPlay = false,
+                    startPositionMs = saved.positionMs,
                 )
             }
-        }
-        syncQueueState(resetPositionOnTrackChange = false)
-
-        if (c != null) {
-            syncToExoPlayer(
-                playlistStart = null,
-                isRadio = saved.isRadio,
-                autoPlay = false,
-                startPositionMs = saved.positionMs,
-            )
-        }
-        if (VelvetApp.library.data.value.autoplay || saved.isRadio) {
-            requestRunwayRefill(RunwayTrigger.APP_START_OR_RESTORE, seedId = song.id)
+            if (VelvetApp.library.data.value.autoplay || saved.isRadio) {
+                requestRunwayRefill(RunwayTrigger.APP_START_OR_RESTORE, seedId = song.id)
+            }
+        } finally {
+            restoringPlaybackState = false
         }
     }
 
