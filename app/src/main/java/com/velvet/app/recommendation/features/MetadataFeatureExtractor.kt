@@ -15,10 +15,10 @@ import java.util.Locale
  * provenance-tracked [TrackFeatureRecord] objects without fabricating unknown metadata.
  */
 class MetadataFeatureExtractor(
-    private val clock: () -> Long = System::currentTimeMillis,
     private val artistLanguageLookup: ((String) -> Pair<String, Double>?)? = {
         com.velvet.app.recommendation.vibe.ArtistLanguageMap.inferArtistLanguage(it)
     },
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     fun extract(
         song: Song,
