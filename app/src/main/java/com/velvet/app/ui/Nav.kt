@@ -22,6 +22,7 @@ sealed interface Route {
     @Serializable data object Equalizer : Route
     @Serializable data object Import : Route
     @Serializable data object Developer : Route
+    @Serializable data object QueueHealth : Route
     @Serializable data class LocalPlaylist(val id: String) : Route
     @Serializable data class Album(val album: AlbumRef) : Route
     @Serializable data class Artist(val artist: ArtistRef) : Route
@@ -65,7 +66,7 @@ class Navigator(initial: NavState = NavState()) {
     fun open(route: Route, origin: NavOrigin? = null) {
         nowPlayingOpen = false
         val currentTop = stacks[tab].lastOrNull()?.route
-        if (currentTop == route && (route is Route.Settings || route is Route.Equalizer || route is Route.History || route is Route.Developer)) {
+        if (currentTop == route && (route is Route.Settings || route is Route.Equalizer || route is Route.History || route is Route.Developer || route is Route.QueueHealth)) {
             return
         }
         val resolvedOrigin = origin ?: originProvider?.invoke()
@@ -74,7 +75,7 @@ class Navigator(initial: NavState = NavState()) {
 
     fun selectTab(i: Int) {
         // Modal / utility routes (Settings, Equalizer, Import, Developer) should never stick as persistent tab destinations
-        stacks.forEach { it.removeAll { e -> e.route is Route.Settings || e.route is Route.Equalizer || e.route is Route.Import || e.route is Route.Developer } }
+        stacks.forEach { it.removeAll { e -> e.route is Route.Settings || e.route is Route.Equalizer || e.route is Route.Import || e.route is Route.Developer || e.route is Route.QueueHealth } }
         // tapping the current tab again pops back to its root
         if (i == tab) stacks[i].clear() else tab = i
     }
@@ -84,7 +85,7 @@ class Navigator(initial: NavState = NavState()) {
             nowPlayingOpen -> nowPlayingOpen = false
             stacks[tab].isNotEmpty() -> stacks[tab].removeAt(stacks[tab].lastIndex)
             else -> {
-                stacks.forEach { it.removeAll { e -> e.route is Route.Settings || e.route is Route.Equalizer || e.route is Route.Import || e.route is Route.Developer } }
+                stacks.forEach { it.removeAll { e -> e.route is Route.Settings || e.route is Route.Equalizer || e.route is Route.Import || e.route is Route.Developer || e.route is Route.QueueHealth } }
                 tab = 0
             }
         }

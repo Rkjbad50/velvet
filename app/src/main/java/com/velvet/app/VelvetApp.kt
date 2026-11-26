@@ -208,6 +208,8 @@ class VelvetApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        com.velvet.app.diagnostics.DiagnosticsLogger.attachLogDirectory(java.io.File(filesDir, "diagnostics"))
+        com.velvet.app.diagnostics.CrashHandler.install(java.io.File(filesDir, "crash"))
 
         http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
         val locale = Locale.getDefault()

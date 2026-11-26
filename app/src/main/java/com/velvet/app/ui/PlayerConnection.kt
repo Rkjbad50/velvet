@@ -249,6 +249,17 @@ object PlayerConnection {
             pendingSeekUntilMs = 0L
             durationMs = (current?.durationSec?.times(1000L)?.coerceAtLeast(0L) ?: 0L)
         }
+        val langIds = runCatching {
+            mapLanguagesToIso(VelvetApp.library.data.value.musicLanguages)
+        }.getOrDefault(emptySet())
+        val featRepo = runCatching { VelvetApp.trackFeatureRepository }.getOrNull()
+        com.velvet.app.diagnostics.QueueHealthMonitor.recordQueueState(
+            aheadCount = queueManager.upNext.size,
+            userQueueCount = queueManager.userQueue.size,
+            anchor = current,
+            requestedLanguages = langIds,
+            featureRepository = featRepo,
+        )
     }
 
     private fun syncToExoPlayer(
@@ -1184,20 +1195,22 @@ object PlayerConnection {
         }
     }
 
-    private fun tryInstantAutoplaySeed(seed: Song): Boolean {
-        val libData = VelvetApp.library.data.value
+    internal fun computeInstantAutoplayMatches(
+        seed: Song,
+        libData: com.velvet.app.data.LibraryData,
+        activeSongs: List<Song>,
+        featureRepository: com.velvet.app.recommendation.features.TrackFeatureRepository,
+        allowArtistHeavy: Boolean,
+        cachedRelated: List<Song> = emptyList(),
+        limit: Int = 6,
+    ): List<Song> {
         val activeIds = buildSet {
-            current?.id?.let(::add)
-            queueManager.current?.id?.let(::add)
-            queueManager.upNext.forEach { add(it.song.id) }
-            queueManager.userQueue.forEach { add(it.song.id) }
-            queueManager.history.forEach { add(it.id) }
+            add(seed.id)
+            activeSongs.forEach { add(it.id) }
         }
         val activeRecIds = buildSet {
-            val activeSongs = listOfNotNull(current, queueManager.current) +
-                queueManager.upNext.map { it.song } +
-                queueManager.userQueue.map { it.song } +
-                queueManager.history
+            add(com.velvet.app.recommendation.identity.RecordingIdentityResolver.resolve(seed).canonicalRecordingId)
+            add(com.velvet.app.playback.SongIdentity.canonicalGroupId(seed))
             for (s in activeSongs) {
                 add(com.velvet.app.recommendation.identity.RecordingIdentityResolver.resolve(s).canonicalRecordingId)
                 add(com.velvet.app.playback.SongIdentity.canonicalGroupId(s))
@@ -1205,16 +1218,33 @@ object PlayerConnection {
         }
         val libraryPool = (libData.liked + libData.recent + libData.playlists.flatMap { it.songs })
             .distinctBy { it.id }
-        val cachedRelated = StreamResolver.peekRelated(seed.id).orEmpty()
         val extraPool = (cachedRelated + libraryPool).distinctBy { it.id }
-        val instantMatches = com.velvet.app.recommendation.candidates.InstantTrackCatalog.matchSimilar(
+        return com.velvet.app.recommendation.candidates.InstantTrackCatalog.matchSimilar(
             seed = seed,
             extraPool = extraPool,
             excludedIds = activeIds,
             excludedRecIds = activeRecIds,
             preferredLanguageIds = mapLanguagesToIso(libData.musicLanguages),
+            featureRepository = featureRepository,
+            allowArtistHeavy = allowArtistHeavy,
+            limit = limit,
+        )
+    }
+
+    private fun tryInstantAutoplaySeed(seed: Song): Boolean {
+        val libData = VelvetApp.library.data.value
+        val activeSongs = listOfNotNull(current, queueManager.current) +
+            queueManager.upNext.map { it.song } +
+            queueManager.userQueue.map { it.song } +
+            queueManager.history
+        val cachedRelated = StreamResolver.peekRelated(seed.id).orEmpty()
+        val instantMatches = computeInstantAutoplayMatches(
+            seed = seed,
+            libData = libData,
+            activeSongs = activeSongs,
             featureRepository = VelvetApp.trackFeatureRepository,
             allowArtistHeavy = isArtistRadioActive,
+            cachedRelated = cachedRelated,
             limit = 6,
         ).filterNot { com.velvet.app.playback.DismissedTrackRegistry.isDismissed(it) }
         if (instantMatches.isEmpty()) return false

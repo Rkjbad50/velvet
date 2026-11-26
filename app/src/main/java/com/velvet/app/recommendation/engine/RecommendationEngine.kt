@@ -98,23 +98,28 @@ class DefaultRecommendationEngine(
 
         val finishedAt = clock()
         val diagnosticsId = UUID.randomUUID().toString()
-        diagnosticsLog.record(
-            RecommendationDiagnostics(
-                diagnosticsId = diagnosticsId,
-                requestId = request.requestId,
-                mode = request.mode,
-                rawCandidateCount = pool.rawFetchedCount,
-                eligibleCandidateCount = eligible.size,
-                duplicateRemovedCount = dedupedResult.removedAlreadyKnownCount + dedupedResult.removedDuplicateUploadCount,
-                rejectedReasonCounts = rejectionCounts,
-                sourceHealth = pool.sourceHealth,
-                averageTransitionScore = sequenced.averageTransitionScore,
-                constraintRelaxations = sequenced.constraintRelaxations,
-                returnedCount = sequenced.tracks.size,
-                durationMs = (finishedAt - startedAt).coerceAtLeast(0L),
-                usedCache = pool.fromCache,
-                recordedAtMillis = finishedAt,
-            ),
+        val diagRecord = RecommendationDiagnostics(
+            diagnosticsId = diagnosticsId,
+            requestId = request.requestId,
+            mode = request.mode,
+            rawCandidateCount = pool.rawFetchedCount,
+            eligibleCandidateCount = eligible.size,
+            duplicateRemovedCount = dedupedResult.removedAlreadyKnownCount + dedupedResult.removedDuplicateUploadCount,
+            rejectedReasonCounts = rejectionCounts,
+            sourceHealth = pool.sourceHealth,
+            averageTransitionScore = sequenced.averageTransitionScore,
+            constraintRelaxations = sequenced.constraintRelaxations,
+            returnedCount = sequenced.tracks.size,
+            durationMs = (finishedAt - startedAt).coerceAtLeast(0L),
+            usedCache = pool.fromCache,
+            recordedAtMillis = finishedAt,
+        )
+        diagnosticsLog.record(diagRecord)
+        com.velvet.app.diagnostics.QueueHealthMonitor.recordEngineDiagnostics(
+            diag = diagRecord,
+            seed = primarySeed,
+            featureRepository = featureRepository,
+            requestedLanguages = request.requestedLanguageIds,
         )
 
         return RecommendationResult(

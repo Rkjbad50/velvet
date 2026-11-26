@@ -597,6 +597,7 @@ private fun RenderDetailRoute(route: Route, nav: Navigator) {
         Route.Equalizer -> EqualizerScreen(onBack = nav::back)
         Route.Import -> ImportScreen(onBack = nav::back)
         Route.Developer -> DeveloperScreen(onBack = nav::back)
+        Route.QueueHealth -> QueueHealthScreen(onBack = nav::back)
         is Route.LocalPlaylist -> LocalPlaylistScreen(route.id, onBack = nav::back)
         is Route.Album -> AlbumScreen(route.album, onBack = nav::back)
         is Route.Artist -> ArtistScreen(route.artist, onBack = nav::back)

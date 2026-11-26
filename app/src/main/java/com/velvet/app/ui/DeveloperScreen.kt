@@ -168,6 +168,12 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(20.dp))
 
+        val nav = LocalNav.current
+        DevQueueHealthEntryCard(onOpen = { nav.open(Route.QueueHealth) })
+        Spacer(Modifier.height(16.dp))
+        DevLastCrashCard()
+        Spacer(Modifier.height(16.dp))
+
         // A1: Versions Panel
         DevSectionCard(title = "A1 • System & Build Versions") {
             val latestAppStr = updateInfo?.latestVersion?.let { " (latest: v$it)" } ?: if (isCheckingUpdate) " (checking...)" else ""

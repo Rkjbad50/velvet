@@ -111,6 +111,72 @@ class AutoplayRefillCoordinator(
         force: Boolean = false,
         dismissedFilter: (Song) -> Boolean = { false },
     ): RefillDecision {
+        val startMs = clock()
+        val decision = runCatching {
+            requestRefillInternal(
+                initialSnapshot = initialSnapshot,
+                latestSnapshotProvider = latestSnapshotProvider,
+                seedId = seedId,
+                autoPlayNext = autoPlayNext,
+                force = force,
+                dismissedFilter = dismissedFilter,
+            )
+        }.getOrElse { throw it }
+        val anchorTitle = resolveAnchor(initialSnapshot, seedId)?.title ?: "(none)"
+        val modeName = when {
+            initialSnapshot.isArtistRadioActive -> RecommendationMode.ARTIST_RADIO.name
+            initialSnapshot.isRadioActive -> RecommendationMode.SONG_RADIO.name
+            else -> RecommendationMode.AUTOPLAY_REFILL.name
+        }
+        val latestSnap = runCatching { latestSnapshotProvider() }.getOrElse { initialSnapshot }
+        val durationMs = (clock() - startMs).coerceAtLeast(0L)
+        val snapStatus = stateMutex.withLock { state.status }
+        when (decision) {
+            is RefillDecision.AppendSongs -> com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillDecision(
+                seedTitle = anchorTitle,
+                mode = modeName,
+                outcome = "APPEND",
+                reason = "ok",
+                appendedCount = decision.songs.size,
+                durationMs = durationMs,
+                queueAheadAfter = latestSnap.upcomingSongs.size + decision.songs.size,
+                status = snapStatus,
+                timestampMs = clock(),
+            )
+            is RefillDecision.SafeEmpty -> com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillDecision(
+                seedTitle = anchorTitle,
+                mode = modeName,
+                outcome = "EMPTY",
+                reason = decision.reason,
+                appendedCount = 0,
+                durationMs = durationMs,
+                queueAheadAfter = latestSnap.upcomingSongs.size,
+                status = decision.status,
+                timestampMs = clock(),
+            )
+            is RefillDecision.Skip -> com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillDecision(
+                seedTitle = anchorTitle,
+                mode = modeName,
+                outcome = "SKIP",
+                reason = decision.reason,
+                appendedCount = 0,
+                durationMs = durationMs,
+                queueAheadAfter = latestSnap.upcomingSongs.size,
+                status = snapStatus,
+                timestampMs = clock(),
+            )
+        }
+        return decision
+    }
+
+    private suspend fun requestRefillInternal(
+        initialSnapshot: QueueRefillSnapshot,
+        latestSnapshotProvider: () -> QueueRefillSnapshot,
+        seedId: String?,
+        autoPlayNext: Boolean,
+        force: Boolean,
+        dismissedFilter: (Song) -> Boolean,
+    ): RefillDecision {
         val anchor = resolveAnchor(initialSnapshot, seedId)
             ?: return RefillDecision.Skip("no_anchor_song")
 
