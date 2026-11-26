@@ -144,8 +144,9 @@ class VelvetApp : Application(), ImageLoaderFactory {
             ),
             com.velvet.app.recommendation.candidates.SeedRelatedCandidateSource(
                 relatedProvider = { seed ->
-                    runCatching { com.velvet.app.data.StreamResolver.related(seed.id, seedHint = seed) }
-                        .getOrDefault(emptyList())
+                    runCatching {
+                        StreamResolver.relatedWithContinuation(seed.id, seedHint = seed, loadNextPage = true)
+                    }.getOrDefault(emptyList())
                 },
             ),
             com.velvet.app.recommendation.candidates.SameReleaseCandidateSource(
@@ -203,6 +204,10 @@ class VelvetApp : Application(), ImageLoaderFactory {
         )
     }
 
+    val rollingCandidatePool by lazy {
+        com.velvet.app.recommendation.candidates.RollingCandidatePool()
+    }
+
     val autoplayRefillCoordinator by lazy {
         com.velvet.app.recommendation.engine.AutoplayRefillCoordinator(
             engine = recommendationEngine,
@@ -213,6 +218,7 @@ class VelvetApp : Application(), ImageLoaderFactory {
                 minCooldownMs = 300L,
             ),
             featureRepository = trackFeatureRepository,
+            rollingPool = rollingCandidatePool,
             urgentFallbackProvider = { anchor, snap, excludedIds ->
                 val seedPool = (
                     StreamResolver.peekRelated(anchor.id).orEmpty() +

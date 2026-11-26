@@ -55,6 +55,7 @@ object StreamResolver {
     private val cache = BoundedCache<String, Resolved>(300)
     private val locks = BoundedCache<String, Any>(300)
     private val relatedCache = BoundedCache<String, List<Song>>(100)
+    private val nextContinuationTokens = BoundedCache<String, String>(120)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Fast-path health. Songs whose fast stream failed to play use the full extractor; after a
@@ -82,6 +83,7 @@ object StreamResolver {
     fun clearCache() {
         cache.clear()
         relatedCache.clear()
+        nextContinuationTokens.clear()
         fullOnly.clear()
         fastPlaybackFailures.set(0)
         fastLookupFailuresInARow.set(0)
@@ -169,21 +171,63 @@ object StreamResolver {
      * Returns in <1s typically by returning immediately when InnerTube /next + Related tab yields
      * >= 8 distinct verified studio songs, and running fallback sources in parallel under a strict ceiling.
      */
-    fun related(videoId: String, seedHint: Song? = null): List<Song> {
-        if (!isValidVideoId(videoId)) return emptyList()
-        relatedCache[videoId]?.let { return it }
-        synchronized(locks.getOrPut("rel|$videoId") { Any() }) {
-            relatedCache[videoId]?.let { return it }
+    fun related(videoId: String, seedHint: Song? = null): List<Song> =
+        relatedWithContinuation(videoId = videoId, seedHint = seedHint, loadNextPage = false)
 
+    /**
+     * Fetches related tracks for [videoId] and, when [loadNextPage] is true and a /next
+     * `nextRadioContinuationData` token is available, pages subsequent chunks into the rolling cache.
+     */
+    fun relatedWithContinuation(
+        videoId: String,
+        seedHint: Song? = null,
+        loadNextPage: Boolean = false,
+    ): List<Song> {
+        if (!isValidVideoId(videoId)) return emptyList()
+        if (!loadNextPage) {
+            relatedCache[videoId]?.let { return it }
+        }
+        synchronized(locks.getOrPut("rel|$videoId") { Any() }) {
             fun isDistinctFromSeed(seed: Song?, cand: Song): Boolean {
                 if (cand.id == videoId) return false
                 if (seed == null) return true
                 return !com.velvet.app.recommendation.identity.RecordingIdentityResolver.isSameCompositionTitle(seed, cand)
             }
 
+            val existing = relatedCache[videoId]
+            if (existing != null) {
+                val token = if (loadNextPage) nextContinuationTokens[videoId] else null
+                if (!token.isNullOrBlank()) {
+                    val nextPage = runCatching { YouTubeMusicInnertube.fetchNextRadioPage(videoId, token) }.getOrNull()
+                    if (nextPage != null) {
+                        val fresh = nextPage.songs.filter { cand ->
+                            cand.isPureMusic() && cand.isOriginalMusicAudio() && isDistinctFromSeed(seedHint, cand)
+                        }
+                        if (!nextPage.continuationToken.isNullOrBlank() && nextPage.continuationToken != token && fresh.isNotEmpty()) {
+                            nextContinuationTokens[videoId] = nextPage.continuationToken
+                        } else {
+                            nextContinuationTokens.remove(videoId)
+                        }
+                        if (fresh.isNotEmpty()) {
+                            val merged = (existing + fresh).distinctBy { it.id }.takeLast(200)
+                            relatedCache[videoId] = merged
+                            com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(fresh)
+                            return merged
+                        }
+                    } else {
+                        nextContinuationTokens.remove(videoId)
+                    }
+                }
+                return existing
+            }
+
             // 1. Primary ultra-fast path: YouTube Music InnerTube Song Radio (RDAMVM) + Related tab
-            val innertubeRelated = runCatching { YouTubeMusicInnertube.fetchNextRadio(videoId) }
-                .getOrDefault(emptyList())
+            val firstPage = runCatching { YouTubeMusicInnertube.fetchNextRadioPage(videoId) }
+                .getOrDefault(YouTubeMusicInnertube.NextRadioPage(emptyList()))
+            firstPage.continuationToken?.takeIf { it.isNotBlank() }?.let { tok ->
+                nextContinuationTokens[videoId] = tok
+            }
+            val innertubeRelated = firstPage.songs
                 .filter { cand -> cand.isPureMusic() && cand.isOriginalMusicAudio() && isDistinctFromSeed(seedHint, cand) }
 
             val innertubeVerified = innertubeRelated.count {

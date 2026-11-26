@@ -215,6 +215,16 @@ object QueueHealthMonitor {
         }
     }
 
+    fun recordRollingPoolSize(poolSize: Int) {
+        synchronized(lock) {
+            val prev = _state.value
+            _state.value = prev.copy(
+                rawPoolSize = maxOf(prev.rawPoolSize, poolSize),
+                eligiblePoolSize = maxOf(prev.eligiblePoolSize, poolSize),
+            )
+        }
+    }
+
     fun formatPlainText(snapshot: QueueHealthSnapshot = _state.value): String {
         val tf = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
         val lastAt = snapshot.lastRefillAtMs?.let { tf.format(Date(it)) } ?: "Never"

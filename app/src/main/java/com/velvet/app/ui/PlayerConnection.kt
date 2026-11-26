@@ -493,10 +493,28 @@ object PlayerConnection {
                 } else {
                     com.velvet.app.data.ListenEndReason.COMPLETED
                 }
+                val completedOutgoing = current ?: queueManager.current
                 recordCurrentPlaybackEnd(endReason = endReason)
                 queueManager.advance(manual = false)
                 syncQueueState()
                 syncToExoPlayer()
+                // Chained re-seeding: merge RDAMVM<completedTrack> into rolling pool & instant catalog off-main
+                if (completedOutgoing != null && (VelvetApp.library.data.value.autoplay || isRadioActive)) {
+                    runwayBgScope.launch {
+                        val chained = runCatching {
+                            StreamResolver.relatedWithContinuation(
+                                videoId = completedOutgoing.id,
+                                seedHint = completedOutgoing,
+                                loadNextPage = false,
+                            )
+                        }.getOrDefault(emptyList())
+                        if (chained.isNotEmpty()) {
+                            runCatching {
+                                VelvetApp.autoplayRefillCoordinator.mergeIntoRollingPool(chained)
+                            }
+                        }
+                    }
+                }
                 requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
                 if (queueManager.upNext.size < RunwayPolicy.REFILL_BELOW) {
                     (queueManager.upNext.lastOrNull()?.song ?: queueManager.current)?.let {
@@ -1246,6 +1264,10 @@ object PlayerConnection {
             preferredLanguageIds = mapLanguagesToIso(libData.musicLanguages),
             allowMixedLanguages = libData.allowMixedLanguagesInAutoplay,
             artistLanguageMap = libData.artistLanguageMap,
+            fallbackAnchorPool = (st.history.map { it.song }.reversed() + libData.liked)
+                .distinctBy { it.id }
+                .filterNot { it.id == activeSong?.id }
+                .take(12),
             seedSongsOverride = if (isRadioActive) {
                 val anchor = radioSeedSong ?: activeSong
                 if (anchor != null) VelvetApp.radioSessionManagerOrNull()?.evolvedSeedSongs(anchor).orEmpty() else emptyList()

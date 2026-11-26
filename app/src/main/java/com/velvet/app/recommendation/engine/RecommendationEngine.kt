@@ -38,6 +38,7 @@ interface RecommendationEngine {
         seedSongsOverride: List<Song> = emptyList(),
         allowMixedLanguages: Boolean = false,
         artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> = emptyMap(),
+        sessionVibeOverride: com.velvet.app.recommendation.vibe.SessionVibe? = null,
     ): RecommendationResult
 
     fun invalidateCandidateCache(seedId: String? = null)
@@ -103,6 +104,13 @@ class DefaultRecommendationEngine(
             recentHistoryFeatures = recentFeatures,
             seedFeatures = seamAnchorFeatures,
         )
+        val finalTracks = applyLibraryRediscoveryCap(
+            selected = sequenced.tracks,
+            rankedPool = ranked,
+            request = effectiveRequest,
+            recentHistoryFeatures = recentFeatures,
+            seedFeatures = seamAnchorFeatures,
+        )
 
         val finishedAt = clock()
         val diagnosticsId = UUID.randomUUID().toString()
@@ -117,7 +125,7 @@ class DefaultRecommendationEngine(
             sourceHealth = pool.sourceHealth,
             averageTransitionScore = sequenced.averageTransitionScore,
             constraintRelaxations = sequenced.constraintRelaxations,
-            returnedCount = sequenced.tracks.size,
+            returnedCount = finalTracks.size,
             durationMs = (finishedAt - startedAt).coerceAtLeast(0L),
             usedCache = pool.fromCache,
             recordedAtMillis = finishedAt,
@@ -130,15 +138,82 @@ class DefaultRecommendationEngine(
             requestedLanguages = request.requestedLanguageIds,
         )
 
+        val finalSelectedIds = finalTracks.mapTo(HashSet()) { it.song.id }
+        val overflowSongs = ranked.asSequence()
+            .map { it.candidate.song }
+            .filter { it.id !in finalSelectedIds }
+            .take(80)
+            .toList()
+
         return RecommendationResult(
             requestId = request.requestId,
             mode = request.mode,
-            candidates = sequenced.tracks,
+            candidates = finalTracks,
             modelVersion = RankerWeights.PHASE5_MODEL_VERSION,
             generatedAtMillis = finishedAt,
             sourceHealth = pool.sourceHealth,
             diagnosticsId = diagnosticsId,
+            overflowSongs = overflowSongs,
         )
+    }
+
+    private fun isLibraryOnlySource(sourceIds: Set<String>): Boolean =
+        sourceIds.isNotEmpty() && sourceIds.all { it == "g6_library" || it == "g0_instant_catalog" }
+
+    /**
+     * C4: Caps owner's library rediscovery tracks to ~25% of an online autoplay batch when
+     * fresh discovery candidates exist, while leaving library fallback intact offline.
+     */
+    private fun applyLibraryRediscoveryCap(
+        selected: List<com.velvet.app.recommendation.model.RecommendedTrack>,
+        rankedPool: List<com.velvet.app.recommendation.model.RankedCandidate>,
+        request: RecommendationRequest,
+        recentHistoryFeatures: List<com.velvet.app.recommendation.model.TrackFeatureRecord>,
+        seedFeatures: com.velvet.app.recommendation.model.TrackFeatureRecord?,
+    ): List<com.velvet.app.recommendation.model.RecommendedTrack> {
+        if (request.mode !in setOf(RecommendationMode.AUTOPLAY_REFILL, RecommendationMode.SIMILAR_SONGS, RecommendationMode.SONG_RADIO)) {
+            return selected
+        }
+        val limit = request.limit
+        if (limit < 4 || selected.isEmpty()) return selected
+
+        val selectedIds = selected.mapTo(HashSet()) { it.song.id }
+        val unusedDiscovery = rankedPool.filter {
+            it.candidate.song.id !in selectedIds && !isLibraryOnlySource(it.candidate.sourceIds)
+        }
+        val selectedDiscoveryCount = selected.count { !isLibraryOnlySource(it.sourceIds) }
+        val totalDiscoveryAvailable = selectedDiscoveryCount + unusedDiscovery.size
+        // Never cap library fallback if external discovery candidates are empty/scarce
+        if (totalDiscoveryAvailable < limit / 2) return selected
+
+        val maxLibraryCount = (limit * 0.25).toInt().coerceAtLeast(1)
+        val libraryInSelected = selected.count { isLibraryOnlySource(it.sourceIds) }
+        if (libraryInSelected <= maxLibraryCount) return selected
+
+        val kept = ArrayList<com.velvet.app.recommendation.model.RecommendedTrack>(limit)
+        var libUsed = 0
+        for (track in selected) {
+            if (isLibraryOnlySource(track.sourceIds)) {
+                if (libUsed < maxLibraryCount) {
+                    kept.add(track)
+                    libUsed++
+                }
+            } else {
+                kept.add(track)
+            }
+        }
+        if (kept.size < limit && unusedDiscovery.isNotEmpty()) {
+            val fillSlots = limit - kept.size
+            val existingRecs = kept.mapTo(HashSet()) { it.recordingId }
+            val extra = sequenceOptimizer.optimize(
+                ranked = unusedDiscovery.filter { it.candidate.identity.canonicalRecordingId !in existingRecs },
+                request = request.copy(limit = fillSlots, excludedRecordingIds = request.excludedRecordingIds + existingRecs),
+                recentHistoryFeatures = recentHistoryFeatures,
+                seedFeatures = seedFeatures,
+            ).tracks
+            kept.addAll(extra.take(fillSlots))
+        }
+        return kept.mapIndexed { idx, t -> t.copy(selectedPosition = idx) }
     }
 
     override suspend fun nextSimilar(
@@ -158,6 +233,7 @@ class DefaultRecommendationEngine(
         seedSongsOverride: List<Song>,
         allowMixedLanguages: Boolean,
         artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile>,
+        sessionVibeOverride: com.velvet.app.recommendation.vibe.SessionVibe?,
     ): RecommendationResult {
         val snapshotRecs = contextSnapshot.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
         val snapshotIds = contextSnapshot.map { it.id }
@@ -182,6 +258,7 @@ class DefaultRecommendationEngine(
             requireVerifiedOriginalAudio = true,
             allowMixedLanguages = allowMixedLanguages,
             artistLanguageMap = artistLanguageMap,
+            sessionVibe = sessionVibeOverride,
             createdAtMillis = clock(),
         )
         return recommend(request)

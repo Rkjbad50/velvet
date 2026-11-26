@@ -2583,7 +2583,7 @@ private fun QueueSheet(
                                     when {
                                         !autoplayEnabled -> "Queue is empty. Turn on Autoplay in Settings for continuous similar songs."
                                         isLoadingAutoplay -> "Finding similar original tracks for your queue..."
-                                        else -> "No matching studio tracks loaded yet."
+                                        else -> "Couldn't find more matching songs"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = velvetColors.muted,

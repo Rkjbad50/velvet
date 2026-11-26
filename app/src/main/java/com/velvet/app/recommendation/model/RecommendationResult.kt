@@ -103,4 +103,5 @@ data class RecommendationResult(
     val generatedAtMillis: Long,
     val sourceHealth: Map<String, SourceHealth>,
     val diagnosticsId: String,
+    val overflowSongs: List<Song> = emptyList(),
 )

@@ -156,12 +156,38 @@ object YouTubeMusicInnertube {
         }.getOrNull()
     }
 
+    data class NextRadioPage(
+        val songs: List<Song>,
+        val continuationToken: String? = null,
+        val relatedBrowseId: String? = null,
+    )
+
     /**
-     * Fetches YouTube Music's genuine Up-Next Song Radio ("RDAMVM<videoId>") plus Related browse
-     * continuation when available, strictly accepting studio audio tracks and rejecting OMV/UGC videos.
+     * Fetches YouTube Music's genuine Up-Next Song Radio ("RDAMVM<videoId>") with continuation
+     * paging (C4) and Related browse fallback, strictly accepting studio audio tracks only.
      */
-    fun fetchNextRadio(videoId: String): List<Song> {
-        if (!isValidVideoId(videoId)) return emptyList()
+    fun fetchNextRadio(videoId: String): List<Song> = fetchNextRadioPage(videoId).songs
+
+    fun fetchNextRadioPage(
+        videoId: String,
+        continuationToken: String? = null,
+    ): NextRadioPage {
+        if (!isValidVideoId(videoId)) return NextRadioPage(emptyList())
+        if (!continuationToken.isNullOrBlank()) {
+            val contBody = JsonObject().apply {
+                put("context", webRemixContext())
+                put("continuation", continuationToken)
+                put("isAudioOnly", true)
+            }
+            val contRoot = postJson(YTM_NEXT_URL, contBody) ?: return NextRadioPage(emptyList())
+            val page = parseContinuationRadioPageJson(contRoot, excludeVideoId = videoId)
+            com.velvet.app.diagnostics.DiagnosticsLogger.i(
+                "InnertubeNext",
+                "Continuation rootKeys=${contRoot.keys.joinToString(",")} songs=${page.songs.size} hasNext=${!page.continuationToken.isNullOrBlank()}",
+            )
+            return page
+        }
+
         val body = JsonObject().apply {
             put("context", webRemixContext())
             put("videoId", videoId)
@@ -169,24 +195,28 @@ object YouTubeMusicInnertube {
             put("isAudioOnly", true)
             put("enablePersistentPlaylistPanel", true)
         }
-        val root = postJson(YTM_NEXT_URL, body) ?: return emptyList()
-        val (panelSongs, relatedBrowseId) = parseNextRadioJson(root, excludeVideoId = videoId)
+        val root = postJson(YTM_NEXT_URL, body) ?: return NextRadioPage(emptyList())
+        val firstPage = parseNextRadioPageJson(root, excludeVideoId = videoId)
+        com.velvet.app.diagnostics.DiagnosticsLogger.i(
+            "InnertubeNext",
+            "Initial rootKeys=${root.keys.joinToString(",")} songs=${firstPage.songs.size} hasNext=${!firstPage.continuationToken.isNullOrBlank()}",
+        )
 
-        if (panelSongs.size >= 8 || relatedBrowseId.isNullOrBlank()) {
-            return panelSongs
+        if (firstPage.songs.size >= 8 || firstPage.relatedBrowseId.isNullOrBlank()) {
+            return firstPage
         }
 
         // Pull "Related" tab shelf if RDAMVM panel was short
         val browseBody = JsonObject().apply {
             put("context", webRemixContext())
-            put("browseId", relatedBrowseId)
+            put("browseId", firstPage.relatedBrowseId)
         }
         val browseRoot = postJson(YTM_BROWSE_URL, browseBody)
         val relatedSongs = if (browseRoot != null) {
             parseSearchOrBrowseSongsJson(browseRoot).filter { it.id != videoId }
         } else emptyList()
 
-        return (panelSongs + relatedSongs).distinctBy { it.id }
+        return firstPage.copy(songs = (firstPage.songs + relatedSongs).distinctBy { it.id })
     }
 
     /**
@@ -361,6 +391,11 @@ object YouTubeMusicInnertube {
     // ---------------------------------------------------------------- pure JSON parsers (testable offline)
 
     internal fun parseNextRadioJson(root: JsonObject, excludeVideoId: String = ""): Pair<List<Song>, String?> {
+        val page = parseNextRadioPageJson(root, excludeVideoId)
+        return page.songs to page.relatedBrowseId
+    }
+
+    internal fun parseNextRadioPageJson(root: JsonObject, excludeVideoId: String = ""): NextRadioPage {
         val watchNext = root.getObject("contents")
             .getObject("singleColumnMusicWatchNextResultsRenderer")
             .getObject("tabbedRenderer")
@@ -369,6 +404,7 @@ object YouTubeMusicInnertube {
         val tabs = watchNext.getArray("tabs")
         val panelSongs = mutableListOf<Song>()
         var relatedBrowseId: String? = null
+        var continuationToken: String? = null
 
         for (i in 0 until tabs.size) {
             val tabRenderer = tabs.getObject(i)?.getObject("tabRenderer") ?: continue
@@ -377,15 +413,47 @@ object YouTubeMusicInnertube {
             if (!browseId.isNullOrBlank() && tabTitle.contains("related")) {
                 relatedBrowseId = browseId
             }
-            val panelContents = tabRenderer.getObject("content")
+            val panel = tabRenderer.getObject("content")
                 .getObject("musicQueueRenderer")
                 .getObject("content")
                 .getObject("playlistPanelRenderer")
-                .getArray("contents")
-            collectPlaylistPanelSongs(panelContents, excludeVideoId, panelSongs)
+            collectPlaylistPanelSongs(panel.getArray("contents"), excludeVideoId, panelSongs)
+            if (continuationToken == null) {
+                continuationToken = extractPanelContinuationToken(panel)
+            }
         }
 
-        return panelSongs.distinctBy { it.id } to relatedBrowseId
+        return NextRadioPage(
+            songs = panelSongs.distinctBy { it.id },
+            continuationToken = continuationToken,
+            relatedBrowseId = relatedBrowseId,
+        )
+    }
+
+    internal fun parseContinuationRadioPageJson(root: JsonObject, excludeVideoId: String = ""): NextRadioPage {
+        val panel = root.getObject("continuationContents")
+            .getObject("playlistPanelContinuation")
+        val panelSongs = mutableListOf<Song>()
+        collectPlaylistPanelSongs(panel.getArray("contents"), excludeVideoId, panelSongs)
+        val nextToken = extractPanelContinuationToken(panel)
+        return NextRadioPage(
+            songs = panelSongs.distinctBy { it.id },
+            continuationToken = nextToken,
+            relatedBrowseId = null,
+        )
+    }
+
+    private fun extractPanelContinuationToken(panelObj: JsonObject?): String? {
+        val conts = panelObj?.getArray("continuations") ?: return null
+        for (i in 0 until conts.size) {
+            val entry = conts.getObject(i) ?: continue
+            val token = entry.getObject("nextRadioContinuationData").getString("continuation")
+                ?.takeIf { it.isNotBlank() }
+                ?: entry.getObject("nextContinuationData").getString("continuation")
+                    ?.takeIf { it.isNotBlank() }
+            if (token != null) return token
+        }
+        return null
     }
 
     internal fun parseSearchOrBrowseSongsJson(root: JsonObject): List<Song> {
