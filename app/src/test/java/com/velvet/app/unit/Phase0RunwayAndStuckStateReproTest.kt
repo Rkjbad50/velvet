@@ -120,15 +120,18 @@ class Phase0RunwayAndStuckStateReproTest {
     )
 
     /**
-     * P0 Expected-Failing Reproduction (B2):
-     * A stale_queue_version discard leaves AutoplayRefillCoordinator stuck in RefillStatus.IN_FLIGHT,
-     * causing all subsequent non-forced refills to return Skip("already_in_flight").
+     * P0 -> P1 Regression (B2):
+     * After mid-flight queue mutation (and even after post-flight Skip discards),
+     * AutoplayRefillCoordinator must NEVER stay stuck IN_FLIGHT or reject subsequent
+     * non-forced refills with "already_in_flight".
      */
     @Test
     fun reproducesB2_staleDiscardMustNotLeaveStatusInFlightAndBlockSubsequentRefills() = runBlocking {
         val seed = studioSong("s_anchor", "Tum Hi Ho", "Arijit Singh", album = "Aashiqui 2")
-        val recCatalog = (1..12).map { i ->
-            studioSong("rec_$i", "Dil Diyan Gallan $i", "Singer $i", album = "Romance Vol $i")
+        val adjs = listOf("Nayi", "Meethi", "Gehri", "Sard", "Chupke", "Pehli", "Uljhi", "Khwabi", "Dhalti", "Sunehri", "Anjani", "Bheegi")
+        val nouns = listOf("Baarish", "Raatein", "Hawayein", "Kahaani", "Parchhai", "Manzil", "Khamoshi", "Roshni", "Sargam", "Dastaan", "Aashiqui", "Dhadkan")
+        val recCatalog = (0 until 12).map { i ->
+            studioSong("rec_$i", "${adjs[i]} ${nouns[i]}", "Singer $i", album = "Romance Vol $i")
         }
         val engine = buildEngine(recCatalog, relatedDelayMs = 150L)
         val coordinator = AutoplayRefillCoordinator(
@@ -147,36 +150,66 @@ class Phase0RunwayAndStuckStateReproTest {
         qm.playNext(studioSong("manual_next", "Pehla Nasha", "Udit Narayan"))
 
         val firstDecision = firstDeferred.await()
-        assertTrue(firstDecision is RefillDecision.Skip)
-
-        val statusAfterDiscard = coordinator.currentState().status
-        val followUpSnap = snapshotOf(qm)
-        val secondDecision = coordinator.requestRefill(followUpSnap, latestSnapshotProvider = { snapshotOf(qm) }, force = false)
-
+        val statusAfterFirst = coordinator.currentState().status
         assertNotEquals(
-            "B2 REPRODUCED: coordinator stayed stuck in IN_FLIGHT after stale discard",
+            "Coordinator must NEVER stay stuck in IN_FLIGHT after mid-flight queue mutation",
             RefillStatus.IN_FLIGHT,
-            statusAfterDiscard,
+            statusAfterFirst,
         )
         assertTrue(
-            "B2 REPRODUCED: subsequent non-forced refill failed with $secondDecision instead of refilling queue",
+            "With commit-time revalidation replacing queueVersion staleness, firstDecision should succeed: got $firstDecision",
+            firstDecision is RefillDecision.AppendSongs && firstDecision.songs.isNotEmpty(),
+        )
+
+        // Follow-up non-forced call must proceed cleanly and NEVER return "already_in_flight"
+        val followUpSnap = snapshotOf(qm)
+        val secondDecision = coordinator.requestRefill(followUpSnap, latestSnapshotProvider = { snapshotOf(qm) }, force = false)
+        assertNotEquals(RefillStatus.IN_FLIGHT, coordinator.currentState().status)
+        assertFalse(
+            "Follow-up non-forced refill must never fail with already_in_flight",
+            secondDecision is RefillDecision.Skip && secondDecision.reason == "already_in_flight",
+        )
+        assertTrue(
+            "Subsequent non-forced refill must succeed, got $secondDecision",
             secondDecision is RefillDecision.AppendSongs && secondDecision.songs.isNotEmpty(),
         )
+
+        // Also explicitly prove a post-flight Skip (repeat_one_enabled_during_fetch) resets status -> IDLE via try/finally
+        qm.cycleRepeatMode() // OFF -> ALL
+        qm.cycleRepeatMode() // ALL -> ONE
+        val beforeRepeatSnap = QueueRefillSnapshot(
+            currentSong = qm.current,
+            upcomingSongs = emptyList(),
+            queueVersion = qm.queueVersion,
+            repeatMode = com.velvet.app.playback.RepeatMode.OFF,
+            isAutoplayEnabled = true,
+        )
+        val discardDecision = coordinator.requestRefill(beforeRepeatSnap, latestSnapshotProvider = { snapshotOf(qm) }, force = false)
+        assertTrue(discardDecision is RefillDecision.Skip)
+        assertEquals("repeat_one_enabled_during_fetch", (discardDecision as RefillDecision.Skip).reason)
+        assertEquals("try/finally must reset IN_FLIGHT to IDLE even on post-flight Skip", RefillStatus.IDLE, coordinator.currentState().status)
     }
 
     /**
-     * P0 Expected-Failing Reproduction (B1 + B2):
-     * With shallow trigger (lowWatermarkTrigger=6) and refill latency slower than track changes,
-     * concurrent track advances discard the in-flight refill as stale_queue_version and drain the queue.
+     * P0 -> P1 Regression (B1 + B2):
+     * Refill slower than a single track change (150ms > 70ms step) must succeed via
+     * commit-time revalidation across track changes instead of discarding & draining queue.
      */
     @Test
     fun reproducesB1_slowRefillLongerThanTrackChangesDrainsQueueBeforeRefillLands() = runBlocking {
         val artists = listOf("Arijit Singh", "Atif Aslam", "KK", "Jubin Nautiyal", "Shreya Ghoshal", "Sonu Nigam", "Pritam", "Mithoon")
+        val initFirst = listOf("Alvida", "Safar", "Pal", "Humdum", "Musafir", "Nazar", "Intezaar")
+        val initSecond = listOf("Chaand", "Raahi", "Yaadein", "Zindagi", "Manzar", "Sitaron", "Aasmaan")
         val initialTracks = (0..6).map { i ->
-            studioSong("init_$i", "Meri Aashiqui $i", artists[i % artists.size], album = "Album $i")
+            studioSong("init_$i", "${initFirst[i]} ${initSecond[i]}", artists[i % artists.size], album = "Album $i")
         }
-        val remoteCatalog = (1..25).map { i ->
-            studioSong("remote_$i", "Khamoshiyan Track $i", artists[(i + 2) % artists.size], album = "Film Vol $i")
+        val remA = listOf("Khamoshi", "Chandni", "Tanhai", "Banjara", "Saansein", "Sukoon", "Junoon", "Ruhani", "Pardes", "Guzarish")
+        val remB = listOf("Hawa", "Barish", "Dhoop", "Subah", "Shaam", "Lori", "Taraana", "Raag", "Geet", "Dhun")
+        val remoteCatalog = (0 until 25).map { i ->
+            val w1 = remA[i % remA.size]
+            val w2 = remB[i / 3]
+            val w3 = initSecond[(i + 2) % initSecond.size]
+            studioSong("remote_$i", "$w1 $w2 $w3", artists[(i + 2) % artists.size], album = "Film Vol $i")
         }
 
         val engine = buildEngine(remoteCatalog, relatedDelayMs = 150L)
@@ -211,7 +244,7 @@ class Phase0RunwayAndStuckStateReproTest {
         }
 
         assertFalse(
-            "B1 REPRODUCED: shallow trigger + slow refill across track changes drained queue (status=${coordinator.currentState().status})",
+            "Slow refill taking longer than track change must replenish queue instead of draining (status=${coordinator.currentState().status})",
             queueDrained,
         )
     }
