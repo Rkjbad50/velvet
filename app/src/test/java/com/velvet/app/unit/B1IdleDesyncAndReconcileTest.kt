@@ -80,7 +80,7 @@ class B1IdleDesyncAndReconcileTest {
         assertEquals(exoPlaying.id, fixedQm.current?.id)
         assertEquals(exoPlaying.thumb, fixedQm.current?.thumb)
         assertEquals(listOf("vid_0", "vid_1"), fixedQm.history.map { it.id })
-        assertEquals(listOf("vid_3", "vid_4", "vid_5"), fixedQm.upNext.map { it.id })
+        assertEquals(listOf("vid_3", "vid_4", "vid_5"), fixedQm.upNext.map { it.song.id })
 
         // Verify DiagnosticsLogger + QueueHealthMonitor recorded the state mismatch
         val health = QueueHealthMonitor.state.value
@@ -110,7 +110,7 @@ class B1IdleDesyncAndReconcileTest {
         assertEquals(0, r1.passedOverItems.size)
         assertEquals("vid_1", qm1.current?.id)
         assertEquals(listOf("vid_0"), qm1.history.map { it.id })
-        assertEquals((2..7).map { "vid_$it" }, qm1.upNext.map { it.id })
+        assertEquals((2..7).map { "vid_$it" }, qm1.upNext.map { it.song.id })
 
         // Ahead by 2
         val qm2 = QueueManager().apply { start(tracks, startIndex = 0) }
@@ -119,7 +119,7 @@ class B1IdleDesyncAndReconcileTest {
         assertEquals(1, r2.passedOverItems.size)
         assertEquals("vid_2", qm2.current?.id)
         assertEquals(listOf("vid_0", "vid_1"), qm2.history.map { it.id })
-        assertEquals((3..7).map { "vid_$it" }, qm2.upNext.map { it.id })
+        assertEquals((3..7).map { "vid_$it" }, qm2.upNext.map { it.song.id })
 
         // Ahead by 5
         val qm5 = QueueManager().apply { start(tracks, startIndex = 0) }
@@ -128,8 +128,8 @@ class B1IdleDesyncAndReconcileTest {
         assertEquals(4, r5.passedOverItems.size)
         assertEquals("vid_5", qm5.current?.id)
         assertEquals((0..4).map { "vid_$it" }, qm5.history.map { it.id })
-        assertEquals(listOf("vid_6", "vid_7"), qm5.upNext.map { it.id })
-        val allIds = qm5.history.map { it.id } + listOfNotNull(qm5.current?.id) + qm5.upNext.map { it.id }
+        assertEquals(listOf("vid_6", "vid_7"), qm5.upNext.map { it.song.id })
+        val allIds = qm5.history.map { it.id } + listOfNotNull(qm5.current?.id) + qm5.upNext.map { it.song.id }
         assertEquals(8, allIds.distinct().size)
     }
 
@@ -147,7 +147,7 @@ class B1IdleDesyncAndReconcileTest {
         assertEquals("vid_11", qm.current?.id)
         assertEquals(listOf("vid_0", "vid_10"), qm.history.map { it.id })
         assertTrue(qm.userQueue.isEmpty())
-        assertEquals((1..5).map { "vid_$it" }, qm.upNext.map { it.id })
+        assertEquals((1..5).map { "vid_$it" }, qm.upNext.map { it.song.id })
 
         // Repeat call is idempotent NO_OP and does not log extra mismatch
         val prevCount = QueueHealthMonitor.state.value.stateMismatchCount
@@ -165,7 +165,7 @@ class B1IdleDesyncAndReconcileTest {
         assertEquals(ReconcileOutcome.MOVED_FROM_HISTORY, hRes.outcome)
         assertEquals("vid_0", qm.current?.id)
         assertTrue(qm.history.isEmpty())
-        assertEquals(listOf("vid_10", "vid_11", "vid_1", "vid_2", "vid_3", "vid_4", "vid_5"), qm.upNext.map { it.id })
+        assertEquals(listOf("vid_10", "vid_11", "vid_1", "vid_2", "vid_3", "vid_4", "vid_5"), qm.upNext.map { it.song.id })
 
         // Unknown external track (ADOPTED_UNKNOWN) preserves upcoming queue
         val unknown = song(99)
@@ -173,7 +173,7 @@ class B1IdleDesyncAndReconcileTest {
         assertEquals(ReconcileOutcome.ADOPTED_UNKNOWN, unkRes.outcome)
         assertEquals("vid_99", qm.current?.id)
         assertEquals(listOf("vid_0"), qm.history.map { it.id })
-        assertEquals(listOf("vid_10", "vid_11", "vid_1", "vid_2", "vid_3", "vid_4", "vid_5"), qm.upNext.map { it.id })
+        assertEquals(listOf("vid_10", "vid_11", "vid_1", "vid_2", "vid_3", "vid_4", "vid_5"), qm.upNext.map { it.song.id })
     }
 
     @Test
@@ -189,7 +189,7 @@ class B1IdleDesyncAndReconcileTest {
         val prevSong = qm.previous(positionMs = 500L)
         assertEquals("vid_2", prevSong?.id)
         assertEquals("vid_2", qm.current?.id)
-        assertEquals(listOf("vid_3", "vid_4", "vid_5"), qm.upNext.map { it.id })
+        assertEquals(listOf("vid_3", "vid_4", "vid_5"), qm.upNext.map { it.song.id })
 
         // User taps Next -> returns to vid_3, NOT vid_4!
         val next1 = qm.advance(manual = true)
