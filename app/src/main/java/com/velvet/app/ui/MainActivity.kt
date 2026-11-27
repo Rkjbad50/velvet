@@ -311,7 +311,7 @@ private fun AppRoot() {
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(bottom = bottomRoom),
+                    .padding(bottom = nonNegativeDpPadding(bottomRoom)),
             ) {
                 PlayerConnection.brokenStreamingBanner?.let { bannerText ->
                     Surface(
@@ -384,7 +384,7 @@ private fun AppRoot() {
                     BottomTabs(
                         selected = nav.tab,
                         onSelect = { i ->
-                            if (i == 1 && nav.tab == 1) searchVm.clear()
+                            if (i == 1 && nav.tab == 1) searchVm.resetToHome()
                             nav.selectTab(i)
                         },
                     )

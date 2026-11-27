@@ -79,12 +79,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -569,16 +571,21 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
 
     Box(Modifier.fillMaxSize()) {
         if (showSearch) {
+            val focusRequester = remember { FocusRequester() }
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
+
             BackHandler {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 showSearch = false
                 searchQuery = ""
             }
-            val focusRequester = remember { FocusRequester() }
-            val keyboardController = LocalSoftwareKeyboardController.current
 
             LaunchedEffect(Unit) {
-                delay(120)
-                focusRequester.requestFocus()
+                withFrameNanos { }
+                delay(40)
+                runCatching { focusRequester.requestFocus() }
             }
 
             Column(
@@ -599,6 +606,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                         "Close search",
                         onClick = {
                             keyboardController?.hide()
+                            focusManager.clearFocus()
                             showSearch = false
                             searchQuery = ""
                         },
@@ -608,7 +616,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                         modifier = Modifier
                             .weight(1f)
                             .panel(RoundedCornerShape(14.dp), fill = velvetColors.raised)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -625,21 +633,27 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
                                 singleLine = true,
+                                maxLines = 1,
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = velvetColors.text),
                                 cursorBrush = SolidColor(velvetColors.accent),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                 keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
                                 decorationBox = { innerTextField ->
-                                    if (searchQuery.isEmpty()) {
-                                        Text(
-                                            "Search in ${playlist.name}...",
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = velvetColors.muted,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentAlignment = Alignment.CenterStart,
+                                    ) {
+                                        if (searchQuery.isEmpty()) {
+                                            Text(
+                                                "Search in ${playlist.name}...",
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = velvetColors.muted,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        innerTextField()
                                     }
-                                    innerTextField()
                                 },
                                 modifier = Modifier
                                     .weight(1f)

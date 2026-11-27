@@ -63,6 +63,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,6 +74,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -121,17 +123,20 @@ fun LibraryScreen() {
     var searchQuery by rememberSaveable { mutableStateOf("") }
     val searchFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
-    BackHandler(enabled = isSearching) {
+    BackHandler(enabled = isSearching && nav.tab == 2 && nav.currentEntries.isEmpty() && !nav.nowPlayingOpen) {
         keyboardController?.hide()
+        focusManager.clearFocus()
         isSearching = false
         searchQuery = ""
     }
 
     LaunchedEffect(isSearching) {
         if (isSearching) {
-            delay(120)
-            searchFocusRequester.requestFocus()
+            withFrameNanos { }
+            delay(40)
+            runCatching { searchFocusRequester.requestFocus() }
         }
     }
 
@@ -322,6 +327,7 @@ fun LibraryScreen() {
                 onClick = {
                     if (isSearching) {
                         keyboardController?.hide()
+                        focusManager.clearFocus()
                         searchQuery = ""
                     }
                     isSearching = !isSearching

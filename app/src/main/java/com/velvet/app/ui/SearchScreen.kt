@@ -1,5 +1,6 @@
 package com.velvet.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -43,6 +44,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
@@ -60,17 +62,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -79,6 +87,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -119,6 +128,31 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Body modes displayed below the Search bar. Recent searches remain hidden on [IDLE_HOME]
+ * and only appear once the user actively taps/focuses the search bar ([FOCUSED_RECENTS]).
+ */
+enum class SearchBodyMode {
+    IDLE_HOME,
+    FOCUSED_RECENTS,
+    SUGGESTIONS,
+    RESULTS,
+}
+
+/**
+ * Resolves the active [SearchBodyMode] from result state, query text, and search-bar focus.
+ */
+internal fun resolveSearchBodyMode(
+    showingResults: Boolean,
+    query: String,
+    isSearchFocused: Boolean,
+): SearchBodyMode = when {
+    showingResults -> SearchBodyMode.RESULTS
+    query.isNotBlank() -> SearchBodyMode.SUGGESTIONS
+    isSearchFocused -> SearchBodyMode.FOCUSED_RECENTS
+    else -> SearchBodyMode.IDLE_HOME
+}
 
 enum class SearchFilter(val label: String, val ytFilter: String?) {
     All("All", null),
@@ -185,6 +219,8 @@ class SearchViewModel : ViewModel() {
     var activeSearchSessionId by mutableStateOf<String?>(null)
         private set
     var activeQueryId by mutableStateOf<String?>(null)
+        private set
+    var homeResetNonce by mutableIntStateOf(0)
         private set
 
     private var pager: YouTube.Search? = null
@@ -304,6 +340,12 @@ class SearchViewModel : ViewModel() {
         activeQueryId = null
     }
 
+    /** Clears active search state and signals the Search screen to drop focus back to idle browse. */
+    fun resetToHome() {
+        clear()
+        homeResetNonce += 1
+    }
+
     fun submit(searchQuery: String = query, remember: Boolean = true) {
         val q = searchQuery.trim()
         if (q.isEmpty()) return
@@ -421,7 +463,57 @@ fun SearchScreen(vm: SearchViewModel) {
     val nav = LocalNav.current
     val focus = LocalFocusManager.current
     val haptic = LocalHapticFeedback.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val searchFocusRequester = remember { FocusRequester() }
     var languageSheetOpen by remember { mutableStateOf(false) }
+    var isSearchFocused by rememberSaveable { mutableStateOf(false) }
+
+    fun exitSearch() {
+        keyboardController?.hide()
+        focus.clearFocus()
+        isSearchFocused = false
+        vm.clear()
+    }
+
+    fun submitPickedQuery(picked: String) {
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        keyboardController?.hide()
+        focus.clearFocus()
+        isSearchFocused = false
+        vm.submit(picked)
+    }
+
+    BackHandler(
+        enabled = nav.tab == 1 &&
+            nav.currentEntries.isEmpty() &&
+            !nav.nowPlayingOpen &&
+            !languageSheetOpen &&
+            (isSearchFocused || vm.showingResults || vm.query.isNotBlank()),
+    ) {
+        exitSearch()
+    }
+
+    LaunchedEffect(nav.tab) {
+        if (nav.tab != 1) {
+            keyboardController?.hide()
+            focus.clearFocus()
+            if (!vm.showingResults && vm.query.isBlank()) {
+                isSearchFocused = false
+            }
+        }
+    }
+
+    LaunchedEffect(vm.homeResetNonce) {
+        if (vm.homeResetNonce > 0) {
+            keyboardController?.hide()
+            focus.clearFocus()
+            isSearchFocused = false
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { isSearchFocused = false }
+    }
 
     Column(
         Modifier
@@ -479,6 +571,7 @@ fun SearchScreen(vm: SearchViewModel) {
         }
 
         val hintExample = preHintQueries.firstOrNull() ?: "${langState.primaryLanguage} hits"
+        val isSearchActive = isSearchFocused || vm.query.isNotEmpty() || vm.showingResults
         OutlinedTextField(
             value = vm.query,
             onValueChange = vm::onQuery,
@@ -489,10 +582,29 @@ fun SearchScreen(vm: SearchViewModel) {
                     overflow = TextOverflow.Ellipsis,
                 )
             },
-            leadingIcon = { Icon(Icons.Default.Search, null, tint = velvetColors.muted) },
+            leadingIcon = {
+                if (isSearchActive) {
+                    IconButton(onClick = { exitSearch() }) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = velvetColors.text,
+                        )
+                    }
+                } else {
+                    Icon(Icons.Default.Search, null, tint = velvetColors.muted)
+                }
+            },
             trailingIcon = {
                 if (vm.query.isNotEmpty()) {
-                    IconButton(onClick = vm::clear) {
+                    IconButton(
+                        onClick = {
+                            vm.clear()
+                            isSearchFocused = true
+                            runCatching { searchFocusRequester.requestFocus() }
+                            keyboardController?.show()
+                        },
+                    ) {
                         Icon(Icons.Default.Clear, "Clear search query")
                     }
                 }
@@ -507,12 +619,20 @@ fun SearchScreen(vm: SearchViewModel) {
             ),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = {
-                focus.clearFocus()
-                vm.submit()
+                if (vm.query.isNotBlank()) {
+                    keyboardController?.hide()
+                    focus.clearFocus()
+                    isSearchFocused = false
+                    vm.submit()
+                }
             }),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 6.dp),
+                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .focusRequester(searchFocusRequester)
+                .onFocusChanged { state ->
+                    if (state.isFocused) isSearchFocused = true
+                },
         )
 
         AnimatedVisibility(
@@ -523,11 +643,11 @@ fun SearchScreen(vm: SearchViewModel) {
             FilterChips(vm.filter, vm::selectFilter)
         }
 
-        val viewMode = when {
-            vm.showingResults -> 2
-            vm.query.isNotBlank() -> 1
-            else -> 0
-        }
+        val viewMode = resolveSearchBodyMode(
+            showingResults = vm.showingResults,
+            query = vm.query,
+            isSearchFocused = isSearchFocused,
+        )
 
         AnimatedContent(
             targetState = viewMode,
@@ -538,34 +658,28 @@ fun SearchScreen(vm: SearchViewModel) {
             modifier = Modifier.weight(1f),
         ) { mode ->
             when (mode) {
-                2 -> SearchResults(vm)
-                1 -> Suggestions(
+                SearchBodyMode.RESULTS -> SearchResults(vm)
+                SearchBodyMode.SUGGESTIONS -> Suggestions(
                     list = vm.suggestions,
                     placeholderHint = hintExample,
                     loading = false,
-                ) { picked ->
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    focus.clearFocus()
-                    vm.submit(picked)
-                }
-                else -> SearchHome(
+                    onPick = { submitPickedQuery(it) },
+                )
+                SearchBodyMode.FOCUSED_RECENTS -> FocusedRecentsView(
+                    recentSearches = data.searches,
+                    langState = langState,
+                    preHintQueries = preHintQueries,
+                    onRecentClick = { submitPickedQuery(it) },
+                    onRemoveRecent = library::removeSearch,
+                    onClearRecent = library::clearSearches,
+                    onQuickPickClick = { submitPickedQuery(it) },
+                )
+                SearchBodyMode.IDLE_HOME -> SearchHome(
                     langState = langState,
                     preHintQueries = preHintQueries,
                     genreTiles = genreTiles,
                     genreArtUrls = genreArtUrls,
-                    recentSearches = data.searches,
-                    onPreHintClick = { picked ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        focus.clearFocus()
-                        vm.submit(picked)
-                    },
-                    onRecent = { picked ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        focus.clearFocus()
-                        vm.submit(picked)
-                    },
-                    onRemoveRecent = library::removeSearch,
-                    onClearRecent = library::clearSearches,
+                    onPreHintClick = { submitPickedQuery(it) },
                     onGenre = { genre ->
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         nav.open(Route.Genre(genre.title))
@@ -643,84 +757,71 @@ private fun Suggestions(
 }
 
 @Composable
-private fun SearchHome(
-    langState: SearchLanguageState,
-    preHintQueries: List<String>,
-    genreTiles: List<GenreTileSpec>,
-    genreArtUrls: Map<String, String>,
-    recentSearches: List<String>,
-    onPreHintClick: (String) -> Unit,
-    onRecent: (String) -> Unit,
-    onRemoveRecent: (String) -> Unit,
-    onClearRecent: () -> Unit,
-    onGenre: (GenreTileSpec) -> Unit,
+private fun QuickPickChipsRow(
+    langKey: String,
+    queries: List<String>,
+    onPick: (String) -> Unit,
 ) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 156.dp),
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // 1. Pre-hint language-scoped search suggestion chips
-        if (preHintQueries.isNotEmpty()) {
-            item(key = "pre_hints_header", span = { GridItemSpan(maxLineSpan) }) {
+        items(queries, key = { "$langKey:$it" }) { hint ->
+            val interaction = remember { MutableInteractionSource() }
+            Row(
+                modifier = Modifier
+                    .heightIn(min = 40.dp)
+                    .velvetTactilePress(interaction, pressedScale = 0.94f)
+                    .clip(CircleShape)
+                    .background(velvetColors.surface)
+                    .border(1.dp, velvetColors.glassBorder, CircleShape)
+                    .clickable(
+                        interactionSource = interaction,
+                        indication = ripple(color = velvetColors.accent),
+                        role = Role.Button,
+                        onClick = { onPick(hint) },
+                    )
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    AppIcons.Sparkles,
+                    null,
+                    tint = velvetColors.accentText,
+                    modifier = Modifier.size(14.dp),
+                )
                 Text(
-                    text = "Trending searches in ${langState.summaryLabel}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    text = hint,
+                    style = MaterialTheme.typography.labelLarge,
                     color = velvetColors.text,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                    maxLines = 1,
                 )
             }
-            item(key = "pre_hints_strip", span = { GridItemSpan(maxLineSpan) }) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(preHintQueries, key = { "${langState.key}:$it" }) { hint ->
-                        val interaction = remember { MutableInteractionSource() }
-                        Row(
-                            modifier = Modifier
-                                .heightIn(min = 40.dp)
-                                .velvetTactilePress(interaction, pressedScale = 0.94f)
-                                .clip(CircleShape)
-                                .background(velvetColors.surface)
-                                .border(1.dp, velvetColors.glassBorder, CircleShape)
-                                .clickable(
-                                    interactionSource = interaction,
-                                    indication = ripple(color = velvetColors.accent),
-                                    role = Role.Button,
-                                    onClick = { onPreHintClick(hint) },
-                                )
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Icon(
-                                AppIcons.Sparkles,
-                                null,
-                                tint = velvetColors.accentText,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Text(
-                                text = hint,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = velvetColors.text,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                }
-            }
         }
+    }
+}
 
-        // 2. Recent Searches
+@Composable
+private fun FocusedRecentsView(
+    recentSearches: List<String>,
+    langState: SearchLanguageState,
+    preHintQueries: List<String>,
+    onRecentClick: (String) -> Unit,
+    onRemoveRecent: (String) -> Unit,
+    onClearRecent: () -> Unit,
+    onQuickPickClick: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         if (recentSearches.isNotEmpty()) {
-            item(key = "recent_header", span = { GridItemSpan(maxLineSpan) }) {
+            item(key = "focused_recent_header") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp),
+                        .padding(top = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
@@ -735,7 +836,7 @@ private fun SearchHome(
                     }
                 }
             }
-            item(key = "recent_list", span = { GridItemSpan(maxLineSpan) }) {
+            item(key = "focused_recent_list") {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -743,7 +844,7 @@ private fun SearchHome(
                         .background(velvetColors.surface)
                         .border(1.dp, velvetColors.glassBorder, RoundedCornerShape(16.dp)),
                 ) {
-                    recentSearches.take(6).forEachIndexed { idx, q ->
+                    recentSearches.forEachIndexed { idx, q ->
                         if (idx > 0) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -757,7 +858,7 @@ private fun SearchHome(
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(color = velvetColors.accent),
-                                    onClick = { onRecent(q) },
+                                    onClick = { onRecentClick(q) },
                                 )
                                 .padding(start = 16.dp, end = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -790,9 +891,86 @@ private fun SearchHome(
                     }
                 }
             }
+        } else {
+            item(key = "focused_recent_empty") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp, bottom = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "No recent searches yet",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = velvetColors.text,
+                    )
+                    Text(
+                        text = "Type a song, artist, or album — or pick a quick search in ${langState.summaryLabel}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = velvetColors.muted,
+                    )
+                }
+            }
+            if (preHintQueries.isNotEmpty()) {
+                item(key = "focused_quick_picks_header") {
+                    Text(
+                        text = "Quick picks in ${langState.summaryLabel}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = velvetColors.text,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                item(key = "focused_quick_picks_strip") {
+                    QuickPickChipsRow(
+                        langKey = langState.key,
+                        queries = preHintQueries,
+                        onPick = onQuickPickClick,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchHome(
+    langState: SearchLanguageState,
+    preHintQueries: List<String>,
+    genreTiles: List<GenreTileSpec>,
+    genreArtUrls: Map<String, String>,
+    onPreHintClick: (String) -> Unit,
+    onGenre: (GenreTileSpec) -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 156.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // 1. Pre-hint language-scoped quick picks
+        if (preHintQueries.isNotEmpty()) {
+            item(key = "pre_hints_header", span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    text = "Quick picks in ${langState.summaryLabel}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = velvetColors.text,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                )
+            }
+            item(key = "pre_hints_strip", span = { GridItemSpan(maxLineSpan) }) {
+                QuickPickChipsRow(
+                    langKey = langState.key,
+                    queries = preHintQueries,
+                    onPick = onPreHintClick,
+                )
+            }
         }
 
-        // 3. Spotify-style Browse All / Genres responsive grid
+        // 2. Spotify-style Browse All / Genres responsive grid
         item(key = "genres_header", span = { GridItemSpan(maxLineSpan) }) {
             Column(modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)) {
                 Text(

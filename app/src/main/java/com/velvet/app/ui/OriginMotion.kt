@@ -55,6 +55,14 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.pow
 
+internal const val DP_SPRING_DAMPING_RATIO = Spring.DampingRatioNoBouncy
+
+/**
+ * Clamps animated [Dp] padding values to `0.dp` so layout modifiers never receive negative
+ * padding and throw `IllegalArgumentException: Padding must be non-negative`.
+ */
+internal fun nonNegativeDpPadding(raw: Dp): Dp = raw.coerceAtLeast(0.dp)
+
 /**
  * Centralized app-wide motion system for VELVET: standardized durations, Material-inspired
  * easing curves, tuned 60/120fps spring physics, shape radii, shimmer loaders, and tactile
@@ -90,7 +98,7 @@ object VelvetMotion {
         val TactilePress = spring<Float>(dampingRatio = 0.82f, stiffness = 620f, visibilityThreshold = 0.001f)
         val Expressive = spring<Float>(dampingRatio = 0.78f, stiffness = 440f, visibilityThreshold = 0.001f)
         val ListPlacement = spring<IntOffset>(dampingRatio = 0.88f, stiffness = 480f)
-        val DpStandard = spring<Dp>(dampingRatio = 0.90f, stiffness = 520f)
+        val DpStandard = spring<Dp>(dampingRatio = DP_SPRING_DAMPING_RATIO, stiffness = 520f)
     }
 
     object Shape {
