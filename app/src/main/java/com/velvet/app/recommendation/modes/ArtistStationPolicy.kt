@@ -91,7 +91,7 @@ object ArtistStationPolicy {
     ): ArtistStationContext {
         val selectedRaw = request.selectedArtistId?.takeIf { it.isNotBlank() }
             ?: request.primarySeed?.artist.orEmpty()
-        val selectedKeys = ArtistLanguageMap.allArtistKeys(selectedRaw)
+        val selectedKeys = ArtistLanguageMap.allArtistKeys(selectedRaw).toSet()
 
         val selectedTracks = buildList {
             for (s in request.seedSongs) {
