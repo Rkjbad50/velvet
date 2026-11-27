@@ -70,7 +70,8 @@ class Phase6RankerAndArtistPurityTest {
         )
         val profileRepo = DefaultUserProfileRepository(
             eventRepository = eventRepo,
-            featureRepository = features,
+            libraryDataProvider = { com.velvet.app.data.LibraryData() },
+            builder = com.velvet.app.recommendation.profile.TasteProfileBuilder(features),
             clock = { now },
         )
         return DefaultRecommendationEngine(
@@ -245,7 +246,7 @@ class Phase6RankerAndArtistPurityTest {
         val profileRepo = DefaultUserProfileRepository(
             eventRepository = eventRepo,
             libraryDataProvider = { com.velvet.app.data.LibraryData(liked = listOf(histA1, histA2)) },
-            featureRepository = features,
+            builder = com.velvet.app.recommendation.profile.TasteProfileBuilder(features),
             clock = { now },
         )
         val poolBuilder = CandidatePoolBuilder(
@@ -335,7 +336,7 @@ class Phase6RankerAndArtistPurityTest {
             topic("new_$i", "Nayi Subah Geet $letter", "Shreya Ghoshal", album = "Fresh $letter (2018)")
         }
 
-        val (engine, _) = buildEngine(
+        val (engine, features) = buildEngine(
             relatedCatalog = listOf(recentPlayed, oldFavorite) + knownFiller + unseenDiscoveries,
             eventRepo = eventRepo,
             now = now,
@@ -354,11 +355,14 @@ class Phase6RankerAndArtistPurityTest {
         val newCount = result.candidates.count { it.song.id.startsWith("new_") }
         assertTrue("At least 1 in 5 tracks must be new to user inside SessionVibe (got $newCount / ${result.candidates.size})", newCount >= 2)
         // Also verify ArtistStationPolicy classification excludes cross-language unrelated tracks directly
+        val taSong = topic("ta_chk", "Rowdy Baby", "Dhanush")
         val tierCheck = ArtistStationPolicy.classify(
             candidate = com.velvet.app.recommendation.model.CandidateTrack(
-                song = topic("ta_chk", "Rowdy Baby", "Dhanush"),
-                identity = com.velvet.app.recommendation.identity.RecordingIdentityResolver.resolve(topic("ta_chk", "Rowdy Baby", "Dhanush")),
+                song = taSong,
+                identity = com.velvet.app.recommendation.identity.RecordingIdentityResolver.resolve(taSong),
+                features = features.getCachedOrExtract(taSong),
                 sourceEvidence = emptyList(),
+                candidateRetrievedAtMillis = now,
             ),
             ctx = ArtistStationPolicy.buildContext(
                 com.velvet.app.recommendation.model.RecommendationRequest(
