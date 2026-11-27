@@ -516,6 +516,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
     var showSortSheet by remember { mutableStateOf(false) }
     var showOverflowMenu by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    var pendingAutoFocusSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     ConfirmDialog(confirm) { confirm = null }
@@ -582,10 +583,13 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                 searchQuery = ""
             }
 
-            LaunchedEffect(Unit) {
-                withFrameNanos { }
-                delay(40)
-                runCatching { focusRequester.requestFocus() }
+            LaunchedEffect(pendingAutoFocusSearch) {
+                if (pendingAutoFocusSearch) {
+                    withFrameNanos { }
+                    delay(40)
+                    runCatching { focusRequester.requestFocus() }
+                    pendingAutoFocusSearch = false
+                }
             }
 
             Column(
@@ -744,6 +748,7 @@ fun LocalPlaylistScreen(id: String, onBack: () -> Unit) {
                                 Icons.Default.Search,
                                 "Search in playlist",
                             ) {
+                                pendingAutoFocusSearch = true
                                 showSearch = true
                             }
                             PanelIconButton(AppIcons.Pencil, "Edit playlist") { showEditSheet = true }

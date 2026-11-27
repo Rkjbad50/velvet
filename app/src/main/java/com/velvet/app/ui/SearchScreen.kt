@@ -641,7 +641,7 @@ fun SearchScreen(vm: SearchViewModel) {
                 .zIndex(1f)
                 .focusRequester(searchFocusRequester)
                 .onFocusChanged { state ->
-                    if (state.isFocused) isSearchFocused = true
+                    isSearchFocused = state.isFocused
                 },
         )
 

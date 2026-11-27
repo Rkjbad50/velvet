@@ -25,6 +25,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -72,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -83,6 +85,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import kotlinx.coroutines.Job
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
@@ -254,7 +258,25 @@ private fun AppRoot() {
         LocalSongMenu provides { menu = it },
         LocalContentColor provides velvetColors.text,
     ) {
+        val libraryData by VelvetApp.library.data.collectAsStateWithLifecycle()
+        val onboardingVisible = !libraryData.onboardingCompleted
+        val focusManager = LocalFocusManager.current
+        val keyboardController = LocalSoftwareKeyboardController.current
         val isPlayerOpen = nav.nowPlayingOpen && hasPlayer
+        val focusSnapshot = FocusClearSnapshot(
+            nowPlayingOpen = isPlayerOpen,
+            routeDepth = nav.currentEntries.size,
+            topEntryUid = nav.currentEntries.lastOrNull()?.uid,
+            tab = nav.tab,
+        )
+        var prevFocusSnapshot by remember { mutableStateOf<FocusClearSnapshot?>(null) }
+        LaunchedEffect(focusSnapshot) {
+            if (FocusClearPolicy.shouldClearFocusOnTransition(prevFocusSnapshot, focusSnapshot)) {
+                keyboardController?.hide()
+                focusManager.clearFocus(force = true)
+            }
+            prevFocusSnapshot = focusSnapshot
+        }
         val playerOpenAnim = remember { Animatable(if (isPlayerOpen) 1f else 0f) }
         var renderNowPlaying by remember { mutableStateOf(isPlayerOpen) }
         var interactiveMinimize by remember { mutableFloatStateOf(0f) }
@@ -363,6 +385,8 @@ private fun AppRoot() {
                         nav = nav,
                         homeVm = homeVm,
                         searchVm = searchVm,
+                        isPlayerOpen = isPlayerOpen,
+                        onboardingVisible = onboardingVisible,
                     )
                 }
             }
@@ -370,6 +394,13 @@ private fun AppRoot() {
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
+                    .focusProperties {
+                        canFocus = FocusClearPolicy.canBackgroundReceiveFocus(
+                            isRootCovered = false,
+                            isPlayerOpen = isPlayerOpen,
+                            onboardingVisible = onboardingVisible,
+                        )
+                    }
                     .graphicsLayer {
                         val p = currentExpandFraction()
                         val scale = 1f - 0.04f * p
@@ -413,6 +444,8 @@ private fun AppRoot() {
                 Box(
                     Modifier
                         .fillMaxSize()
+                        .focusGroup()
+                        .consumeBackgroundPointers(isPlayerOpen)
                         .graphicsLayer {
                             val playerSpec = computePlayerSpec()
                             translationX = playerSpec.translationX
@@ -448,9 +481,8 @@ private fun AppRoot() {
                 onDismiss = { PlayerConnection.dismissRadioBanner() },
             )
 
-            val libraryData by VelvetApp.library.data.collectAsStateWithLifecycle()
             AnimatedVisibility(
-                visible = !libraryData.onboardingCompleted,
+                visible = onboardingVisible,
                 enter = VelvetMotion.modalFadeEnter(),
                 exit = VelvetMotion.modalFadeExit(),
             ) {
@@ -494,6 +526,8 @@ private fun RouteOverlayHost(
     nav: Navigator,
     homeVm: HomeViewModel,
     searchVm: SearchViewModel,
+    isPlayerOpen: Boolean,
+    onboardingVisible: Boolean,
 ) {
     val scope = rememberCoroutineScope()
     val displayed = remember { mutableStateListOf<DisplayedRouteEntry>() }
@@ -546,10 +580,18 @@ private fun RouteOverlayHost(
         }
     }
 
+    val rootFocusAllowed = FocusClearPolicy.canBackgroundReceiveFocus(
+        isRootCovered = isRootCovered,
+        isPlayerOpen = isPlayerOpen,
+        onboardingVisible = onboardingVisible,
+    )
+
     Box(Modifier.fillMaxSize()) {
         Box(
             Modifier
                 .fillMaxSize()
+                .focusProperties { canFocus = rootFocusAllowed }
+                .consumeBackgroundPointers(!rootFocusAllowed)
                 .graphicsLayer {
                     val topActiveProgress = displayed.lastOrNull()?.anim?.value ?: 0f
                     val depthScale = 1f - 0.03f * topActiveProgress.coerceIn(0f, 1f)
@@ -574,6 +616,7 @@ private fun RouteOverlayHost(
                     }
                 }
             }
+            val entryInteractive = !item.isExiting && !coveredByAbove && !isPlayerOpen && !onboardingVisible
             key(item.entry.uid) {
                 OriginTransformBox(
                     origin = item.entry.origin,
@@ -583,14 +626,10 @@ private fun RouteOverlayHost(
                     showScrim = true,
                     modifier = Modifier
                         .fillMaxSize()
+                        .focusGroup()
+                        .focusProperties { canFocus = entryInteractive }
                         .graphicsLayer { alpha = if (coveredByAbove) 0f else 1f }
-                        .then(
-                            if (!item.isExiting) {
-                                Modifier.pointerInput(Unit) { detectTapGestures { } }
-                            } else {
-                                Modifier
-                            },
-                        ),
+                        .consumeBackgroundPointers(!item.isExiting),
                 ) {
                     RenderDetailRoute(item.entry.route, nav)
                 }
@@ -746,4 +785,18 @@ private fun BottomTabs(selected: Int, onSelect: (Int) -> Unit) {
         }
     }
 }
+
+private fun Modifier.consumeBackgroundPointers(enabled: Boolean): Modifier =
+    if (!enabled) {
+        this
+    } else {
+        pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Main)
+                    event.changes.forEach { it.consume() }
+                }
+            }
+        }
+    }
 

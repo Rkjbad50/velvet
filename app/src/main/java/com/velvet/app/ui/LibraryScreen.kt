@@ -120,6 +120,7 @@ fun LibraryScreen() {
     var isGridView by rememberSaveable { mutableStateOf(false) }
 
     var isSearching by rememberSaveable { mutableStateOf(false) }
+    var pendingSearchAutoFocus by remember { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     val searchFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -128,15 +129,17 @@ fun LibraryScreen() {
     BackHandler(enabled = isSearching && nav.tab == 2 && nav.currentEntries.isEmpty() && !nav.nowPlayingOpen) {
         keyboardController?.hide()
         focusManager.clearFocus()
+        pendingSearchAutoFocus = false
         isSearching = false
         searchQuery = ""
     }
 
-    LaunchedEffect(isSearching) {
-        if (isSearching) {
+    LaunchedEffect(pendingSearchAutoFocus) {
+        if (pendingSearchAutoFocus) {
             withFrameNanos { }
             delay(40)
             runCatching { searchFocusRequester.requestFocus() }
+            pendingSearchAutoFocus = false
         }
     }
 
@@ -328,9 +331,13 @@ fun LibraryScreen() {
                     if (isSearching) {
                         keyboardController?.hide()
                         focusManager.clearFocus()
+                        pendingSearchAutoFocus = false
                         searchQuery = ""
+                        isSearching = false
+                    } else {
+                        pendingSearchAutoFocus = true
+                        isSearching = true
                     }
-                    isSearching = !isSearching
                 },
                 modifier = Modifier.size(48.dp),
             ) {

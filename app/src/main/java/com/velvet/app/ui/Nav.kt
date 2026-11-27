@@ -105,4 +105,39 @@ class Navigator(initial: NavState = NavState()) {
     }
 }
 
+data class FocusClearSnapshot(
+    val nowPlayingOpen: Boolean,
+    val routeDepth: Int,
+    val topEntryUid: Long?,
+    val tab: Int,
+)
+
+/**
+ * Centralized focus & IME clearing policy across [Navigator] overlays.
+ * Clears active text cursor / floating selection teardrop handles whenever an overlay
+ * (Now Playing, pushed route, or tab change) covers the active field, without clearing
+ * typed query text or auto-restoring focus upon return.
+ */
+object FocusClearPolicy {
+    fun shouldClearFocusOnTransition(
+        previous: FocusClearSnapshot?,
+        current: FocusClearSnapshot,
+    ): Boolean {
+        if (previous == null) {
+            return current.nowPlayingOpen || current.routeDepth > 0
+        }
+        if (!previous.nowPlayingOpen && current.nowPlayingOpen) return true
+        if (current.tab != previous.tab) return true
+        if (current.routeDepth != previous.routeDepth) return true
+        if (current.topEntryUid != previous.topEntryUid) return true
+        return false
+    }
+
+    fun canBackgroundReceiveFocus(
+        isRootCovered: Boolean,
+        isPlayerOpen: Boolean,
+        onboardingVisible: Boolean = false,
+    ): Boolean = !isRootCovered && !isPlayerOpen && !onboardingVisible
+}
+
 val LocalNav = staticCompositionLocalOf<Navigator> { error("No Navigator") }
