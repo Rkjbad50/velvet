@@ -1548,20 +1548,41 @@ object PlayerConnection {
                 queueManager.upNext.isEmpty() &&
                 queueManager.userQueue.isEmpty()
             if (shouldPlayNow) {
+                var actualAdded = 0
                 if (queueManager.current != null) {
                     recordCurrentPlaybackEnd(endReason = null)
+                    val beforeAppend = queueManager.upNext.size
                     queueManager.appendAutoplay(filtered)
+                    actualAdded = (queueManager.upNext.size - beforeAppend).coerceAtLeast(0)
                     val advanced = queueManager.advance(manual = true)
                     if (advanced == null) {
                         queueManager.start(filtered, 0, false)
+                        actualAdded = filtered.size
                     }
                 } else {
                     queueManager.start(filtered, 0, false)
+                    actualAdded = filtered.size
+                }
+                if (decision is RefillDecision.AppendSongs) {
+                    com.velvet.app.diagnostics.QueueHealthMonitor.updateFunnelAppended(
+                        requestId = decision.requestId,
+                        actualAppended = actualAdded,
+                        queueAheadAfter = queueManager.upNext.size,
+                    )
                 }
                 syncQueueState()
                 syncToExoPlayer()
             } else {
+                val beforeAppend = queueManager.upNext.size
                 queueManager.appendAutoplay(filtered)
+                val actualAdded = (queueManager.upNext.size - beforeAppend).coerceAtLeast(0)
+                if (decision is RefillDecision.AppendSongs) {
+                    com.velvet.app.diagnostics.QueueHealthMonitor.updateFunnelAppended(
+                        requestId = decision.requestId,
+                        actualAppended = actualAdded,
+                        queueAheadAfter = queueManager.upNext.size,
+                    )
+                }
                 syncQueueState()
                 syncToExoPlayer()
             }

@@ -109,6 +109,10 @@ object StreamResolver {
     /** Instant 0ms cache lookup for already-fetched related tracks. */
     fun peekRelated(videoId: String): List<Song>? = relatedCache[videoId]
 
+    /** Passive lookup of YT Music /next continuation stats recorded for [videoId]. */
+    fun peekNextStats(videoId: String): YouTubeMusicInnertube.NextRadioFetchStats? =
+        YouTubeMusicInnertube.peekNextStats(videoId)
+
     /** Proactively warms related song candidates in background so Queue / Autoplay responds instantly. */
     fun prefetchRelated(song: Song) {
         if (!isValidVideoId(song.id) || relatedCache[song.id] != null) return

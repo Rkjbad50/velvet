@@ -162,6 +162,22 @@ object YouTubeMusicInnertube {
         val relatedBrowseId: String? = null,
     )
 
+    data class NextRadioFetchStats(
+        val videoId: String,
+        val pagesFetched: Int,
+        val hasNext: Boolean,
+        val lastParsedCount: Int,
+        val updatedAtMs: Long = System.currentTimeMillis(),
+    )
+
+    private val nextFetchStats = java.util.concurrent.ConcurrentHashMap<String, NextRadioFetchStats>()
+
+    fun peekNextStats(videoId: String): NextRadioFetchStats? = nextFetchStats[videoId]
+
+    fun clearNextStatsForTest() {
+        nextFetchStats.clear()
+    }
+
     /**
      * Fetches YouTube Music's genuine Up-Next Song Radio ("RDAMVM<videoId>") with continuation
      * paging (C4) and Related browse fallback, strictly accepting studio audio tracks only.
@@ -181,6 +197,13 @@ object YouTubeMusicInnertube {
             }
             val contRoot = postJson(YTM_NEXT_URL, contBody) ?: return NextRadioPage(emptyList())
             val page = parseContinuationRadioPageJson(contRoot, excludeVideoId = videoId)
+            val prevPages = nextFetchStats[videoId]?.pagesFetched ?: 1
+            nextFetchStats[videoId] = NextRadioFetchStats(
+                videoId = videoId,
+                pagesFetched = prevPages + 1,
+                hasNext = !page.continuationToken.isNullOrBlank(),
+                lastParsedCount = page.songs.size,
+            )
             com.velvet.app.diagnostics.DiagnosticsLogger.i(
                 "InnertubeNext",
                 "Continuation rootKeys=${contRoot.keys.joinToString(",")} songs=${page.songs.size} hasNext=${!page.continuationToken.isNullOrBlank()}",
@@ -197,6 +220,12 @@ object YouTubeMusicInnertube {
         }
         val root = postJson(YTM_NEXT_URL, body) ?: return NextRadioPage(emptyList())
         val firstPage = parseNextRadioPageJson(root, excludeVideoId = videoId)
+        nextFetchStats[videoId] = NextRadioFetchStats(
+            videoId = videoId,
+            pagesFetched = 1,
+            hasNext = !firstPage.continuationToken.isNullOrBlank(),
+            lastParsedCount = firstPage.songs.size,
+        )
         com.velvet.app.diagnostics.DiagnosticsLogger.i(
             "InnertubeNext",
             "Initial rootKeys=${root.keys.joinToString(",")} songs=${firstPage.songs.size} hasNext=${!firstPage.continuationToken.isNullOrBlank()}",

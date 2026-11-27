@@ -79,8 +79,10 @@ class DefaultRecommendationEngine(
         val effectiveRequest = if (request.sessionVibe != null) request else request.copy(sessionVibe = vibe)
 
         val rejectionCounts = linkedMapOf<String, Int>()
+        val evalReasonsById = LinkedHashMap<String, List<String>>(pool.candidates.size)
         val eligible = pool.candidates.filter { cand ->
             val decision = eligibilityPolicy.evaluate(cand, effectiveRequest, profile, seedFeatures)
+            evalReasonsById[cand.song.id] = decision.reasons
             if (!decision.eligible) {
                 decision.reasons.forEach { reason ->
                     rejectionCounts[reason] = (rejectionCounts[reason] ?: 0) + 1
@@ -118,6 +120,13 @@ class DefaultRecommendationEngine(
         )
 
         val finishedAt = clock()
+        val (totalFunnel, perGeneratorFunnels) = computePassiveFunnelCounts(
+            pool = pool,
+            evalReasonsById = evalReasonsById,
+            keptAfterDuplicateFilter = dedupedResult.kept,
+            acceptedTracks = finalTracks,
+            request = effectiveRequest,
+        )
         val diagnosticsId = UUID.randomUUID().toString()
         val diagRecord = RecommendationDiagnostics(
             diagnosticsId = diagnosticsId,
@@ -134,6 +143,8 @@ class DefaultRecommendationEngine(
             durationMs = (finishedAt - startedAt).coerceAtLeast(0L),
             usedCache = pool.fromCache,
             recordedAtMillis = finishedAt,
+            totalFunnel = totalFunnel,
+            perGeneratorFunnels = perGeneratorFunnels,
         )
         diagnosticsLog.record(diagRecord)
         com.velvet.app.diagnostics.QueueHealthMonitor.recordEngineDiagnostics(
@@ -321,4 +332,165 @@ class DefaultRecommendationEngine(
     override fun invalidateCandidateCache(seedId: String?) {
         candidatePoolBuilder.invalidateCache()
     }
+
+    /**
+     * Passive read-only F0 funnel telemetry. Never modifies [acceptedTracks] or any gate outcome.
+     */
+    private fun computePassiveFunnelCounts(
+        pool: com.velvet.app.recommendation.candidates.CandidatePool,
+        evalReasonsById: Map<String, List<String>>,
+        keptAfterDuplicateFilter: List<com.velvet.app.recommendation.model.CandidateTrack>,
+        acceptedTracks: List<com.velvet.app.recommendation.model.RecommendedTrack>,
+        request: RecommendationRequest,
+    ): Pair<com.velvet.app.diagnostics.StageFunnelCounts, Map<String, com.velvet.app.diagnostics.StageFunnelCounts>> {
+        val keptByDedupeIds = keptAfterDuplicateFilter.mapTo(HashSet()) { it.song.id }
+        val acceptedIds = acceptedTracks.mapTo(HashSet()) { it.song.id }
+
+        data class GatePass(
+            val baseElig: Boolean,
+            val idDedupe: Boolean,
+            val langOk: Boolean,
+            val genreTypeOk: Boolean,
+            val purityOk: Boolean,
+            val accepted: Boolean,
+        )
+
+        val refSongs = (
+            request.seedSongs +
+                listOfNotNull(request.currentSong) +
+                request.queueSongs +
+                request.userQueueSongs +
+                request.recentSongs
+            ).distinctBy { it.id }
+        val excludedRecs = (
+            request.excludedRecordingIds +
+                request.seedRecordingIds +
+                listOfNotNull(request.currentRecordingId) +
+                request.queueRecordingIds +
+                request.userQueueRecordingIds +
+                request.recentRecordingIds +
+                refSongs.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId } +
+                refSongs.map { com.velvet.app.playback.SongIdentity.canonicalGroupId(it) }
+            ).toHashSet()
+        val excludedIds = (request.excludedProviderIds + refSongs.map { it.id }).toHashSet()
+        val blockComp = !request.allowExplicitUserIntentOverride
+        val refComps = if (blockComp) {
+            refSongs.mapNotNullTo(HashSet()) { RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() } }
+        } else emptySet()
+
+        // Preserve all keptAfterDuplicateFilter winners; deduplicate other base-eligible tracks for funnel accounting
+        val seenRecs = HashSet<String>(excludedRecs).apply {
+            keptAfterDuplicateFilter.forEach { add(it.identity.canonicalRecordingId) }
+        }
+        val seenComps = HashSet<String>(refComps).apply {
+            if (blockComp) {
+                keptAfterDuplicateFilter.forEach {
+                    val ck = RecordingIdentityResolver.canonicalCompositionTitleKey(it.song)
+                    if (ck.isNotBlank()) add(ck)
+                }
+            }
+        }
+
+        val passBySongId = LinkedHashMap<String, GatePass>(pool.candidates.size)
+        for (cand in pool.candidates) {
+            val id = cand.song.id
+            val reasons = evalReasonsById[id].orEmpty()
+            val baseElig = reasons.none { !isLanguageReason(it) && !isGenreTypeReason(it) && !isArtistPurityReason(it) }
+            val langOk = baseElig && reasons.none(::isLanguageReason)
+            val genreOk = langOk && reasons.none(::isGenreTypeReason)
+            val purityOk = genreOk && reasons.none(::isArtistPurityReason)
+
+            val idDedupe = when {
+                !baseElig -> false
+                id in keptByDedupeIds -> true
+                else -> {
+                    val recId = cand.identity.canonicalRecordingId
+                    val grpId = com.velvet.app.playback.SongIdentity.canonicalGroupId(cand.song)
+                    val compKey = if (blockComp) RecordingIdentityResolver.canonicalCompositionTitleKey(cand.song) else ""
+                    val matchesKnown = id in excludedIds ||
+                        recId in excludedRecs ||
+                        grpId in excludedRecs ||
+                        (compKey.isNotBlank() && compKey in excludedRecs) ||
+                        refSongs.any { RecordingIdentityResolver.isSameRecording(it, cand.song) } ||
+                        (compKey.isNotBlank() && compKey in seenComps) ||
+                        recId in seenRecs ||
+                        grpId in seenRecs
+                    if (!matchesKnown) {
+                        seenRecs.add(recId)
+                        seenRecs.add(grpId)
+                        if (compKey.isNotBlank()) seenComps.add(compKey)
+                        true
+                    } else false
+                }
+            }
+
+            val finalPurityOk = purityOk && idDedupe
+            passBySongId[id] = GatePass(
+                baseElig = baseElig,
+                idDedupe = idDedupe,
+                langOk = langOk && idDedupe,
+                genreTypeOk = genreOk && idDedupe,
+                purityOk = finalPurityOk,
+                accepted = finalPurityOk && id in acceptedIds,
+            )
+        }
+
+        fun countFunnel(sourceId: String, fetched: Int, subset: List<com.velvet.app.recommendation.model.CandidateTrack>): com.velvet.app.diagnostics.StageFunnelCounts {
+            var elig = 0
+            var dedupe = 0
+            var lang = 0
+            var genre = 0
+            var purity = 0
+            var acc = 0
+            for (c in subset) {
+                val p = passBySongId[c.song.id] ?: continue
+                if (p.baseElig) elig++
+                if (p.idDedupe) dedupe++
+                if (p.langOk) lang++
+                if (p.genreTypeOk) genre++
+                if (p.purityOk) purity++
+                if (p.accepted) acc++
+            }
+            return com.velvet.app.diagnostics.StageFunnelCounts(
+                sourceId = sourceId,
+                fetched = maxOf(fetched, subset.size),
+                afterEligibility = elig,
+                afterIdentityDedupe = dedupe,
+                afterDismissedFilter = dedupe,
+                afterLanguageGate = lang,
+                afterGenreTypeGate = genre,
+                afterArtistPurity = purity,
+                accepted = acc,
+                appended = acc,
+            )
+        }
+
+        val allSourceIds = (pool.rawCountBySource.keys + pool.sourceHealth.keys + pool.candidates.flatMap { it.sourceIds }).toSortedSet()
+        val perSource = LinkedHashMap<String, com.velvet.app.diagnostics.StageFunnelCounts>()
+        for (srcId in allSourceIds) {
+            val rawFetched = pool.rawCountBySource[srcId] ?: pool.sourceHealth[srcId]?.returnedCount ?: 0
+            val srcCands = pool.candidates.filter { srcId in it.sourceIds }
+            perSource[srcId] = countFunnel(srcId, rawFetched, srcCands)
+        }
+        val total = countFunnel("TOTAL", pool.rawFetchedCount, pool.candidates).copy(
+            accepted = acceptedTracks.size,
+            appended = acceptedTracks.size,
+        )
+        return total to perSource
+    }
+
+    private fun isLanguageReason(reason: String): Boolean =
+        reason == "artist_language_mismatch" ||
+            reason == "vibe_language_mismatch" ||
+            reason == "explicit_language_mismatch" ||
+            reason == "unknown_language_low_vibe_or_untrusted_lineage" ||
+            reason == "devotional_regional_mismatch"
+
+    private fun isGenreTypeReason(reason: String): Boolean =
+        reason == "music_type_genre_mismatch" ||
+            reason == "genre_compatibility_below_threshold" ||
+            reason == "devotional_category_mismatch"
+
+    private fun isArtistPurityReason(reason: String): Boolean =
+        reason == "artist_station_unrelated_artist"
 }

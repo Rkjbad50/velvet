@@ -32,6 +32,47 @@ data class SessionVibeSummary(
     val mood: String = "unknown",
 )
 
+data class StageFunnelCounts(
+    val sourceId: String,
+    val fetched: Int = 0,
+    val afterEligibility: Int = 0,
+    val afterIdentityDedupe: Int = 0,
+    val afterDismissedFilter: Int = 0,
+    val afterLanguageGate: Int = 0,
+    val afterGenreTypeGate: Int = 0,
+    val afterArtistPurity: Int = 0,
+    val accepted: Int = 0,
+    val appended: Int = 0,
+) {
+    fun formatLine(): String =
+        "$sourceId: fetched=$fetched elig=$afterEligibility dedupe=$afterIdentityDedupe " +
+            "dismiss=$afterDismissedFilter lang=$afterLanguageGate genre=$afterGenreTypeGate " +
+            "purity=$afterArtistPurity acc=$accepted app=$appended"
+}
+
+data class RefillFunnelRecord(
+    val timestampMs: Long,
+    val requestId: String,
+    val mode: String,
+    val anchorId: String,
+    val anchorTitle: String,
+    val wasSteppedAnchor: Boolean = false,
+    val steppedFromAnchorId: String? = null,
+    val decision: String,
+    val decisionReason: String,
+    val latencyMs: Long,
+    val queueAheadBefore: Int,
+    val queueAheadAfter: Int,
+    val continuationPagesFetched: Int = 0,
+    val continuationHasNext: Boolean = false,
+    val totalFunnel: StageFunnelCounts = StageFunnelCounts("TOTAL"),
+    val perGeneratorFunnels: Map<String, StageFunnelCounts> = emptyMap(),
+    val rejectReasonCounts: Map<String, Int> = emptyMap(),
+    val acceptedSourceIds: Set<String> = emptySet(),
+    val acceptedFromLibraryOrInstantCatalog: Boolean = false,
+    val libraryOrInstantAcceptedCount: Int = 0,
+)
+
 data class QueueHealthSnapshot(
     val aheadCount: Int = 0,
     val userQueueCount: Int = 0,
@@ -48,17 +89,20 @@ data class QueueHealthSnapshot(
     val rejectReasonCounts: Map<String, Int> = emptyMap(),
     val sourceHealth: Map<String, SourceHealth> = emptyMap(),
     val recentDecisions: List<RefillDecisionRecord> = emptyList(),
+    val recentFunnels: List<RefillFunnelRecord> = emptyList(),
 )
 
 /**
- * Passive read-only observability aggregator backing Developer Options > Queue Health (C8).
+ * Passive read-only observability aggregator backing Developer Options > Queue Health (C8 + F0).
  * Never alters playback decisions or blocks playback threads.
  */
 object QueueHealthMonitor {
     const val MAX_DECISIONS = 20
+    const val MAX_FUNNELS = 30
 
     private val lock = Any()
     private val decisions = ArrayDeque<RefillDecisionRecord>(MAX_DECISIONS)
+    private val funnels = ArrayDeque<RefillFunnelRecord>(MAX_FUNNELS)
     private val cumulativeRejects = linkedMapOf<String, Int>()
     private val latestSourceHealth = linkedMapOf<String, SourceHealth>()
 
@@ -278,12 +322,114 @@ object QueueHealthMonitor {
                     appendLine("${idx + 1}. [${tf.format(Date(d.timestampMs))}] ${d.mode} | ${d.outcome} (${d.reason}) | +${d.appendedCount} | ${d.durationMs}ms | ahead=${d.queueAheadAfter} | seed=${d.seedTitle}")
                 }
             }
+            appendLine()
+            appendLine("--- LAST ${snapshot.recentFunnels.size} REFILL FUNNELS ---")
+            if (snapshot.recentFunnels.isEmpty()) {
+                appendLine("(none recorded yet)")
+            } else {
+                append(formatFunnelsBodyLocked(snapshot.recentFunnels, tf))
+            }
+        }
+    }
+
+    fun recordRefillFunnel(record: RefillFunnelRecord) {
+        synchronized(lock) {
+            if (funnels.size >= MAX_FUNNELS) {
+                funnels.removeFirst()
+            }
+            funnels.addLast(record)
+            _state.value = _state.value.copy(
+                recentFunnels = funnels.toList().reversed(),
+            )
+        }
+        val summary = buildString {
+            append("${record.mode} ${record.decision}(${record.decisionReason}) ")
+            append("anchor=${record.anchorId}")
+            if (record.wasSteppedAnchor) append("(steppedFrom=${record.steppedFromAnchorId})")
+            append(" ahead=${record.queueAheadBefore}->${record.queueAheadAfter}")
+            append(" contPages=${record.continuationPagesFetched} hasNext=${record.continuationHasNext}")
+            append(" ${record.latencyMs}ms libOnly=${record.acceptedFromLibraryOrInstantCatalog}(${record.libraryOrInstantAcceptedCount})")
+            append(" | ${record.totalFunnel.formatLine()}")
+            if (record.acceptedSourceIds.isNotEmpty()) {
+                append(" | srcs=${record.acceptedSourceIds.sorted().joinToString(",")}")
+            }
+        }
+        DiagnosticsLogger.i("RefillFunnel", summary)
+    }
+
+    fun updateFunnelAppended(
+        requestId: String,
+        actualAppended: Int,
+        queueAheadAfter: Int,
+    ) {
+        if (requestId.isBlank()) return
+        synchronized(lock) {
+            val idx = funnels.indexOfLast { it.requestId == requestId }
+            if (idx < 0) return
+            val list = funnels.toMutableList()
+            val cur = list[idx]
+            val updated = cur.copy(
+                queueAheadAfter = queueAheadAfter,
+                totalFunnel = cur.totalFunnel.copy(appended = actualAppended),
+            )
+            list[idx] = updated
+            funnels.clear()
+            funnels.addAll(list)
+            _state.value = _state.value.copy(
+                aheadCount = queueAheadAfter,
+                recentFunnels = funnels.toList().reversed(),
+            )
+        }
+    }
+
+    fun recentFunnels(limit: Int = MAX_FUNNELS): List<RefillFunnelRecord> = synchronized(lock) {
+        funnels.toList().reversed().take(limit.coerceAtLeast(0))
+    }
+
+    fun formatLastFunnelsPlainText(limit: Int = MAX_FUNNELS): String {
+        val list = recentFunnels(limit)
+        val tf = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+        val raw = buildString {
+            appendLine("=== VELVET LAST ${list.size} REFILL FUNNELS (MAX $MAX_FUNNELS) ===")
+            if (list.isEmpty()) {
+                appendLine("(no refill funnels recorded yet)")
+            } else {
+                append(formatFunnelsBodyLocked(list, tf))
+            }
+        }
+        return DiagnosticsLogger.redact(raw)
+    }
+
+    private fun formatFunnelsBodyLocked(
+        list: List<RefillFunnelRecord>,
+        tf: SimpleDateFormat,
+    ): String = buildString {
+        list.forEachIndexed { idx, f ->
+            val steppedText = if (f.wasSteppedAnchor) "YES (from=${f.steppedFromAnchorId ?: "unknown"})" else "NO"
+            val libCount = f.libraryOrInstantAcceptedCount
+            val totalAcc = f.totalFunnel.accepted
+            val libPct = if (totalAcc > 0) (libCount * 100) / totalAcc else 0
+            appendLine("${idx + 1}. [${tf.format(Date(f.timestampMs))}] mode=${f.mode} decision=${f.decision}(${f.decisionReason}) latency=${f.latencyMs}ms ahead=${f.queueAheadBefore}->${f.queueAheadAfter}")
+            appendLine("   anchor=${f.anchorId} stepped=$steppedText title=${f.anchorTitle} | contPages=${f.continuationPagesFetched} hasNext=${f.continuationHasNext}")
+            appendLine("   acceptedSources=${f.acceptedSourceIds.sorted().joinToString(",").ifBlank { "(none)" }} | libOrInstant=${f.acceptedFromLibraryOrInstantCatalog} ($libCount/$totalAcc = ${libPct}%)")
+            appendLine("   ${f.totalFunnel.formatLine()}")
+            if (f.perGeneratorFunnels.isNotEmpty()) {
+                f.perGeneratorFunnels.toSortedMap().values.forEach { g ->
+                    appendLine("     - ${g.formatLine()}")
+                }
+            }
+            if (f.rejectReasonCounts.isNotEmpty()) {
+                val rejects = f.rejectReasonCounts.entries.sortedByDescending { it.value }
+                    .joinToString(", ") { "${it.key}=${it.value}" }
+                appendLine("   rejects: $rejects")
+            }
         }
     }
 
     fun clearForTest() {
         synchronized(lock) {
             decisions.clear()
+            funnels.clear()
             cumulativeRejects.clear()
             latestSourceHealth.clear()
             _state.value = QueueHealthSnapshot()

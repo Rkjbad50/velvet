@@ -26,6 +26,7 @@ data class CandidatePool(
     val sourceHealth: Map<String, SourceHealth>,
     val rawFetchedCount: Int,
     val fromCache: Boolean = false,
+    val rawCountBySource: Map<String, Int> = emptyMap(),
 )
 
 /**
@@ -183,10 +184,12 @@ class CandidatePoolBuilder(
         }
 
         val healthMap = linkedMapOf<String, SourceHealth>()
+        val rawCountBySource = linkedMapOf<String, Int>()
         val rawMergedByVideoId = linkedMapOf<String, MutableList<RawTrackCandidate>>()
         var rawFetchedCount = 0
 
         for (res in sourceResults) {
+            rawCountBySource[res.sourceId] = res.candidates.size
             healthMap[res.sourceId] = circuitBreaker.currentHealth(res.sourceId) ?: SourceHealth(
                 sourceId = res.sourceId,
                 status = res.status,
@@ -248,6 +251,7 @@ class CandidatePoolBuilder(
             sourceHealth = healthMap,
             rawFetchedCount = rawFetchedCount,
             fromCache = false,
+            rawCountBySource = rawCountBySource,
         )
         if (finalCandidates.isNotEmpty()) {
             cache[cacheKey] = CachedPoolEntry(pool, retrievedAt)

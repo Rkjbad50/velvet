@@ -1,5 +1,6 @@
 package com.velvet.app.recommendation.engine
 
+import com.velvet.app.diagnostics.StageFunnelCounts
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.SourceHealth
 import java.util.concurrent.ConcurrentLinkedDeque
@@ -23,6 +24,8 @@ data class RecommendationDiagnostics(
     val durationMs: Long,
     val usedCache: Boolean,
     val recordedAtMillis: Long,
+    val totalFunnel: StageFunnelCounts? = null,
+    val perGeneratorFunnels: Map<String, StageFunnelCounts> = emptyMap(),
 )
 
 class RecommendationDiagnosticsLog(

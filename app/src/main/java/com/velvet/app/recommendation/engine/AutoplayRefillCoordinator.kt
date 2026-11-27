@@ -138,6 +138,27 @@ class AutoplayRefillCoordinator(
         }
     }
 
+    private class FunnelCapture(
+        val anchorId: String,
+        val anchorTitle: String,
+    ) {
+        var requestId: String = ""
+        var wasSteppedAnchor: Boolean = false
+        var steppedFromAnchorId: String? = null
+        var activeAnchorId: String = anchorId
+        var activeAnchorTitle: String = anchorTitle
+        var engineDiag: RecommendationDiagnostics? = null
+        var steppedDiag: RecommendationDiagnostics? = null
+        var dismissedDropCount: Int = 0
+        var rollingPoolFetched: Int = 0
+        var rollingPoolAccepted: Int = 0
+        var urgentFallbackFetched: Int = 0
+        var urgentFallbackAccepted: Int = 0
+        var acceptedSongs: List<Song> = emptyList()
+        var acceptedSourceIds: Set<String> = emptySet()
+        var libraryOrInstantAcceptedCount: Int = 0
+    }
+
     suspend fun requestRefill(
         initialSnapshot: QueueRefillSnapshot,
         latestSnapshotProvider: () -> QueueRefillSnapshot,
@@ -147,6 +168,10 @@ class AutoplayRefillCoordinator(
         dismissedFilter: (Song) -> Boolean = { false },
     ): RefillDecision {
         val startMs = clock()
+        val resolvedAnchor = resolveAnchor(initialSnapshot, seedId)
+        val anchorId = resolvedAnchor?.id ?: "(none)"
+        val anchorTitle = resolvedAnchor?.title ?: "(none)"
+        val capture = FunnelCapture(anchorId = anchorId, anchorTitle = anchorTitle)
         val decision = runCatching {
             requestRefillInternal(
                 initialSnapshot = initialSnapshot,
@@ -155,9 +180,9 @@ class AutoplayRefillCoordinator(
                 autoPlayNext = autoPlayNext,
                 force = force,
                 dismissedFilter = dismissedFilter,
+                capture = capture,
             )
         }.getOrElse { throw it }
-        val anchorTitle = resolveAnchor(initialSnapshot, seedId)?.title ?: "(none)"
         val modeName = when {
             initialSnapshot.isArtistRadioActive -> RecommendationMode.ARTIST_RADIO.name
             initialSnapshot.isRadioActive -> RecommendationMode.SONG_RADIO.name
@@ -166,6 +191,11 @@ class AutoplayRefillCoordinator(
         val latestSnap = runCatching { latestSnapshotProvider() }.getOrElse { initialSnapshot }
         val durationMs = (clock() - startMs).coerceAtLeast(0L)
         val snapStatus = stateMutex.withLock { state.status }
+        val queueAheadBefore = initialSnapshot.upcomingSongs.size
+        val queueAheadAfter = when (decision) {
+            is RefillDecision.AppendSongs -> latestSnap.upcomingSongs.size + decision.songs.size
+            else -> latestSnap.upcomingSongs.size
+        }
         when (decision) {
             is RefillDecision.AppendSongs -> com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillDecision(
                 seedTitle = anchorTitle,
@@ -174,7 +204,7 @@ class AutoplayRefillCoordinator(
                 reason = "ok",
                 appendedCount = decision.songs.size,
                 durationMs = durationMs,
-                queueAheadAfter = latestSnap.upcomingSongs.size + decision.songs.size,
+                queueAheadAfter = queueAheadAfter,
                 status = snapStatus,
                 timestampMs = clock(),
             )
@@ -185,7 +215,7 @@ class AutoplayRefillCoordinator(
                 reason = decision.reason,
                 appendedCount = 0,
                 durationMs = durationMs,
-                queueAheadAfter = latestSnap.upcomingSongs.size,
+                queueAheadAfter = queueAheadAfter,
                 status = decision.status,
                 timestampMs = clock(),
             )
@@ -196,12 +226,140 @@ class AutoplayRefillCoordinator(
                 reason = decision.reason,
                 appendedCount = 0,
                 durationMs = durationMs,
-                queueAheadAfter = latestSnap.upcomingSongs.size,
+                queueAheadAfter = queueAheadAfter,
                 status = snapStatus,
                 timestampMs = clock(),
             )
         }
+        recordFunnelToMonitor(
+            capture = capture,
+            decision = decision,
+            modeName = modeName,
+            durationMs = durationMs,
+            queueAheadBefore = queueAheadBefore,
+            queueAheadAfter = queueAheadAfter,
+        )
         return decision
+    }
+
+    private fun recordFunnelToMonitor(
+        capture: FunnelCapture,
+        decision: RefillDecision,
+        modeName: String,
+        durationMs: Long,
+        queueAheadBefore: Int,
+        queueAheadAfter: Int,
+    ) {
+        val activeDiag = capture.steppedDiag ?: capture.engineDiag
+        val perGen = linkedMapOf<String, com.velvet.app.diagnostics.StageFunnelCounts>()
+        activeDiag?.perGeneratorFunnels?.let { perGen.putAll(it) }
+
+        if (capture.rollingPoolFetched > 0 || capture.rollingPoolAccepted > 0) {
+            perGen["rolling_pool"] = com.velvet.app.diagnostics.StageFunnelCounts(
+                sourceId = "rolling_pool",
+                fetched = capture.rollingPoolFetched,
+                afterEligibility = capture.rollingPoolFetched,
+                afterIdentityDedupe = capture.rollingPoolFetched,
+                afterDismissedFilter = capture.rollingPoolAccepted,
+                afterLanguageGate = capture.rollingPoolAccepted,
+                afterGenreTypeGate = capture.rollingPoolAccepted,
+                afterArtistPurity = capture.rollingPoolAccepted,
+                accepted = capture.rollingPoolAccepted,
+                appended = capture.rollingPoolAccepted,
+            )
+        }
+        if (capture.wasSteppedAnchor && capture.steppedDiag != null) {
+            val sf = capture.steppedDiag?.totalFunnel
+            if (sf != null) {
+                perGen["stepped_anchor"] = sf.copy(sourceId = "stepped_anchor")
+            }
+        }
+        if (capture.urgentFallbackFetched > 0 || capture.urgentFallbackAccepted > 0) {
+            perGen["urgent_fallback"] = com.velvet.app.diagnostics.StageFunnelCounts(
+                sourceId = "urgent_fallback",
+                fetched = capture.urgentFallbackFetched,
+                afterEligibility = capture.urgentFallbackAccepted,
+                afterIdentityDedupe = capture.urgentFallbackAccepted,
+                afterDismissedFilter = capture.urgentFallbackAccepted,
+                afterLanguageGate = capture.urgentFallbackAccepted,
+                afterGenreTypeGate = capture.urgentFallbackAccepted,
+                afterArtistPurity = capture.urgentFallbackAccepted,
+                accepted = capture.urgentFallbackAccepted,
+                appended = capture.urgentFallbackAccepted,
+            )
+        }
+
+        val acceptedCount = when (decision) {
+            is RefillDecision.AppendSongs -> decision.songs.size
+            else -> 0
+        }
+        val baseTotal = activeDiag?.totalFunnel
+        val dismissedAdjusted = if (baseTotal != null) {
+            (baseTotal.afterDismissedFilter - capture.dismissedDropCount).coerceAtLeast(acceptedCount)
+        } else 0
+        val totalFunnel = if (baseTotal != null) {
+            baseTotal.copy(
+                fetched = baseTotal.fetched + capture.rollingPoolFetched + capture.urgentFallbackFetched,
+                afterDismissedFilter = dismissedAdjusted,
+                accepted = acceptedCount,
+                appended = acceptedCount,
+            )
+        } else {
+            com.velvet.app.diagnostics.StageFunnelCounts(
+                sourceId = "TOTAL",
+                fetched = capture.rollingPoolFetched + capture.urgentFallbackFetched,
+                accepted = acceptedCount,
+                appended = acceptedCount,
+            )
+        }
+
+        val (decisionLabel, decisionReason) = when (decision) {
+            is RefillDecision.AppendSongs -> "APPENDED" to "ok"
+            is RefillDecision.Skip -> (if (decision.reason == "anchor_exhausted") "EXHAUSTED" else "SKIP") to decision.reason
+            is RefillDecision.SafeEmpty -> (if (decision.status == RefillStatus.EXHAUSTED) "EXHAUSTED" else "COOLDOWN") to decision.reason
+        }
+        val requestId = when (decision) {
+            is RefillDecision.AppendSongs -> decision.requestId
+            is RefillDecision.SafeEmpty -> decision.requestId.ifBlank { capture.requestId }
+            is RefillDecision.Skip -> capture.requestId
+        }.ifBlank { "refill-${clock()}" }
+
+        val nextStats = runCatching {
+            com.velvet.app.data.StreamResolver.peekNextStats(capture.activeAnchorId)
+                ?: com.velvet.app.data.YouTubeMusicInnertube.peekNextStats(capture.activeAnchorId)
+        }.getOrNull()
+
+        val rejects = linkedMapOf<String, Int>()
+        capture.engineDiag?.rejectedReasonCounts?.forEach { (k, v) -> rejects[k] = (rejects[k] ?: 0) + v }
+        capture.steppedDiag?.rejectedReasonCounts?.forEach { (k, v) -> rejects["stepped:$k"] = (rejects["stepped:$k"] ?: 0) + v }
+        if (capture.dismissedDropCount > 0) {
+            rejects["dismissed_in_session"] = capture.dismissedDropCount
+        }
+
+        com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillFunnel(
+            com.velvet.app.diagnostics.RefillFunnelRecord(
+                timestampMs = clock(),
+                requestId = requestId,
+                mode = modeName,
+                anchorId = capture.activeAnchorId,
+                anchorTitle = capture.activeAnchorTitle,
+                wasSteppedAnchor = capture.wasSteppedAnchor,
+                steppedFromAnchorId = capture.steppedFromAnchorId,
+                decision = decisionLabel,
+                decisionReason = decisionReason,
+                latencyMs = durationMs,
+                queueAheadBefore = queueAheadBefore,
+                queueAheadAfter = queueAheadAfter,
+                continuationPagesFetched = nextStats?.pagesFetched ?: 0,
+                continuationHasNext = nextStats?.hasNext ?: false,
+                totalFunnel = totalFunnel,
+                perGeneratorFunnels = perGen,
+                rejectReasonCounts = rejects,
+                acceptedSourceIds = capture.acceptedSourceIds,
+                acceptedFromLibraryOrInstantCatalog = capture.libraryOrInstantAcceptedCount > 0,
+                libraryOrInstantAcceptedCount = capture.libraryOrInstantAcceptedCount,
+            ),
+        )
     }
 
     private suspend fun requestRefillInternal(
@@ -211,6 +369,7 @@ class AutoplayRefillCoordinator(
         autoPlayNext: Boolean,
         force: Boolean,
         dismissedFilter: (Song) -> Boolean,
+        capture: FunnelCapture,
     ): RefillDecision {
         val anchor = resolveAnchor(initialSnapshot, seedId)
             ?: return RefillDecision.Skip("no_anchor_song")
@@ -398,6 +557,11 @@ class AutoplayRefillCoordinator(
             }
 
             val rawEngineSongs = engineResult?.candidates.orEmpty().map { it.song }
+            capture.engineDiag = engineResult?.diagnosticsId?.let { diagId ->
+                (engine as? DefaultRecommendationEngine)?.diagnosticsLog?.recent(12)?.find { it.diagnosticsId == diagId }
+            }
+            capture.requestId = engineResult?.requestId.orEmpty()
+            capture.dismissedDropCount = rawEngineSongs.count { dismissedFilter(it) }
             var acceptedSongs = rawEngineSongs.filter(::isSongEligibleForCommit)
             val surplusEngineSongs = buildList {
                 if (acceptedSongs.size > neededCount) addAll(acceptedSongs.drop(neededCount))
@@ -420,7 +584,9 @@ class AutoplayRefillCoordinator(
             }
 
             // Top up from the rolling candidate pool (100-200 song buffer) before stepping anchors
+            var rollingTakeIds: Set<String> = emptySet()
             if (acceptedSongs.size < neededCount && rollingPool.size() > 0) {
+                capture.rollingPoolFetched = rollingPool.size()
                 val poolTake = rollingPool.drainEligible(
                     maxCount = neededCount - acceptedSongs.size,
                     excludedIds = alreadyInQueueIds + latest.excludedProviderIds + acceptedSongs.map { it.id },
@@ -434,11 +600,14 @@ class AutoplayRefillCoordinator(
                     },
                 )
                 if (poolTake.isNotEmpty()) {
+                    rollingTakeIds = poolTake.mapTo(HashSet()) { it.id }
+                    capture.rollingPoolAccepted = poolTake.size
                     acceptedSongs = (acceptedSongs + poolTake).distinctBy { it.id }
                 }
             }
 
             // C4: Anchor stepping on exhaustion (retry next-most-recent liked/completed track while keeping SessionVibe locked)
+            var steppedEngineResult: RecommendationResult? = null
             if (acceptedSongs.isEmpty() && mode != RecommendationMode.ARTIST_RADIO && latest.fallbackAnchorPool.isNotEmpty()) {
                 val steppedCandidates = latest.fallbackAnchorPool
                     .filter { it.id != anchor.id && it.id.isNotBlank() }
@@ -472,6 +641,14 @@ class AutoplayRefillCoordinator(
                         .map { it.song }
                         .filter(::isSongEligibleForCommit)
                     if (validStepped.isNotEmpty()) {
+                        steppedEngineResult = steppedResult
+                        capture.wasSteppedAnchor = true
+                        capture.steppedFromAnchorId = anchor.id
+                        capture.activeAnchorId = stepAnchor.id
+                        capture.activeAnchorTitle = stepAnchor.title
+                        capture.steppedDiag = steppedResult?.diagnosticsId?.let { diagId ->
+                            (engine as? DefaultRecommendationEngine)?.diagnosticsLog?.recent(12)?.find { it.diagnosticsId == diagId }
+                        }
                         acceptedSongs = validStepped.take(neededCount)
                         if (validStepped.size > neededCount) {
                             rollingPool.merge(
@@ -492,6 +669,7 @@ class AutoplayRefillCoordinator(
 
             com.velvet.app.diagnostics.QueueHealthMonitor.recordRollingPoolSize(rollingPool.size())
 
+            var usedUrgentFallback = false
             if (acceptedSongs.isEmpty() && canTryUrgentFallback) {
                 val fallbackRaw = try {
                     withTimeoutOrNull(1_500L) {
@@ -502,6 +680,7 @@ class AutoplayRefillCoordinator(
                 } catch (_: Exception) {
                     emptyList()
                 }
+                capture.urgentFallbackFetched = fallbackRaw.size
                 val vibe = com.velvet.app.recommendation.vibe.SessionVibe.fromSessionTracks(
                     tracks = listOf(anchor) + latest.historySongs.takeLast(4).reversed(),
                     featureRepository = featureRepository,
@@ -548,7 +727,39 @@ class AutoplayRefillCoordinator(
                     }
                     .take(neededCount)
                     .toList()
+                usedUrgentFallback = acceptedSongs.isNotEmpty()
+                capture.urgentFallbackAccepted = acceptedSongs.size
             }
+
+            // Record accepted source IDs & library-only share into funnel capture
+            val trackSourceMap = buildMap<String, Set<String>> {
+                engineResult?.candidates.orEmpty().forEach { put(it.song.id, it.sourceIds) }
+                steppedEngineResult?.candidates.orEmpty().forEach { put(it.song.id, it.sourceIds) }
+            }
+            val acceptedSources = linkedSetOf<String>()
+            var libOnlyCount = 0
+            for (s in acceptedSongs) {
+                when {
+                    usedUrgentFallback -> {
+                        acceptedSources.add("urgent_fallback")
+                        libOnlyCount++
+                    }
+                    s.id in rollingTakeIds -> {
+                        acceptedSources.add("rolling_pool")
+                    }
+                    else -> {
+                        val srcs = trackSourceMap[s.id].orEmpty()
+                        acceptedSources.addAll(srcs)
+                        if (capture.wasSteppedAnchor) acceptedSources.add("stepped_anchor")
+                        if (srcs.isNotEmpty() && srcs.all { it == "g6_library" || it == "g0_instant_catalog" }) {
+                            libOnlyCount++
+                        }
+                    }
+                }
+            }
+            capture.acceptedSongs = acceptedSongs
+            capture.acceptedSourceIds = acceptedSources
+            capture.libraryOrInstantAcceptedCount = libOnlyCount
 
             val resolvedResult = engineResult ?: RecommendationResult(
                 requestId = failureReason ?: "urgent-fallback",

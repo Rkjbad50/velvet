@@ -103,7 +103,27 @@ fun QueueHealthScreen(onBack: () -> Unit) {
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
+
+        OutlinedButton(
+            onClick = {
+                val funnelText = QueueHealthMonitor.formatLastFunnelsPlainText(limit = 30)
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("VELVET Last 30 Refill Funnels", funnelText))
+                Toast.makeText(context, "Last 30 refill funnels copied", Toast.LENGTH_SHORT).show()
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            Text(
+                text = "Copy last 30 refill funnels (${snapshot.recentFunnels.size}/30)",
+                color = velvetColors.accentText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
 
         Box(
             Modifier
