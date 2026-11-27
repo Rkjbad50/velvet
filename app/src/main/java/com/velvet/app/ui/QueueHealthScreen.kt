@@ -84,8 +84,12 @@ fun QueueHealthScreen(onBack: () -> Unit) {
                         color = velvetColors.text,
                         fontWeight = FontWeight.Bold,
                     )
+                    val readyPrefetch = snapshot.streamPrefetchEntries.count {
+                        it.status == com.velvet.app.diagnostics.StreamPrefetchStatus.CACHED ||
+                            it.status == com.velvet.app.diagnostics.StreamPrefetchStatus.DOWNLOADED
+                    }
                     Text(
-                        text = "Ahead: ${snapshot.aheadCount} • State: ${snapshot.runwayState}",
+                        text = "Ahead: ${snapshot.aheadCount} • ${snapshot.runwayState} • Prefetch: $readyPrefetch/${snapshot.streamPrefetchEntries.size} • Stalls R/S: ${snapshot.refillStallCount}/${snapshot.streamResolveStallCount}",
                         style = MaterialTheme.typography.bodySmall,
                         color = velvetColors.muted,
                     )
@@ -165,8 +169,12 @@ internal fun DevQueueHealthEntryCard(onOpen: () -> Unit) {
                 color = velvetColors.accentText,
             )
             Spacer(Modifier.height(6.dp))
+            val readyPrefetch = snapshot.streamPrefetchEntries.count {
+                it.status == com.velvet.app.diagnostics.StreamPrefetchStatus.CACHED ||
+                    it.status == com.velvet.app.diagnostics.StreamPrefetchStatus.DOWNLOADED
+            }
             Text(
-                text = "Ahead: ${snapshot.aheadCount} • State: ${snapshot.runwayState} • Catalog: ${snapshot.instantCatalogSize}",
+                text = "Ahead: ${snapshot.aheadCount} • ${snapshot.runwayState} • Prefetch: $readyPrefetch/${snapshot.streamPrefetchEntries.size} • Stalls R/S: ${snapshot.refillStallCount}/${snapshot.streamResolveStallCount}",
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 color = velvetColors.text,

@@ -63,10 +63,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.velvet.app.BuildConfig
 import com.velvet.app.VelvetApp
+import com.velvet.app.data.LanguageLocaleConfig
 import com.velvet.app.data.ReleaseCheck
 import com.velvet.app.data.StreamResolver
 import com.velvet.app.data.UpdateInfo
 import com.velvet.app.data.YouTube
+import com.velvet.app.diagnostics.AutoplaySoakTester
 import com.velvet.app.diagnostics.CheckResult
 import com.velvet.app.diagnostics.DiagnosticRunner
 import com.velvet.app.diagnostics.DiagnosticStep
@@ -93,6 +95,7 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
     val lastError by LastErrorTracker.lastError.collectAsStateWithLifecycle()
     val diagState by DiagnosticRunner.state.collectAsStateWithLifecycle()
+    val soakState by AutoplaySoakTester.state.collectAsStateWithLifecycle()
     val logEntries by DiagnosticsLogger.entries.collectAsStateWithLifecycle()
 
     var activeLogFilter by remember { mutableStateOf<LogLevel?>(null) }
@@ -170,6 +173,113 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
         val nav = LocalNav.current
         DevQueueHealthEntryCard(onOpen = { nav.open(Route.QueueHealth) })
+        Spacer(Modifier.height(16.dp))
+
+        // A0.5: Autoplay Soak Test (60 Advances, No Audio)
+        LaunchedEffect(libraryData.musicLanguages) {
+            if (!soakState.isRunning && soakState.result == null) {
+                libraryData.musicLanguages.firstOrNull()?.let { AutoplaySoakTester.selectLanguage(it) }
+            }
+        }
+        DevSectionCard(title = "A0.5 • Autoplay Soak Test (60 Advances)") {
+            Text(
+                text = "Runs the real recommendation engine & network across 60 simulated queue advances (no audio playback).",
+                style = MaterialTheme.typography.bodySmall,
+                color = velvetColors.muted,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                LanguageLocaleConfig.allLanguages.forEach { spec ->
+                    FilterChip(
+                        text = spec.id,
+                        selected = soakState.selectedLanguage.equals(spec.id, ignoreCase = true),
+                    ) {
+                        AutoplaySoakTester.selectLanguage(spec.id)
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = { AutoplaySoakTester.startForLanguage(soakState.selectedLanguage) },
+                    enabled = !soakState.isRunning,
+                    colors = ButtonDefaults.buttonColors(containerColor = velvetColors.accent),
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    if (soakState.isRunning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Step ${soakState.currentStep}/${soakState.targetSteps}", color = Color.White)
+                    } else {
+                        Text("Run Autoplay Soak Test", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (soakState.isRunning) {
+                    OutlinedButton(
+                        onClick = { AutoplaySoakTester.stop() },
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text("Stop", color = velvetColors.text)
+                    }
+                }
+            }
+            if (soakState.isRunning || soakState.result != null || soakState.errorMessage != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = soakState.errorMessage?.let { "Error: $it" } ?: soakState.statusLine,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (soakState.errorMessage != null) Color(0xFFEF5350) else velvetColors.accentText,
+                )
+            }
+            soakState.result?.let { soakResult ->
+                val soakReport = remember(soakResult) { soakResult.formatPlainText() }
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF101214))
+                        .border(1.dp, velvetColors.rule, RoundedCornerShape(8.dp))
+                        .verticalScroll(rememberScrollState())
+                        .padding(8.dp),
+                ) {
+                    Text(
+                        text = soakReport,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                        color = Color(0xFFECEFF1),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("VELVET Autoplay Soak Report", soakReport))
+                        Toast.makeText(context, "Soak test report copied", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text("Copy Soak Test Report", color = velvetColors.text, fontSize = 13.sp)
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
         DevLastCrashCard()
         Spacer(Modifier.height(16.dp))

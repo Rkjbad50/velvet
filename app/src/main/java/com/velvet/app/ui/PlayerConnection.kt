@@ -286,7 +286,19 @@ object PlayerConnection {
             anchor = current,
             requestedLanguages = langIds,
             featureRepository = featRepo,
+            isPlaying = isPlaying,
         )
+        if (appContext != null || StreamResolver.resolveProviderForTest != null) {
+            val upcomingIds = (queueManager.userQueue + queueManager.upNext)
+                .take(StreamResolver.UPCOMING_PREFETCH_COUNT)
+                .map { it.song.id }
+            if (upcomingIds.isNotEmpty()) {
+                val downloads = runCatching { VelvetApp.downloads }.getOrNull()
+                StreamResolver.prefetchUpcoming(upcomingIds) { id ->
+                    downloads?.fileFor(id) != null
+                }
+            }
+        }
         enrichActiveAndUpcomingArtworkIfNeeded()
         if (!restoringPlaybackState && current != null) {
             checkpointScheduler.scheduleDebounced()
@@ -510,6 +522,10 @@ object PlayerConnection {
 
     var isAutoplayLoading by mutableStateOf(false)
         private set
+    @Volatile
+    private var refillStallStartedAtMs: Long? = null
+    @Volatile
+    private var refillStallAnchorId: String? = null
 
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) = syncBasicState(player)
@@ -1507,6 +1523,10 @@ object PlayerConnection {
         }
 
         isAutoplayLoading = queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()
+        if (isAutoplayLoading && refillStallStartedAtMs == null) {
+            refillStallStartedAtMs = monoNowMs()
+            refillStallAnchorId = targetSeed.id
+        }
 
         val job = runway.triggerRefill(
             trigger = trigger,
@@ -1526,6 +1546,8 @@ object PlayerConnection {
         }
         if (job == null) {
             isAutoplayLoading = false
+            refillStallStartedAtMs = null
+            refillStallAnchorId = null
         }
     }
 
@@ -1538,6 +1560,8 @@ object PlayerConnection {
         val activeCurrentId = current?.id ?: queueManager.current?.id
         if (seedId == null && activeCurrentId != null && activeCurrentId != targetSeed.id) {
             isAutoplayLoading = false
+            refillStallStartedAtMs = null
+            refillStallAnchorId = null
             return
         }
 
@@ -1554,6 +1578,7 @@ object PlayerConnection {
         val filtered = candidateSongs.filter {
             it.id !in existingIds && !DismissedTrackRegistry.isDismissed(it)
         }
+        var committedAppendedCount = 0
         if (filtered.isNotEmpty()) {
             if (decision is RefillDecision.AppendSongs) {
                 VelvetApp.eventRecorderOrNull()?.registerAutoplayCandidates(
@@ -1585,6 +1610,7 @@ object PlayerConnection {
                     queueManager.start(filtered, 0, false)
                     actualAdded = filtered.size
                 }
+                committedAppendedCount = actualAdded
                 if (decision is RefillDecision.AppendSongs) {
                     com.velvet.app.diagnostics.QueueHealthMonitor.updateFunnelAppended(
                         requestId = decision.requestId,
@@ -1598,6 +1624,7 @@ object PlayerConnection {
                 val beforeAppend = queueManager.upNext.size
                 queueManager.appendAutoplay(filtered)
                 val actualAdded = (queueManager.upNext.size - beforeAppend).coerceAtLeast(0)
+                committedAppendedCount = actualAdded
                 if (decision is RefillDecision.AppendSongs) {
                     com.velvet.app.diagnostics.QueueHealthMonitor.updateFunnelAppended(
                         requestId = decision.requestId,
@@ -1621,6 +1648,21 @@ object PlayerConnection {
         } else if (autoPlayNext && queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()) {
             appContext?.let {
                 runCatching { Toast.makeText(it, "No similar tracks available right now", Toast.LENGTH_SHORT).show() }
+            }
+        }
+        val stallStart = refillStallStartedAtMs
+        val stallAnchor = refillStallAnchorId
+        refillStallStartedAtMs = null
+        refillStallAnchorId = null
+        if (stallStart != null) {
+            val waitMs = (monoNowMs() - stallStart).coerceAtLeast(0L)
+            if (waitMs >= 100L || decision !is RefillDecision.AppendSongs || committedAppendedCount == 0) {
+                com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillStall(
+                    anchorId = stallAnchor ?: targetSeed.id,
+                    anchorTitle = targetSeed.title,
+                    waitMs = waitMs,
+                    detail = "decision=${decision::class.simpleName} appended=$committedAppendedCount aheadAfter=${queueManager.upNext.size}",
+                )
             }
         }
         isAutoplayLoading = false

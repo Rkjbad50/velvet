@@ -2,7 +2,11 @@ package com.velvet.app.data
 
 import com.grack.nanojson.JsonObject
 import com.velvet.app.data.YouTube.toSong
+import com.velvet.app.diagnostics.DiagnosticsLogger
 import com.velvet.app.diagnostics.LastErrorTracker
+import com.velvet.app.diagnostics.QueueHealthMonitor
+import com.velvet.app.diagnostics.StreamPrefetchEntry
+import com.velvet.app.diagnostics.StreamPrefetchStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,9 +21,12 @@ import org.schabi.newpipe.extractor.stream.AudioTrackType
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.io.IOException
+import java.util.Collections
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Turns a video id into a direct googlevideo.com audio URL plus the headers YouTube
@@ -56,7 +63,19 @@ object StreamResolver {
     private val locks = BoundedCache<String, Any>(300)
     private val relatedCache = BoundedCache<String, List<Song>>(100)
     private val nextContinuationTokens = BoundedCache<String, String>(120)
+    private val prefetchInFlight = Collections.synchronizedSet(mutableSetOf<String>())
+    private val prefetchStatusById = ConcurrentHashMap<String, StreamPrefetchEntry>()
+    private val upcomingTargetIds = AtomicReference<List<String>>(emptyList())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    const val UPCOMING_PREFETCH_COUNT = 3
+    const val STREAM_RESOLVE_STALL_THRESHOLD_MS = 250L
+
+    @Volatile
+    internal var resolveProviderForTest: ((videoId: String) -> Resolved)? = null
+
+    @Volatile
+    internal var streamResolveStallThresholdMsForTest: Long? = null
 
     // Fast-path health. Songs whose fast stream failed to play use the full extractor; after a
     // couple of those, or a run of failed fast lookups, the fast path rests for a while.
@@ -84,10 +103,14 @@ object StreamResolver {
         cache.clear()
         relatedCache.clear()
         nextContinuationTokens.clear()
+        prefetchInFlight.clear()
+        prefetchStatusById.clear()
+        upcomingTargetIds.set(emptyList())
         fullOnly.clear()
         fastPlaybackFailures.set(0)
         fastLookupFailuresInARow.set(0)
         fastPausedUntilMs = 0L
+        QueueHealthMonitor.recordStreamPrefetch(emptyList())
     }
 
     private fun key(videoId: String, saver: Boolean) = videoId + if (saver) "|lo" else "|hi"
@@ -98,12 +121,136 @@ object StreamResolver {
     private fun peek(videoId: String, saver: Boolean): Resolved? =
         cache[key(videoId, saver)]?.takeIf { it.expiresAtMs > System.currentTimeMillis() }
 
-    /** Starts resolving stream audio URL and warms related recommendations in parallel. */
+    /** Starts resolving stream audio URL in background for one video ID. */
     fun prefetch(videoId: String) {
         if (!isValidVideoId(videoId)) return
-        if (peek(videoId) == null) {
-            scope.launch { runCatching { resolve(videoId) } }
+        launchPrefetchIfNeeded(videoId = videoId, slotIndex = 1, isDownloaded = false)
+        publishPrefetchSnapshot()
+    }
+
+    /**
+     * Prefetches direct audio stream URLs for the next [count] upcoming songs (N+1..N+3)
+     * in parallel off the main thread and exposes their readiness in [QueueHealthMonitor].
+     */
+    fun prefetchUpcoming(
+        videoIds: List<String>,
+        count: Int = UPCOMING_PREFETCH_COUNT,
+        isDownloaded: (String) -> Boolean = { false },
+    ): List<StreamPrefetchEntry> {
+        val targets = videoIds
+            .asSequence()
+            .filter { isValidVideoId(it) }
+            .distinct()
+            .take(count.coerceAtLeast(0))
+            .toList()
+        upcomingTargetIds.set(targets)
+        targets.forEachIndexed { idx, id ->
+            launchPrefetchIfNeeded(
+                videoId = id,
+                slotIndex = idx + 1,
+                isDownloaded = runCatching { isDownloaded(id) }.getOrDefault(false),
+            )
         }
+        return publishPrefetchSnapshot()
+    }
+
+    fun currentUpcomingPrefetchSnapshot(): List<StreamPrefetchEntry> =
+        upcomingTargetIds.get().mapIndexed { idx, id ->
+            val cached = peek(id)
+            val existing = prefetchStatusById[id]
+            when {
+                existing?.status == StreamPrefetchStatus.DOWNLOADED -> existing.copy(slotIndex = idx + 1)
+                cached != null -> StreamPrefetchEntry(
+                    videoId = id,
+                    slotIndex = idx + 1,
+                    status = StreamPrefetchStatus.CACHED,
+                    quality = cached.quality,
+                    latencyMs = existing?.latencyMs,
+                )
+                existing != null -> existing.copy(slotIndex = idx + 1)
+                else -> StreamPrefetchEntry(
+                    videoId = id,
+                    slotIndex = idx + 1,
+                    status = StreamPrefetchStatus.PENDING,
+                )
+            }
+        }
+
+    private fun launchPrefetchIfNeeded(
+        videoId: String,
+        slotIndex: Int,
+        isDownloaded: Boolean,
+    ) {
+        if (isDownloaded) {
+            prefetchStatusById[videoId] = StreamPrefetchEntry(
+                videoId = videoId,
+                slotIndex = slotIndex,
+                status = StreamPrefetchStatus.DOWNLOADED,
+            )
+            return
+        }
+        val cached = peek(videoId)
+        if (cached != null) {
+            val prev = prefetchStatusById[videoId]
+            prefetchStatusById[videoId] = StreamPrefetchEntry(
+                videoId = videoId,
+                slotIndex = slotIndex,
+                status = StreamPrefetchStatus.CACHED,
+                quality = cached.quality,
+                latencyMs = prev?.latencyMs,
+            )
+            return
+        }
+        val saverSnapshot = dataSaver
+        val k = key(videoId, saverSnapshot)
+        if (!prefetchInFlight.add(k)) {
+            val cur = prefetchStatusById[videoId]
+            if (cur == null) {
+                prefetchStatusById[videoId] = StreamPrefetchEntry(
+                    videoId = videoId,
+                    slotIndex = slotIndex,
+                    status = StreamPrefetchStatus.PREFETCHING,
+                )
+            }
+            return
+        }
+        prefetchStatusById[videoId] = StreamPrefetchEntry(
+            videoId = videoId,
+            slotIndex = slotIndex,
+            status = StreamPrefetchStatus.PREFETCHING,
+        )
+        scope.launch {
+            val t0 = System.currentTimeMillis()
+            try {
+                val resolved = resolveInternal(videoId, isPrefetch = true)
+                val dt = (System.currentTimeMillis() - t0).coerceAtLeast(0L)
+                prefetchStatusById[videoId] = StreamPrefetchEntry(
+                    videoId = videoId,
+                    slotIndex = slotIndex,
+                    status = StreamPrefetchStatus.CACHED,
+                    quality = resolved.quality,
+                    latencyMs = dt,
+                )
+            } catch (e: Exception) {
+                val dt = (System.currentTimeMillis() - t0).coerceAtLeast(0L)
+                prefetchStatusById[videoId] = StreamPrefetchEntry(
+                    videoId = videoId,
+                    slotIndex = slotIndex,
+                    status = StreamPrefetchStatus.FAILED,
+                    latencyMs = dt,
+                    error = e.message?.take(80) ?: e.javaClass.simpleName,
+                )
+            } finally {
+                prefetchInFlight.remove(k)
+                publishPrefetchSnapshot()
+            }
+        }
+    }
+
+    private fun publishPrefetchSnapshot(): List<StreamPrefetchEntry> {
+        val snap = currentUpcomingPrefetchSnapshot()
+        QueueHealthMonitor.recordStreamPrefetch(snap)
+        return snap
     }
 
     /** Instant 0ms cache lookup for already-fetched related tracks. */
@@ -123,43 +270,95 @@ object StreamResolver {
      * Blocking network call. The quality is read once, at the start, and the whole lookup uses
      * that snapshot. Concurrent calls for one song and quality share a single lookup.
      */
-    fun resolve(videoId: String): Resolved {
+    fun resolve(videoId: String): Resolved = resolveInternal(videoId, isPrefetch = false)
+
+    internal fun resolveInternal(videoId: String, isPrefetch: Boolean): Resolved {
         if (!isValidVideoId(videoId)) throw IOException("Invalid video id")
         val saver = dataSaver
-        peek(videoId, saver)?.let { return it }
+        val stallThreshold = streamResolveStallThresholdMsForTest ?: STREAM_RESOLVE_STALL_THRESHOLD_MS
+        peek(videoId, saver)?.let { cached ->
+            if (!isPrefetch) {
+                QueueHealthMonitor.recordStreamResolve(
+                    videoId = videoId,
+                    cacheHit = true,
+                    durationMs = 0L,
+                    succeeded = true,
+                    stallThresholdMs = stallThreshold,
+                )
+                DiagnosticsLogger.i("StreamPrefetch", "HIT videoId=$videoId (${cached.quality})")
+            }
+            return cached
+        }
         val k = key(videoId, saver)
         val startTime = System.currentTimeMillis()
         var clientName = "Unknown"
         try {
             synchronized(locks.getOrPut(k) { Any() }) {
-                peek(videoId, saver)?.let { return it }
-                val isFastAllowed = fastPathAllowed(videoId)
+                peek(videoId, saver)?.let { cachedAfterLock ->
+                    if (!isPrefetch) {
+                        val waitedMs = (System.currentTimeMillis() - startTime).coerceAtLeast(0L)
+                        QueueHealthMonitor.recordStreamResolve(
+                            videoId = videoId,
+                            cacheHit = true,
+                            durationMs = waitedMs,
+                            succeeded = true,
+                            stallThresholdMs = stallThreshold,
+                        )
+                    }
+                    return cachedAfterLock
+                }
+                val testProvider = resolveProviderForTest
                 var fullError: Throwable? = null
-                val resolved = (if (isFastAllowed) {
-                    clientName = "VisionOS (Fast)"
-                    fetchFastOrNull(videoId, saver)
-                } else null) ?: run {
-                    clientName = "NewPipeExtractor (Full)"
-                    runCatching { fetchFull(videoId, saver) }
-                        .onFailure { fullError = it }
-                        .getOrNull()
-                } ?: run {
-                    clientName = "InnerTube (AndroidVR Fallback)"
-                    runCatching { fetchInnertubeFallback(videoId, saver) }.getOrElse { innerErr ->
-                        // Preserve NewPipe's specific ExtractionException / bot-check diagnosis when both paths fail.
-                        val primaryError = fullError
-                        if (primaryError != null) throw primaryError else throw innerErr
+                val resolved = if (testProvider != null) {
+                    clientName = "TestResolver"
+                    testProvider(videoId)
+                } else {
+                    val isFastAllowed = fastPathAllowed(videoId)
+                    (if (isFastAllowed) {
+                        clientName = "VisionOS (Fast)"
+                        fetchFastOrNull(videoId, saver)
+                    } else null) ?: run {
+                        clientName = "NewPipeExtractor (Full)"
+                        runCatching { fetchFull(videoId, saver) }
+                            .onFailure { fullError = it }
+                            .getOrNull()
+                    } ?: run {
+                        clientName = "InnerTube (AndroidVR Fallback)"
+                        runCatching { fetchInnertubeFallback(videoId, saver) }.getOrElse { innerErr ->
+                            // Preserve NewPipe's specific ExtractionException / bot-check diagnosis when both paths fail.
+                            val primaryError = fullError
+                            if (primaryError != null) throw primaryError else throw innerErr
+                        }
                     }
                 }
                 cache[k] = resolved
-                val duration = System.currentTimeMillis() - startTime
+                val duration = (System.currentTimeMillis() - startTime).coerceAtLeast(0L)
                 LastErrorTracker.lastResolvedVideoId = videoId
                 LastErrorTracker.lastResolvedClient = clientName
                 LastErrorTracker.lastResolveDurationMs = duration
+                if (!isPrefetch) {
+                    QueueHealthMonitor.recordStreamResolve(
+                        videoId = videoId,
+                        cacheHit = false,
+                        durationMs = duration,
+                        succeeded = true,
+                        stallThresholdMs = stallThreshold,
+                    )
+                }
                 return resolved
             }
         } catch (e: Exception) {
-            val duration = System.currentTimeMillis() - startTime
+            val duration = (System.currentTimeMillis() - startTime).coerceAtLeast(0L)
+            if (!isPrefetch) {
+                QueueHealthMonitor.recordStreamResolve(
+                    videoId = videoId,
+                    cacheHit = false,
+                    durationMs = duration,
+                    succeeded = false,
+                    errorDetail = e.message?.take(80),
+                    stallThresholdMs = stallThreshold,
+                )
+            }
             LastErrorTracker.record(
                 error = e,
                 videoId = videoId,
@@ -354,6 +553,8 @@ object StreamResolver {
     /** Drops a stream that failed to play (both qualities); the retry uses the full extractor. */
     fun invalidate(videoId: String) {
         val failed = listOfNotNull(cache.remove(key(videoId, false)), cache.remove(key(videoId, true)))
+        prefetchStatusById.remove(videoId)
+        publishPrefetchSnapshot()
         if (failed.any { it.fast } && fullOnly[videoId] == null) {
             fullOnly[videoId] = true
             if (fastPlaybackFailures.incrementAndGet() >= 2) pauseFastPath()

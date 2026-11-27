@@ -39,6 +39,7 @@ data class RefillState(
     val lastSuccessAtMillis: Long = 0L,
     val consecutiveFailures: Int = 0,
     val emptyStreakForCurrentAnchor: Int = 0,
+    val consecutiveShortRefills: Int = 0,
     val lastAnchorId: String? = null,
     val backoffUntilMillis: Long = 0L,
     val activeGeneration: Long = 0L,
@@ -103,6 +104,7 @@ class AutoplayRefillCoordinator(
         com.velvet.app.recommendation.candidates.RollingCandidatePool(),
     private val urgentFallbackProvider: (suspend (Song, QueueRefillSnapshot, Set<String>) -> List<Song>)? = null,
     private val userProfileRepository: com.velvet.app.recommendation.profile.UserProfileRepository? = null,
+    private val onFunnelRecorded: ((com.velvet.app.diagnostics.RefillFunnelRecord) -> Unit)? = null,
 ) {
     private val stateMutex = Mutex()
     private val warmUpMutex = Mutex()
@@ -133,6 +135,7 @@ class AutoplayRefillCoordinator(
                 status = RefillStatus.IDLE,
                 emptyStreakForCurrentAnchor = 0,
                 consecutiveFailures = 0,
+                consecutiveShortRefills = 0,
                 backoffUntilMillis = 0L,
                 lastAnchorId = seedId,
                 activeGeneration = state.activeGeneration + 1L,
@@ -147,10 +150,12 @@ class AutoplayRefillCoordinator(
         var requestId: String = ""
         var wasSteppedAnchor: Boolean = false
         var steppedFromAnchorId: String? = null
+        var widenedRetryTriggered: Boolean = false
         var activeAnchorId: String = anchorId
         var activeAnchorTitle: String = anchorTitle
         var engineDiag: RecommendationDiagnostics? = null
         var steppedDiag: RecommendationDiagnostics? = null
+        var widenedDiag: RecommendationDiagnostics? = null
         var dismissedDropCount: Int = 0
         var rollingPoolFetched: Int = 0
         var rollingPoolAccepted: Int = 0
@@ -334,34 +339,36 @@ class AutoplayRefillCoordinator(
         val rejects = linkedMapOf<String, Int>()
         capture.engineDiag?.rejectedReasonCounts?.forEach { (k, v) -> rejects[k] = (rejects[k] ?: 0) + v }
         capture.steppedDiag?.rejectedReasonCounts?.forEach { (k, v) -> rejects["stepped:$k"] = (rejects["stepped:$k"] ?: 0) + v }
+        capture.widenedDiag?.rejectedReasonCounts?.forEach { (k, v) -> rejects["widened:$k"] = (rejects["widened:$k"] ?: 0) + v }
         if (capture.dismissedDropCount > 0) {
             rejects["dismissed_in_session"] = capture.dismissedDropCount
         }
 
-        com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillFunnel(
-            com.velvet.app.diagnostics.RefillFunnelRecord(
-                timestampMs = clock(),
-                requestId = requestId,
-                mode = modeName,
-                anchorId = capture.activeAnchorId,
-                anchorTitle = capture.activeAnchorTitle,
-                wasSteppedAnchor = capture.wasSteppedAnchor,
-                steppedFromAnchorId = capture.steppedFromAnchorId,
-                decision = decisionLabel,
-                decisionReason = decisionReason,
-                latencyMs = durationMs,
-                queueAheadBefore = queueAheadBefore,
-                queueAheadAfter = queueAheadAfter,
-                continuationPagesFetched = nextStats?.pagesFetched ?: 0,
-                continuationHasNext = nextStats?.hasNext ?: false,
-                totalFunnel = totalFunnel,
-                perGeneratorFunnels = perGen,
-                rejectReasonCounts = rejects,
-                acceptedSourceIds = capture.acceptedSourceIds,
-                acceptedFromLibraryOrInstantCatalog = capture.libraryOrInstantAcceptedCount > 0,
-                libraryOrInstantAcceptedCount = capture.libraryOrInstantAcceptedCount,
-            ),
+        val funnelRecord = com.velvet.app.diagnostics.RefillFunnelRecord(
+            timestampMs = clock(),
+            requestId = requestId,
+            mode = modeName,
+            anchorId = capture.activeAnchorId,
+            anchorTitle = capture.activeAnchorTitle,
+            wasSteppedAnchor = capture.wasSteppedAnchor,
+            steppedFromAnchorId = capture.steppedFromAnchorId,
+            decision = decisionLabel,
+            decisionReason = decisionReason,
+            latencyMs = durationMs,
+            queueAheadBefore = queueAheadBefore,
+            queueAheadAfter = queueAheadAfter,
+            continuationPagesFetched = nextStats?.pagesFetched ?: 0,
+            continuationHasNext = nextStats?.hasNext ?: false,
+            totalFunnel = totalFunnel,
+            perGeneratorFunnels = perGen,
+            rejectReasonCounts = rejects,
+            acceptedSourceIds = capture.acceptedSourceIds,
+            acceptedFromLibraryOrInstantCatalog = capture.libraryOrInstantAcceptedCount > 0,
+            libraryOrInstantAcceptedCount = capture.libraryOrInstantAcceptedCount,
+            widenedRetryTriggered = capture.widenedRetryTriggered,
         )
+        com.velvet.app.diagnostics.QueueHealthMonitor.recordRefillFunnel(funnelRecord)
+        onFunnelRecorded?.invoke(funnelRecord)
     }
 
     private suspend fun requestRefillInternal(
@@ -382,7 +389,7 @@ class AutoplayRefillCoordinator(
             else -> RecommendationMode.AUTOPLAY_REFILL
         }
 
-        val generation = stateMutex.withLock {
+        val (generation, priorShortStreak) = stateMutex.withLock {
             val now = clock()
             if (!initialSnapshot.isAutoplayEnabled && !initialSnapshot.isRadioActive) {
                 state = state.copy(status = RefillStatus.PAUSED)
@@ -405,6 +412,7 @@ class AutoplayRefillCoordinator(
 
             val sameAnchor = state.lastAnchorId == anchor.id
             val effectiveEmptyStreak = if (sameAnchor) state.emptyStreakForCurrentAnchor else 0
+            val inShortRecovery = state.consecutiveShortRefills >= 1 && effectiveEmptyStreak == 0
 
             if (sameAnchor && effectiveEmptyStreak >= policy.maxEmptyRefillsPerAnchor && !force && !isUrgent) {
                 state = state.copy(status = RefillStatus.EXHAUSTED, emptyStreakForCurrentAnchor = effectiveEmptyStreak)
@@ -418,10 +426,11 @@ class AutoplayRefillCoordinator(
                 state = state.copy(status = RefillStatus.COOLDOWN)
                 return RefillDecision.Skip("cooldown_active")
             }
-            if (!force && !autoPlayNext && !isUrgent && sameAnchor && (now - state.lastAttemptedAtMillis) in 0L until policy.minCooldownMs) {
+            if (!force && !autoPlayNext && !isUrgent && !inShortRecovery && sameAnchor && (now - state.lastAttemptedAtMillis) in 0L until policy.minCooldownMs) {
                 return RefillDecision.Skip("min_cooldown_active")
             }
 
+            val prevShort = state.consecutiveShortRefills
             val nextGen = state.activeGeneration + 1L
             state = state.copy(
                 status = RefillStatus.IN_FLIGHT,
@@ -430,7 +439,7 @@ class AutoplayRefillCoordinator(
                 emptyStreakForCurrentAnchor = effectiveEmptyStreak,
                 activeGeneration = nextGen,
             )
-            nextGen
+            nextGen to prevShort
         }
 
         return try {
@@ -443,6 +452,11 @@ class AutoplayRefillCoordinator(
                 policy.refillBatchSize
             } else {
                 (policy.targetUpcomingBuffer - upNextCount).coerceIn(4, policy.refillBatchSize)
+            }
+            val shortBatchThreshold = if (isRunwayPolicy) {
+                RunwayPolicy.MIN_BATCH
+            } else {
+                minOf(neededCount, policy.refillBatchSize)
             }
 
             val contextPool = (
@@ -540,7 +554,7 @@ class AutoplayRefillCoordinator(
             }
 
             val canTryUrgentFallback = isUrgent && urgentFallbackProvider != null
-            if (engineResult == null && preDrainTake.isEmpty() && !canTryUrgentFallback && rollingPool.size() == 0) {
+            if (engineResult == null && preDrainTake.isEmpty() && !canTryUrgentFallback && rollingPool.size() == 0 && priorShortStreak == 0) {
                 stateMutex.withLock {
                     if (state.activeGeneration == generation) {
                         val failures = state.consecutiveFailures + 1
@@ -548,6 +562,7 @@ class AutoplayRefillCoordinator(
                         state = state.copy(
                             status = RefillStatus.COOLDOWN,
                             consecutiveFailures = failures,
+                            consecutiveShortRefills = state.consecutiveShortRefills + 1,
                             backoffUntilMillis = clock() + delayMs,
                         )
                     }
@@ -740,6 +755,152 @@ class AutoplayRefillCoordinator(
                 }
             }
 
+            // F4: When < MIN_BATCH twice in a row, run an immediate widened second pass instead of waiting
+            val widenedEngineResults = mutableListOf<RecommendationResult>()
+            if (acceptedSongs.size < shortBatchThreshold && priorShortStreak >= 1) {
+                capture.widenedRetryTriggered = true
+                runCatching {
+                    withTimeoutOrNull(2_000L) {
+                        com.velvet.app.data.StreamResolver.relatedWithContinuation(
+                            videoId = anchor.id,
+                            seedHint = anchor,
+                            loadNextPage = true,
+                            minRawCandidates = 90,
+                            maxContinuationPages = 4,
+                        )
+                    }
+                }.getOrNull()?.let { contSongs ->
+                    if (contSongs.isNotEmpty()) {
+                        rollingPool.merge(
+                            songs = contSongs.filter(::isSongEligibleForCommit),
+                            excludedIds = alreadyInQueueIds + latest.excludedProviderIds + acceptedSongs.map { it.id },
+                            excludedRecIds = alreadyInQueueIds,
+                            excludedCompositionKeys = alreadySeenComps,
+                        )
+                    }
+                }
+                val widenedAnchors = (
+                    listOf(anchor) +
+                        (latest.fallbackAnchorPool + latest.historySongs.takeLast(10).reversed() + latest.seedSongsOverride)
+                            .filter {
+                                it.id.isNotBlank() &&
+                                    it.id != anchor.id &&
+                                    (it.id in sessionHistoryIds || latest.seedSongsOverride.any { s -> s.id == it.id })
+                            }
+                    ).distinctBy { it.id }.take(5)
+                val widenedChained = buildChainedSeeds(anchor, latest, mode)
+                for (widenAnchor in widenedAnchors) {
+                    if (acceptedSongs.size >= neededCount) break
+                    engine.invalidateCandidateCache(widenAnchor.id)
+                    val existingIds = acceptedSongs.mapTo(HashSet()) { it.id }
+                    val existingRecs = acceptedSongs.mapTo(HashSet()) { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
+                    val existingComps = acceptedSongs.mapNotNullTo(HashSet()) {
+                        RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() }
+                    }
+                    val wResult = try {
+                        withTimeoutOrNull(watchdogTimeoutMs) {
+                            engine.nextSimilar(
+                                seed = widenAnchor,
+                                contextSnapshot = (contextPool + acceptedSongs).distinctBy { it.id },
+                                mode = mode,
+                                limit = neededCount,
+                                radioSessionId = latest.radioSessionId,
+                                excludedRecordingIds = existingRecs + alreadyInQueueIds,
+                                excludedProviderIds = latest.excludedProviderIds + alreadyInQueueIds + existingIds,
+                                queueSongs = (latest.upcomingSongs + acceptedSongs).distinctBy { it.id },
+                                userQueueSongs = latest.userQueueSongs,
+                                recentSongs = latest.historySongs.takeLast(50),
+                                selectedArtistId = if (mode == RecommendationMode.ARTIST_RADIO) {
+                                    (latest.radioSeedSong ?: anchor).artist
+                                } else null,
+                                requestedLanguageIds = latest.preferredLanguageIds,
+                                seedSongsOverride = if (widenAnchor.id == anchor.id) widenedChained else emptyList(),
+                                allowMixedLanguages = latest.allowMixedLanguages,
+                                artistLanguageMap = latest.artistLanguageMap,
+                                sessionVibeOverride = lockedVibe,
+                                randomSeed = latest.randomSeed,
+                                sessionSkippedArtistCounts = latest.sessionSkippedArtistCounts,
+                                sessionSkippedGenreCounts = latest.sessionSkippedGenreCounts,
+                                widenEra = true,
+                                widenMood = true,
+                            )
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (wResult != null) {
+                        widenedEngineResults += wResult
+                        val newlyEligible = wResult.candidates
+                            .asSequence()
+                            .map { it.song }
+                            .filter { song ->
+                                val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
+                                val compKey = RecordingIdentityResolver.canonicalCompositionTitleKey(song)
+                                isSongEligibleForCommit(song) &&
+                                    song.id !in existingIds &&
+                                    recId !in existingRecs &&
+                                    (compKey.isBlank() || compKey !in existingComps) &&
+                                    profileSnapshot?.isEarlySkippedWithin14Days(song) != true &&
+                                    matchesSessionVibe(song, anchor, lockedVibe, latest, mode)
+                            }
+                            .distinctBy { it.id }
+                            .toList()
+                        val takeCount = (neededCount - acceptedSongs.size).coerceAtLeast(0)
+                        val addNow = newlyEligible.take(takeCount)
+                        if (addNow.isNotEmpty()) {
+                            acceptedSongs = (acceptedSongs + addNow).distinctBy { it.id }
+                            val overflow = newlyEligible.drop(takeCount) + wResult.overflowSongs.filter { isSongEligibleForCommit(it) }
+                            if (overflow.isNotEmpty()) {
+                                val chosenIds = acceptedSongs.mapTo(HashSet()) { it.id }
+                                rollingPool.merge(
+                                    songs = overflow.filter { it.id !in chosenIds },
+                                    excludedIds = alreadyInQueueIds + latest.excludedProviderIds + chosenIds,
+                                    excludedRecIds = alreadyInQueueIds,
+                                    excludedCompositionKeys = alreadySeenComps,
+                                )
+                            }
+                            if (engineResult == null) engineResult = wResult
+                            failureReason = null
+                        }
+                        if (capture.widenedDiag == null) {
+                            capture.widenedDiag = (engine as? DefaultRecommendationEngine)?.diagnosticsLog?.recent(12)?.find {
+                                it.diagnosticsId == wResult.diagnosticsId
+                            }
+                        }
+                    }
+                }
+                if (acceptedSongs.size < neededCount && rollingPool.size() > 0) {
+                    val widenedPoolTake = rollingPool.drainEligible(
+                        maxCount = neededCount - acceptedSongs.size,
+                        excludedIds = alreadyInQueueIds + latest.excludedProviderIds + acceptedSongs.map { it.id },
+                        excludedRecIds = alreadyInQueueIds + acceptedSongs.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId },
+                        excludedCompositionKeys = alreadySeenComps + acceptedSongs.mapNotNull {
+                            RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() }
+                        },
+                        avoidBackToBackArtists = mode != RecommendationMode.ARTIST_RADIO,
+                        initialRecentArtists = (listOfNotNull(latest.currentSong) + latest.upcomingSongs + acceptedSongs)
+                            .takeLast(2)
+                            .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) },
+                        predicate = { song ->
+                            !dismissedFilter(song) &&
+                                profileSnapshot?.isEarlySkippedWithin14Days(song) != true &&
+                                matchesSessionVibe(song, anchor, lockedVibe, latest, mode)
+                        },
+                    )
+                    if (widenedPoolTake.isNotEmpty()) {
+                        rollingTakeIds.addAll(widenedPoolTake.map { it.id })
+                        capture.rollingPoolAccepted += widenedPoolTake.size
+                        acceptedSongs = (acceptedSongs + widenedPoolTake).distinctBy { it.id }
+                    }
+                }
+                com.velvet.app.diagnostics.DiagnosticsLogger.i(
+                    "RunwayWidenedRetry",
+                    "Consecutive short refills (<$shortBatchThreshold): immediate widened second pass -> total=${acceptedSongs.size} for anchor=${anchor.id}",
+                )
+            }
+
             com.velvet.app.diagnostics.QueueHealthMonitor.recordRollingPoolSize(rollingPool.size())
 
             var usedUrgentFallback = false
@@ -779,6 +940,9 @@ class AutoplayRefillCoordinator(
             val trackSourceMap = buildMap<String, Set<String>> {
                 engineResult?.candidates.orEmpty().forEach { put(it.song.id, it.sourceIds) }
                 steppedEngineResult?.candidates.orEmpty().forEach { put(it.song.id, it.sourceIds) }
+                widenedEngineResults.forEach { res ->
+                    res.candidates.forEach { put(it.song.id, it.sourceIds) }
+                }
             }
             val acceptedSources = linkedSetOf<String>()
             var libOnlyCount = 0
@@ -795,11 +959,15 @@ class AutoplayRefillCoordinator(
                         val srcs = trackSourceMap[s.id].orEmpty()
                         acceptedSources.addAll(srcs)
                         if (capture.wasSteppedAnchor) acceptedSources.add("stepped_anchor")
+                        if (capture.widenedRetryTriggered) acceptedSources.add("widened_retry")
                         if (srcs.isNotEmpty() && srcs.all { it == "g6_library" || it == "g0_instant_catalog" }) {
                             libOnlyCount++
                         }
                     }
                 }
+            }
+            if (capture.widenedRetryTriggered && acceptedSongs.isNotEmpty()) {
+                acceptedSources.add("widened_retry")
             }
             capture.acceptedSongs = acceptedSongs
             capture.acceptedSourceIds = acceptedSources
@@ -815,6 +983,12 @@ class AutoplayRefillCoordinator(
                 diagnosticsId = "",
             )
 
+            val nextShortStreak = if (acceptedSongs.size < shortBatchThreshold) {
+                priorShortStreak + 1
+            } else {
+                0
+            }
+
             stateMutex.withLock {
                 if (state.activeGeneration != generation) {
                     return@withLock RefillDecision.Skip("superseded_generation")
@@ -827,6 +1001,7 @@ class AutoplayRefillCoordinator(
                         state = state.copy(
                             status = RefillStatus.COOLDOWN,
                             consecutiveFailures = failures,
+                            consecutiveShortRefills = nextShortStreak,
                             backoffUntilMillis = now + delayMs,
                         )
                         return@withLock RefillDecision.SafeEmpty("", failureReason, RefillStatus.COOLDOWN)
@@ -841,6 +1016,7 @@ class AutoplayRefillCoordinator(
                         status = newStatus,
                         consecutiveFailures = 0,
                         emptyStreakForCurrentAnchor = emptyStreak,
+                        consecutiveShortRefills = nextShortStreak,
                         backoffUntilMillis = now + policy.minCooldownMs,
                     )
                     RefillDecision.SafeEmpty(resolvedResult.requestId, "no_eligible_verified_studio_audio", newStatus)
@@ -850,6 +1026,7 @@ class AutoplayRefillCoordinator(
                         lastSuccessAtMillis = now,
                         consecutiveFailures = 0,
                         emptyStreakForCurrentAnchor = 0,
+                        consecutiveShortRefills = nextShortStreak,
                         backoffUntilMillis = 0L,
                     )
                     RefillDecision.AppendSongs(

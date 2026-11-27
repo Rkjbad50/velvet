@@ -397,13 +397,15 @@ class PlaybackService : MediaSessionService() {
             VelvetApp.library.addRecent(newSong)
             VelvetApp.sessionHistory.record(newSong)
             trimPlayedHistory()
-            prefetchNext()
+            prefetchUpcoming()
             exo.volume = 1.0f
             updateLikeButton()
             serviceCheckpointScheduler.scheduleDebounced()
         }
 
-        override fun onTimelineChanged(timeline: Timeline, reason: Int) {}
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            prefetchUpcoming()
+        }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             VelvetApp.eventRecorderOrNull()?.onIsPlayingChanged(
@@ -561,12 +563,21 @@ class PlaybackService : MediaSessionService() {
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
-    /** Resolve the next song's stream early so skipping is instant. */
-    private fun prefetchNext() {
-        val next = exo.nextMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: return
-        val id = exo.getMediaItemAt(next).mediaId
-        if (VelvetApp.downloads.fileFor(id) != null) return
-        StreamResolver.prefetch(id)
+    /** Resolve stream URLs early for the next 3 upcoming songs so advancing is instant. */
+    private fun prefetchUpcoming() {
+        if (!::exo.isInitialized) return
+        val curIdx = exo.currentMediaItemIndex
+        val upcomingIds = if (curIdx >= 0 && curIdx + 1 < exo.mediaItemCount) {
+            val end = minOf(exo.mediaItemCount, curIdx + 1 + StreamResolver.UPCOMING_PREFETCH_COUNT)
+            (curIdx + 1 until end).map { exo.getMediaItemAt(it).mediaId }
+        } else {
+            val next = exo.nextMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: return
+            listOf(exo.getMediaItemAt(next).mediaId)
+        }
+        StreamResolver.prefetchUpcoming(
+            videoIds = upcomingIds,
+            count = StreamResolver.UPCOMING_PREFETCH_COUNT,
+        ) { id -> VelvetApp.downloads.fileFor(id) != null }
     }
 
     /** Keeps at most [HISTORY_KEPT] already-played songs in the queue so long sessions stay light. */

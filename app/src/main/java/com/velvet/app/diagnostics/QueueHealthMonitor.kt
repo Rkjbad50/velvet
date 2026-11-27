@@ -50,6 +50,37 @@ data class StageFunnelCounts(
             "purity=$afterArtistPurity acc=$accepted app=$appended"
 }
 
+enum class StreamPrefetchStatus {
+    PENDING,
+    PREFETCHING,
+    CACHED,
+    DOWNLOADED,
+    FAILED,
+}
+
+data class StreamPrefetchEntry(
+    val videoId: String,
+    val slotIndex: Int,
+    val status: StreamPrefetchStatus,
+    val quality: String? = null,
+    val latencyMs: Long? = null,
+    val error: String? = null,
+)
+
+enum class StallKind {
+    REFILL_STALL,
+    STREAM_RESOLVE_STALL,
+}
+
+data class StallEventRecord(
+    val timestampMs: Long,
+    val kind: StallKind,
+    val targetId: String,
+    val targetTitle: String,
+    val durationMs: Long,
+    val detail: String,
+)
+
 data class RefillFunnelRecord(
     val timestampMs: Long,
     val requestId: String,
@@ -71,6 +102,7 @@ data class RefillFunnelRecord(
     val acceptedSourceIds: Set<String> = emptySet(),
     val acceptedFromLibraryOrInstantCatalog: Boolean = false,
     val libraryOrInstantAcceptedCount: Int = 0,
+    val widenedRetryTriggered: Boolean = false,
 )
 
 data class QueueHealthSnapshot(
@@ -90,21 +122,38 @@ data class QueueHealthSnapshot(
     val sourceHealth: Map<String, SourceHealth> = emptyMap(),
     val recentDecisions: List<RefillDecisionRecord> = emptyList(),
     val recentFunnels: List<RefillFunnelRecord> = emptyList(),
+    val streamPrefetchEntries: List<StreamPrefetchEntry> = emptyList(),
+    val streamPrefetchHitCount: Int = 0,
+    val streamPrefetchMissCount: Int = 0,
+    val lastStreamResolveDurationMs: Long? = null,
+    val refillStallCount: Int = 0,
+    val lastRefillStallMs: Long? = null,
+    val totalRefillStallMs: Long = 0L,
+    val streamResolveStallCount: Int = 0,
+    val lastStreamResolveStallMs: Long? = null,
+    val totalStreamResolveStallMs: Long = 0L,
+    val recentStalls: List<StallEventRecord> = emptyList(),
+    val lowRunwaySinceMs: Long? = null,
 )
 
 /**
- * Passive read-only observability aggregator backing Developer Options > Queue Health (C8 + F0).
+ * Passive read-only observability aggregator backing Developer Options > Queue Health (C8 + F0 + F4).
  * Never alters playback decisions or blocks playback threads.
  */
 object QueueHealthMonitor {
     const val MAX_DECISIONS = 20
     const val MAX_FUNNELS = 30
+    const val MAX_STALLS = 25
+    const val STREAM_RESOLVE_STALL_THRESHOLD_MS = 250L
+    const val LOW_RUNWAY_STALL_THRESHOLD_MS = 2_000L
 
     private val lock = Any()
     private val decisions = ArrayDeque<RefillDecisionRecord>(MAX_DECISIONS)
     private val funnels = ArrayDeque<RefillFunnelRecord>(MAX_FUNNELS)
+    private val stalls = ArrayDeque<StallEventRecord>(MAX_STALLS)
     private val cumulativeRejects = linkedMapOf<String, Int>()
     private val latestSourceHealth = linkedMapOf<String, SourceHealth>()
+    private var lowRunwayStallRecordedForEpisode = false
 
     private val _state = MutableStateFlow(QueueHealthSnapshot())
     val state: StateFlow<QueueHealthSnapshot> = _state.asStateFlow()
@@ -117,6 +166,8 @@ object QueueHealthMonitor {
         requestedLanguages: Set<String> = emptySet(),
         featureRepository: TrackFeatureRepository? = null,
         catalogSize: Int = InstantTrackCatalog.snapshot().size,
+        isPlaying: Boolean? = null,
+        nowMs: Long = System.currentTimeMillis(),
     ) {
         val vibe = if (anchor != null) {
             val feat = featureRepository?.getCachedOrExtract(anchor)
@@ -136,14 +187,50 @@ object QueueHealthMonitor {
         } else {
             null
         }
+        var detectedLowRunwayStallWaitMs: Long? = null
         synchronized(lock) {
             val prev = _state.value
+            val playingActive = isPlaying ?: false
+            var nextLowRunwaySince = prev.lowRunwaySinceMs
+            if (isPlaying != null) {
+                if (playingActive && aheadCount < com.velvet.app.recommendation.engine.RunwayPolicy.URGENT_BELOW) {
+                    if (nextLowRunwaySince == null) {
+                        nextLowRunwaySince = nowMs
+                        lowRunwayStallRecordedForEpisode = false
+                    } else if (!lowRunwayStallRecordedForEpisode &&
+                        (nowMs - nextLowRunwaySince) > LOW_RUNWAY_STALL_THRESHOLD_MS
+                    ) {
+                        lowRunwayStallRecordedForEpisode = true
+                        detectedLowRunwayStallWaitMs = nowMs - nextLowRunwaySince
+                    }
+                } else {
+                    if (nextLowRunwaySince != null &&
+                        !lowRunwayStallRecordedForEpisode &&
+                        playingActive &&
+                        (nowMs - nextLowRunwaySince) > LOW_RUNWAY_STALL_THRESHOLD_MS
+                    ) {
+                        detectedLowRunwayStallWaitMs = nowMs - nextLowRunwaySince
+                    }
+                    nextLowRunwaySince = null
+                    lowRunwayStallRecordedForEpisode = false
+                }
+            }
             _state.value = prev.copy(
                 aheadCount = aheadCount,
                 userQueueCount = userQueueCount,
                 runwayState = runwayState ?: prev.runwayState,
                 instantCatalogSize = catalogSize,
                 sessionVibe = vibe ?: prev.sessionVibe,
+                lowRunwaySinceMs = nextLowRunwaySince,
+            )
+        }
+        detectedLowRunwayStallWaitMs?.let { elapsed ->
+            recordRefillStall(
+                anchorId = anchor?.id ?: "(unknown)",
+                anchorTitle = anchor?.title ?: "(unknown)",
+                waitMs = elapsed,
+                detail = "ahead=$aheadCount remained < ${com.velvet.app.recommendation.engine.RunwayPolicy.URGENT_BELOW} for >${LOW_RUNWAY_STALL_THRESHOLD_MS}ms",
+                timestampMs = nowMs,
             )
         }
     }
@@ -269,10 +356,100 @@ object QueueHealthMonitor {
         }
     }
 
+    fun recordStreamPrefetch(entries: List<StreamPrefetchEntry>) {
+        synchronized(lock) {
+            _state.value = _state.value.copy(streamPrefetchEntries = entries)
+        }
+    }
+
+    fun recordRefillStall(
+        anchorId: String,
+        anchorTitle: String,
+        waitMs: Long,
+        detail: String = "",
+        timestampMs: Long = System.currentTimeMillis(),
+    ) {
+        val safeWait = waitMs.coerceAtLeast(0L)
+        val record = StallEventRecord(
+            timestampMs = timestampMs,
+            kind = StallKind.REFILL_STALL,
+            targetId = anchorId,
+            targetTitle = anchorTitle,
+            durationMs = safeWait,
+            detail = detail,
+        )
+        synchronized(lock) {
+            if (stalls.size >= MAX_STALLS) stalls.removeFirst()
+            stalls.addLast(record)
+            val prev = _state.value
+            _state.value = prev.copy(
+                refillStallCount = prev.refillStallCount + 1,
+                lastRefillStallMs = safeWait,
+                totalRefillStallMs = prev.totalRefillStallMs + safeWait,
+                recentStalls = stalls.toList().reversed(),
+            )
+        }
+        DiagnosticsLogger.w("RefillStall", "anchor=$anchorId ($anchorTitle) waitMs=$safeWait $detail".trim())
+    }
+
+    fun recordStreamResolve(
+        videoId: String,
+        cacheHit: Boolean,
+        durationMs: Long,
+        succeeded: Boolean,
+        errorDetail: String? = null,
+        songTitle: String = videoId,
+        stallThresholdMs: Long = STREAM_RESOLVE_STALL_THRESHOLD_MS,
+        timestampMs: Long = System.currentTimeMillis(),
+    ) {
+        val safeMs = durationMs.coerceAtLeast(0L)
+        val isStall = !cacheHit && (!succeeded || safeMs >= stallThresholdMs)
+        val stallRecord = if (isStall) {
+            StallEventRecord(
+                timestampMs = timestampMs,
+                kind = StallKind.STREAM_RESOLVE_STALL,
+                targetId = videoId,
+                targetTitle = songTitle,
+                durationMs = safeMs,
+                detail = buildString {
+                    append(if (succeeded) "cold_resolve_slow" else "resolve_failed")
+                    if (!errorDetail.isNullOrBlank()) append(": $errorDetail")
+                },
+            )
+        } else {
+            null
+        }
+        synchronized(lock) {
+            val prev = _state.value
+            if (stallRecord != null) {
+                if (stalls.size >= MAX_STALLS) stalls.removeFirst()
+                stalls.addLast(stallRecord)
+            }
+            _state.value = prev.copy(
+                streamPrefetchHitCount = prev.streamPrefetchHitCount + if (cacheHit) 1 else 0,
+                streamPrefetchMissCount = prev.streamPrefetchMissCount + if (cacheHit) 0 else 1,
+                lastStreamResolveDurationMs = safeMs,
+                streamResolveStallCount = prev.streamResolveStallCount + if (isStall) 1 else 0,
+                lastStreamResolveStallMs = if (isStall) safeMs else prev.lastStreamResolveStallMs,
+                totalStreamResolveStallMs = prev.totalStreamResolveStallMs + if (isStall) safeMs else 0L,
+                recentStalls = if (stallRecord != null) stalls.toList().reversed() else prev.recentStalls,
+            )
+        }
+        if (isStall) {
+            DiagnosticsLogger.w(
+                "StreamResolveStall",
+                "videoId=$videoId durationMs=$safeMs succeeded=$succeeded ${errorDetail.orEmpty()}".trim(),
+            )
+        }
+    }
+
     fun formatPlainText(snapshot: QueueHealthSnapshot = _state.value): String {
         val tf = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
         val lastAt = snapshot.lastRefillAtMs?.let { tf.format(Date(it)) } ?: "Never"
         val buckets = summarizeRejectBuckets(snapshot.rejectReasonCounts)
+        val readyPrefetch = snapshot.streamPrefetchEntries.count {
+            it.status == StreamPrefetchStatus.CACHED || it.status == StreamPrefetchStatus.DOWNLOADED
+        }
         return buildString {
             appendLine("=== VELVET QUEUE HEALTH ===")
             appendLine("Ahead Count: ${snapshot.aheadCount} (userQueue=${snapshot.userQueueCount})")
@@ -281,6 +458,42 @@ object QueueHealthMonitor {
             appendLine("Last Refill Duration: ${snapshot.lastRefillDurationMs?.let { "${it}ms" } ?: "N/A"} (p50=${snapshot.refillLatencyP50Ms}ms, p95=${snapshot.refillLatencyP95Ms}ms)")
             appendLine("Last Refill Result: ${snapshot.lastRefillResult}")
             appendLine("Pool Size: raw=${snapshot.rawPoolSize}, eligible=${snapshot.eligiblePoolSize}, catalog=${snapshot.instantCatalogSize}")
+            appendLine()
+            appendLine("--- STREAM PREFETCH (N+1..N+3) ---")
+            appendLine(
+                "Ready: $readyPrefetch/${snapshot.streamPrefetchEntries.size} | " +
+                    "PrefetchHits=${snapshot.streamPrefetchHitCount} | Misses=${snapshot.streamPrefetchMissCount} | " +
+                    "LastResolve=${snapshot.lastStreamResolveDurationMs?.let { "${it}ms" } ?: "N/A"}"
+            )
+            if (snapshot.streamPrefetchEntries.isEmpty()) {
+                appendLine("(no upcoming tracks prefetched yet)")
+            } else {
+                snapshot.streamPrefetchEntries.forEach { p ->
+                    val detail = listOfNotNull(
+                        p.quality,
+                        p.latencyMs?.let { "${it}ms" },
+                        p.error,
+                    ).joinToString(" ")
+                    appendLine("  N+${p.slotIndex}: ${p.videoId} [${p.status.name}]${if (detail.isNotBlank()) " ($detail)" else ""}")
+                }
+            }
+            appendLine()
+            appendLine("--- STALLS (REFILL vs STREAM-RESOLVE) ---")
+            appendLine(
+                "Refill Stalls: count=${snapshot.refillStallCount}, " +
+                    "last=${snapshot.lastRefillStallMs?.let { "${it}ms" } ?: "N/A"}, " +
+                    "total=${snapshot.totalRefillStallMs}ms"
+            )
+            appendLine(
+                "Stream-Resolve Stalls: count=${snapshot.streamResolveStallCount}, " +
+                    "last=${snapshot.lastStreamResolveStallMs?.let { "${it}ms" } ?: "N/A"}, " +
+                    "total=${snapshot.totalStreamResolveStallMs}ms"
+            )
+            if (snapshot.recentStalls.isNotEmpty()) {
+                snapshot.recentStalls.take(10).forEachIndexed { idx, s ->
+                    appendLine("  ${idx + 1}. [${tf.format(Date(s.timestampMs))}] ${s.kind.name} ${s.durationMs}ms target=${s.targetId} (${s.targetTitle}) ${s.detail}".trimEnd())
+                }
+            }
             appendLine()
             appendLine("--- SESSION VIBE ---")
             appendLine("Anchor: ${snapshot.sessionVibe.anchorTitle}${if (snapshot.sessionVibe.anchorArtist.isNotBlank()) " — ${snapshot.sessionVibe.anchorArtist}" else ""}")
@@ -410,7 +623,7 @@ object QueueHealthMonitor {
             val totalAcc = f.totalFunnel.accepted
             val libPct = if (totalAcc > 0) (libCount * 100) / totalAcc else 0
             appendLine("${idx + 1}. [${tf.format(Date(f.timestampMs))}] mode=${f.mode} decision=${f.decision}(${f.decisionReason}) latency=${f.latencyMs}ms ahead=${f.queueAheadBefore}->${f.queueAheadAfter}")
-            appendLine("   anchor=${f.anchorId} stepped=$steppedText contPages=${f.continuationPagesFetched} hasNext=${f.continuationHasNext} | title=${f.anchorTitle}")
+            appendLine("   anchor=${f.anchorId} stepped=$steppedText widenedRetry=${if (f.widenedRetryTriggered) "YES" else "NO"} contPages=${f.continuationPagesFetched} hasNext=${f.continuationHasNext} | title=${f.anchorTitle}")
             appendLine("   acceptedSources=${f.acceptedSourceIds.sorted().joinToString(",").ifBlank { "(none)" }} | libOrInstant=${f.acceptedFromLibraryOrInstantCatalog} ($libCount/$totalAcc = ${libPct}%)")
             appendLine("   ${f.totalFunnel.formatLine()}")
             if (f.perGeneratorFunnels.isNotEmpty()) {
@@ -430,8 +643,10 @@ object QueueHealthMonitor {
         synchronized(lock) {
             decisions.clear()
             funnels.clear()
+            stalls.clear()
             cumulativeRejects.clear()
             latestSourceHealth.clear()
+            lowRunwayStallRecordedForEpisode = false
             _state.value = QueueHealthSnapshot()
         }
     }

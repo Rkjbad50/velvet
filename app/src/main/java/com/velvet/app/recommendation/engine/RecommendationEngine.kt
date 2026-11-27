@@ -42,6 +42,8 @@ interface RecommendationEngine {
         randomSeed: Long? = null,
         sessionSkippedArtistCounts: Map<String, Int> = emptyMap(),
         sessionSkippedGenreCounts: Map<String, Int> = emptyMap(),
+        widenEra: Boolean = false,
+        widenMood: Boolean = false,
     ): RecommendationResult
 
     fun invalidateCandidateCache(seedId: String? = null)
@@ -313,6 +315,8 @@ class DefaultRecommendationEngine(
         randomSeed: Long?,
         sessionSkippedArtistCounts: Map<String, Int>,
         sessionSkippedGenreCounts: Map<String, Int>,
+        widenEra: Boolean,
+        widenMood: Boolean,
     ): RecommendationResult {
         val snapshotRecs = contextSnapshot.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
         val snapshotIds = contextSnapshot.map { it.id }
@@ -336,6 +340,9 @@ class DefaultRecommendationEngine(
             allowExplicitUserIntentOverride = allowExplicitUserIntentOverride,
             requireVerifiedOriginalAudio = true,
             allowMixedLanguages = allowMixedLanguages,
+            allowNearDuplicateUnplayedUploads = widenEra || widenMood,
+            widenEra = widenEra,
+            widenMood = widenMood,
             artistLanguageMap = artistLanguageMap,
             sessionVibe = sessionVibeOverride,
             randomSeed = randomSeed,
