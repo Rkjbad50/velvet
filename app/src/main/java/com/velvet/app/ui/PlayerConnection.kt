@@ -1335,10 +1335,12 @@ object PlayerConnection {
             preferredLanguageIds = mapLanguagesToIso(libData.musicLanguages),
             allowMixedLanguages = libData.allowMixedLanguagesInAutoplay,
             artistLanguageMap = libData.artistLanguageMap,
-            fallbackAnchorPool = (st.history.map { it.song }.reversed() + libData.liked)
+            fallbackAnchorPool = st.history
+                .asReversed()
+                .map { it.song }
                 .distinctBy { it.id }
                 .filterNot { it.id == activeSong?.id }
-                .take(12),
+                .take(10),
             seedSongsOverride = if (isRadioActive) {
                 val anchor = radioSeedSong ?: activeSong
                 if (anchor != null) VelvetApp.radioSessionManagerOrNull()?.evolvedSeedSongs(anchor).orEmpty() else emptyList()
@@ -1387,6 +1389,7 @@ object PlayerConnection {
             limit = limit,
             allowMixedLanguages = libData.allowMixedLanguagesInAutoplay,
             artistLanguageMap = libData.artistLanguageMap,
+            recentSessionSongs = activeSongs + queueManager.history.takeLast(50),
         )
     }
 

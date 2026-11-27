@@ -167,7 +167,9 @@ class VelvetApp : Application(), ImageLoaderFactory {
             ),
             featureRepository = trackFeatureRepository,
             rollingPool = rollingCandidatePool,
+            userProfileRepository = userProfileRepository,
             urgentFallbackProvider = { anchor, snap, excludedIds ->
+                val profile = runCatching { userProfileRepository.getSnapshot(snap.radioSessionId) }.getOrNull()
                 val seedPool = (
                     StreamResolver.peekRelated(anchor.id).orEmpty() +
                         com.velvet.app.recommendation.candidates.InstantTrackCatalog.snapshot()
@@ -182,6 +184,8 @@ class VelvetApp : Application(), ImageLoaderFactory {
                     limit = com.velvet.app.recommendation.engine.RunwayPolicy.MIN_BATCH,
                     allowMixedLanguages = snap.allowMixedLanguages,
                     artistLanguageMap = snap.artistLanguageMap,
+                    tasteSnapshot = profile,
+                    recentSessionSongs = snap.historySongs.takeLast(50),
                 )
             },
         )

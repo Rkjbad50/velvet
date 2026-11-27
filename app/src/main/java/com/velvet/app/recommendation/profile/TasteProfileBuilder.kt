@@ -573,6 +573,8 @@ class TasteProfileBuilder(
             fatigue = FatigueSnapshot(
                 fatiguedRecordingIds = fatiguedRecs,
                 fatiguedProviderIds = fatiguedProviders,
+                earlySkipped14dRecordingIds = earlySkipTimestampsByRec.keys.toSet(),
+                earlySkipped14dProviderIds = earlySkipProviderIds.keys.toSet(),
                 sessionRemovedRecordingIds = sessionRemovedRecs,
                 sessionRemovedProviderIds = sessionRemovedProviders,
                 dailyOverplayedRecordingIds = dailyPlayTimesByRec.filter { (_, ts) -> ts.size >= 3 }.keys.toSet(),

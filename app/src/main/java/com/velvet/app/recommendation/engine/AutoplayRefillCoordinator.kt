@@ -102,6 +102,7 @@ class AutoplayRefillCoordinator(
     private val rollingPool: com.velvet.app.recommendation.candidates.RollingCandidatePool =
         com.velvet.app.recommendation.candidates.RollingCandidatePool(),
     private val urgentFallbackProvider: (suspend (Song, QueueRefillSnapshot, Set<String>) -> List<Song>)? = null,
+    private val userProfileRepository: com.velvet.app.recommendation.profile.UserProfileRepository? = null,
 ) {
     private val stateMutex = Mutex()
     private val warmUpMutex = Mutex()
@@ -458,6 +459,9 @@ class AutoplayRefillCoordinator(
                 requestedLanguageIds = initialSnapshot.preferredLanguageIds,
                 allowMixedLanguages = initialSnapshot.allowMixedLanguages,
             )
+            val profileSnapshot = runCatching {
+                userProfileRepository?.getSnapshot(sessionId = initialSnapshot.radioSessionId, nowMillis = clock())
+            }.getOrNull()
 
             // F3 Local-first RAM drain: satisfy up to neededCount from warm RollingCandidatePool before slow network fetches
             val initialExclIds = buildQueueAndHistoryExcludedIds(initialSnapshot)
@@ -476,6 +480,7 @@ class AutoplayRefillCoordinator(
                     initialRecentArtists = tailArtists,
                 ) { song ->
                     !dismissedFilter(song) &&
+                        profileSnapshot?.isEarlySkippedWithin14Days(song) != true &&
                         matchesSessionVibe(song, anchor, lockedVibe, initialSnapshot, mode)
                 }
             } else {
@@ -509,7 +514,7 @@ class AutoplayRefillCoordinator(
                             excludedProviderIds = initialSnapshot.excludedProviderIds + preDrainIds,
                             queueSongs = (initialSnapshot.upcomingSongs + preDrainTake).distinctBy { it.id },
                             userQueueSongs = initialSnapshot.userQueueSongs,
-                            recentSongs = initialSnapshot.historySongs.takeLast(8),
+                            recentSongs = initialSnapshot.historySongs.takeLast(50),
                             selectedArtistId = if (mode == RecommendationMode.ARTIST_RADIO) {
                                 (initialSnapshot.radioSeedSong ?: anchor).artist
                             } else null,
@@ -660,6 +665,7 @@ class AutoplayRefillCoordinator(
                         .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) },
                     predicate = { song ->
                         !dismissedFilter(song) &&
+                            profileSnapshot?.isEarlySkippedWithin14Days(song) != true &&
                             matchesSessionVibe(song, anchor, lockedVibe, latest, mode)
                     },
                 )
@@ -670,12 +676,15 @@ class AutoplayRefillCoordinator(
                 }
             }
 
-            // C4: Anchor stepping on exhaustion (retry next-most-recent liked/completed track while keeping SessionVibe locked)
+            // F2: Session-only anchor stepping on exhaustion (max last 10 played/completed tracks of THIS session; never liked/external)
+            val sessionHistoryIds = (latest.historySongs.takeLast(10) + listOfNotNull(latest.radioSeedSong))
+                .mapTo(HashSet()) { it.id }
             var steppedEngineResult: RecommendationResult? = null
-            if (acceptedSongs.isEmpty() && mode != RecommendationMode.ARTIST_RADIO && latest.fallbackAnchorPool.isNotEmpty()) {
-                val steppedCandidates = latest.fallbackAnchorPool
-                    .filter { it.id != anchor.id && it.id.isNotBlank() }
-                    .take(4)
+            if (acceptedSongs.isEmpty() && mode != RecommendationMode.ARTIST_RADIO && sessionHistoryIds.isNotEmpty()) {
+                val steppedCandidates = (latest.fallbackAnchorPool + latest.historySongs.takeLast(10).reversed())
+                    .distinctBy { it.id }
+                    .filter { it.id != anchor.id && it.id.isNotBlank() && it.id in sessionHistoryIds }
+                    .take(10)
                 for (stepAnchor in steppedCandidates) {
                     engine.invalidateCandidateCache(stepAnchor.id)
                     val steppedResult = try {
@@ -689,7 +698,7 @@ class AutoplayRefillCoordinator(
                                 excludedProviderIds = latest.excludedProviderIds + alreadyInQueueIds,
                                 queueSongs = latest.upcomingSongs,
                                 userQueueSongs = latest.userQueueSongs,
-                                recentSongs = latest.historySongs.takeLast(8),
+                                recentSongs = latest.historySongs.takeLast(50),
                                 requestedLanguageIds = latest.preferredLanguageIds,
                                 allowMixedLanguages = latest.allowMixedLanguages,
                                 artistLanguageMap = latest.artistLanguageMap,
@@ -752,42 +761,13 @@ class AutoplayRefillCoordinator(
                     requestedLanguageIds = latest.preferredLanguageIds,
                     allowMixedLanguages = latest.allowMixedLanguages,
                 )
-                val allowedVibeLangs = vibe.effectiveAllowedLanguages
                 acceptedSongs = fallbackRaw
                     .asSequence()
                     .distinctBy { it.id }
                     .filter { song ->
-                        if (song.id.isBlank() || song.title.isBlank()) return@filter false
-                        if (song.durationSec in 0L..44L) return@filter false
-                        if (dismissedFilter(song)) return@filter false
-                        if (song.id in latest.excludedProviderIds || song.id in alreadyInQueueIds) return@filter false
-                        val identity = RecordingIdentityResolver.resolve(song)
-                        if (!identity.releaseClassification.isVerifiedOriginalAudio) return@filter false
-                        if (identity.canonicalRecordingId in alreadyInQueueIds ||
-                            SongIdentity.canonicalGroupId(song) in alreadyInQueueIds
-                        ) {
-                            return@filter false
-                        }
-                        if (RecordingIdentityResolver.isSameCompositionTitle(anchor, song)) return@filter false
-                        if (allowedVibeLangs.isNotEmpty()) {
-                            val feat = featureRepository.getCachedOrExtract(song)
-                            val (candLangs, candLangConf) = com.velvet.app.recommendation.vibe.SessionVibe.resolveSongLanguage(
-                                song = song,
-                                features = feat,
-                                artistLanguageMap = latest.artistLanguageMap,
-                            )
-                            val artistLang = com.velvet.app.recommendation.vibe.ArtistLanguageMap.inferArtistLanguage(
-                                song.artist,
-                                latest.artistLanguageMap,
-                            )
-                            if (artistLang != null && artistLang.second >= 0.72 && artistLang.first !in allowedVibeLangs) {
-                                return@filter false
-                            }
-                            if (candLangs.isNotEmpty() && candLangConf >= 0.65 && candLangs.none { it in allowedVibeLangs }) {
-                                return@filter false
-                            }
-                        }
-                        true
+                        isSongEligibleForCommit(song) &&
+                            profileSnapshot?.isEarlySkippedWithin14Days(song) != true &&
+                            matchesSessionVibe(song, anchor, vibe, latest, mode)
                     }
                     .take(neededCount)
                     .toList()
@@ -940,7 +920,7 @@ class AutoplayRefillCoordinator(
                         excludedProviderIds = initialSnapshot.excludedProviderIds + exclIds,
                         queueSongs = initialSnapshot.upcomingSongs,
                         userQueueSongs = initialSnapshot.userQueueSongs,
-                        recentSongs = initialSnapshot.historySongs.takeLast(8),
+                        recentSongs = initialSnapshot.historySongs.takeLast(50),
                         requestedLanguageIds = initialSnapshot.preferredLanguageIds,
                         seedSongsOverride = chainedSeeds,
                         allowMixedLanguages = initialSnapshot.allowMixedLanguages,
@@ -957,9 +937,16 @@ class AutoplayRefillCoordinator(
                 null
             } ?: return@withLock 0
 
+            val profileSnap = runCatching {
+                userProfileRepository?.getSnapshot(sessionId = initialSnapshot.radioSessionId, nowMillis = clock())
+            }.getOrNull()
             val poolAdditions = (res.candidates.map { it.song } + res.overflowSongs)
                 .distinctBy { it.id }
-                .filter { s -> !dismissedFilter(s) && matchesSessionVibe(s, anchor, lockedVibe, initialSnapshot, mode) }
+                .filter { s ->
+                    !dismissedFilter(s) &&
+                        profileSnap?.isEarlySkippedWithin14Days(s) != true &&
+                        matchesSessionVibe(s, anchor, lockedVibe, initialSnapshot, mode)
+                }
             val added = rollingPool.merge(
                 songs = poolAdditions,
                 excludedIds = exclIds + initialSnapshot.excludedProviderIds,

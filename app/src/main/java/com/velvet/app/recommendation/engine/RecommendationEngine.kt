@@ -254,10 +254,14 @@ class DefaultRecommendationEngine(
         }
         val selectedDiscoveryCount = selected.count { !isLibraryOnlySource(it.sourceIds) }
         val totalDiscoveryAvailable = selectedDiscoveryCount + unusedDiscovery.size
-        // Never cap library fallback if external discovery candidates are empty/scarce
-        if (totalDiscoveryAvailable < limit / 2) return selected
 
-        val maxLibraryCount = (limit * 0.25).toInt().coerceAtLeast(1)
+        // F2: Strictly enforce <= 25% library rediscovery cap whenever discovery exists (never leave uncapped on sparse discovery).
+        val baseMaxLibrary = (limit * 0.25).toInt().coerceAtLeast(1)
+        val maxLibraryCount = if (totalDiscoveryAvailable > 0) {
+            minOf(baseMaxLibrary, totalDiscoveryAvailable / 3)
+        } else {
+            baseMaxLibrary
+        }
         val libraryInSelected = selected.count { isLibraryOnlySource(it.sourceIds) }
         if (libraryInSelected <= maxLibraryCount) return selected
 

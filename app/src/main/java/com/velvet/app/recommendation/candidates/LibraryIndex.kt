@@ -121,6 +121,9 @@ class LibraryIndex(
         allowMixedLanguages: Boolean = false,
         artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> =
             com.velvet.app.recommendation.vibe.ArtistLanguageRegistry.snapshot(),
+        tasteSnapshot: com.velvet.app.recommendation.profile.UserTasteSnapshot? = null,
+        recentSessionSongs: List<Song> = emptyList(),
+        sessionVibe: com.velvet.app.recommendation.vibe.SessionVibe? = null,
     ): List<Song> {
         val currentSnap = snapshot
         val seedFeat = featureRepository.getCachedOrExtract(seed)
@@ -158,6 +161,9 @@ class LibraryIndex(
             limit = limit,
             allowMixedLanguages = allowMixedLanguages,
             artistLanguageMap = artistLanguageMap,
+            tasteSnapshot = tasteSnapshot,
+            recentSessionSongs = recentSessionSongs,
+            sessionVibe = sessionVibe,
         )
     }
 

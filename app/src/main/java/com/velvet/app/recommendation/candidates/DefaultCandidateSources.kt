@@ -448,15 +448,82 @@ class LibraryTrackCandidateSource(
 
     override suspend fun fetch(request: CandidateSourceRequest): CandidateSourceResult {
         val start = clock()
+        val req = request.request
         val seedFeatures = request.seedFeatures.firstOrNull()
+        val vibe = req.sessionVibe ?: com.velvet.app.recommendation.vibe.SessionVibe.fromRequest(
+            request = req,
+            featureRepository = featureRepository,
+            artistLanguageMap = req.artistLanguageMap,
+        )
+        val profile = request.userProfile
+        val last50 = req.recentSongs.takeLast(50)
+        val excludedRecAndGroupIds = buildSet {
+            addAll(req.excludedRecordingIds)
+            addAll(req.seedRecordingIds)
+            addAll(req.queueRecordingIds)
+            addAll(req.userQueueRecordingIds)
+            addAll(req.recentRecordingIds)
+            last50.forEach {
+                add(RecordingIdentityResolver.resolve(it).canonicalRecordingId)
+                add(SongIdentity.canonicalGroupId(it))
+            }
+        }
+        val excludedIds = (req.excludedProviderIds + last50.map { it.id } + req.seedSongs.map { it.id }).toSet()
+        val last50Comps = if (!req.allowExplicitUserIntentOverride) {
+            (last50 + req.seedSongs + listOfNotNull(req.currentSong))
+                .mapNotNull { RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() } }
+                .toSet()
+        } else emptySet()
+
         return try {
             val allLibrary = libraryTracksProvider()
             if (allLibrary.isEmpty()) {
                 return CandidateSourceResult(sourceId, emptyList(), clock(), (clock() - start).coerceAtLeast(0L), CandidateSourceStatus.EMPTY)
             }
 
+            val isSelectedArtistRadio = req.mode == RecommendationMode.ARTIST_RADIO && !req.selectedArtistId.isNullOrBlank()
+            val selArtistNorm = req.selectedArtistId?.let(::normalizePrimaryArtist).orEmpty()
+
             val scored = allLibrary.mapNotNull { song ->
+                if (song.id.isBlank() || song.title.isBlank()) return@mapNotNull null
+                if (song.durationSec == 0L || song.durationSec in 1L..44L) return@mapNotNull null
+                if (song.id in excludedIds) return@mapNotNull null
+                val identity = RecordingIdentityResolver.resolve(song)
+                if (!identity.releaseClassification.isVerifiedOriginalAudio) return@mapNotNull null
+                val legacyGroup = SongIdentity.canonicalGroupId(song)
+                if (identity.canonicalRecordingId in excludedRecAndGroupIds || legacyGroup in excludedRecAndGroupIds) {
+                    return@mapNotNull null
+                }
+                val compKey = RecordingIdentityResolver.canonicalCompositionTitleKey(song)
+                if (compKey.isNotBlank() && compKey in last50Comps) return@mapNotNull null
+                if (profile.isExplicitlyDisliked(song) ||
+                    profile.isFatiguedOrRemovedInSession(song) ||
+                    profile.isEarlySkippedWithin14Days(song)
+                ) {
+                    return@mapNotNull null
+                }
+
                 val f = featureRepository.getCachedOrExtract(song)
+                val sameSelectedArtist = isSelectedArtistRadio && selArtistNorm.isNotBlank() &&
+                    normalizePrimaryArtist(song.artist).let { candNorm ->
+                        candNorm == selArtistNorm || candNorm.contains(selArtistNorm) || selArtistNorm.contains(candNorm)
+                    }
+                if (!req.allowExplicitUserIntentOverride &&
+                    !com.velvet.app.recommendation.vibe.SessionVibe.matchesLocalLibraryOrInstantGate(
+                        song = song,
+                        features = f,
+                        seedFeatures = seedFeatures,
+                        vibe = vibe,
+                        requestedLanguageIds = req.requestedLanguageIds,
+                        allowMixedLanguages = req.allowMixedLanguages,
+                        artistLanguageMap = req.artistLanguageMap,
+                        isSelectedArtistInArtistRadio = sameSelectedArtist,
+                        widenMood = req.widenMood,
+                    )
+                ) {
+                    return@mapNotNull null
+                }
+
                 val sim = if (seedFeatures != null) featureSimilarity(seedFeatures, f) else 0.35
                 if (sim >= 0.25) song to sim else null
             }.sortedByDescending { it.second }.take(request.maxCandidates)

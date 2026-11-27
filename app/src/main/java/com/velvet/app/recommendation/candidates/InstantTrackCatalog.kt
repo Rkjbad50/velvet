@@ -65,11 +65,21 @@ object InstantTrackCatalog {
         sessionSkippedArtistCounts: Map<String, Int> = emptyMap(),
         sessionSkippedGenreCounts: Map<String, Int> = emptyMap(),
         nowMillis: Long = System.currentTimeMillis(),
+        recentSessionSongs: List<Song> = emptyList(),
+        sessionVibe: SessionVibe? = null,
     ): List<Song> {
         val combined = (pool.values + extraPool).distinctBy { it.id }
         if (combined.isEmpty() || limit <= 0) return emptyList()
 
-        val vibe = SessionVibe.fromSessionTracks(
+        val last50 = recentSessionSongs.takeLast(50)
+        val effectiveExclIds = excludedIds + last50.map { it.id }
+        val effectiveExclRecIds = excludedRecIds + last50.flatMap {
+            listOf(RecordingIdentityResolver.resolve(it).canonicalRecordingId, SongIdentity.canonicalGroupId(it))
+        }
+        val blockedComps = (last50 + seed)
+            .mapNotNullTo(HashSet()) { RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() } }
+
+        val vibe = sessionVibe ?: SessionVibe.fromSessionTracks(
             tracks = listOf(seed),
             featureRepository = featureRepository,
             artistLanguageMap = artistLanguageMap,
@@ -90,44 +100,45 @@ object InstantTrackCatalog {
         val seedArtistNorm = normalizePrimaryArtist(seed.artist)
 
         val scored = combined.mapNotNull { cand ->
-            if (cand.id.isBlank() || cand.id == seed.id || cand.id in excludedIds) return@mapNotNull null
+            if (cand.id.isBlank() || cand.id == seed.id || cand.id in effectiveExclIds) return@mapNotNull null
             if (cand.durationSec == 0L || cand.durationSec in 1L..44L) return@mapNotNull null
             val identity = RecordingIdentityResolver.resolve(cand)
             if (!identity.releaseClassification.isVerifiedOriginalAudio) return@mapNotNull null
-            if (tasteSnapshot != null && (tasteSnapshot.isExplicitlyDisliked(cand) || tasteSnapshot.isFatiguedOrRemovedInSession(cand))) {
-                return@mapNotNull null
-            }
-            if (identity.canonicalRecordingId in excludedRecIds ||
-                SongIdentity.canonicalGroupId(cand) in excludedRecIds
+            if (tasteSnapshot != null && (
+                    tasteSnapshot.isExplicitlyDisliked(cand) ||
+                        tasteSnapshot.isFatiguedOrRemovedInSession(cand) ||
+                        tasteSnapshot.isEarlySkippedWithin14Days(cand)
+                    )
             ) {
                 return@mapNotNull null
             }
+            if (identity.canonicalRecordingId in effectiveExclRecIds ||
+                SongIdentity.canonicalGroupId(cand) in effectiveExclRecIds
+            ) {
+                return@mapNotNull null
+            }
+            val candCompKey = RecordingIdentityResolver.canonicalCompositionTitleKey(cand)
+            if (candCompKey.isNotBlank() && candCompKey in blockedComps) return@mapNotNull null
             if (RecordingIdentityResolver.isSameCompositionTitle(seed, cand)) return@mapNotNull null
 
             val feat = featureRepository.getCachedOrExtract(cand)
+            val candArtistNorm = normalizePrimaryArtist(cand.artist)
+            val sameArtist = allowArtistHeavy && seedArtistNorm.isNotBlank() && candArtistNorm == seedArtistNorm
+            if (!SessionVibe.matchesLocalLibraryOrInstantGate(
+                    song = cand,
+                    features = feat,
+                    seedFeatures = seedFeat,
+                    vibe = vibe,
+                    requestedLanguageIds = preferredLanguageIds,
+                    allowMixedLanguages = allowMixedLanguages,
+                    artistLanguageMap = artistLanguageMap,
+                    isSelectedArtistInArtistRadio = sameArtist,
+                )
+            ) {
+                return@mapNotNull null
+            }
+
             val candType = feat.musicTypes.maxByOrNull { it.value }?.key
-            if (candType == MusicType.PODCAST_OR_SPOKEN) return@mapNotNull null
-
-            // Guard devotional integrity strictly
-            if (seedIsDevotional) {
-                val candDevotional = GenreOntology.DEVOTIONAL in feat.genreIds || MusicType.CLASSICAL in feat.musicTypes
-                if (!candDevotional) return@mapNotNull null
-                if ((feat.moodIds["party_celebratory"] ?: 0.0) >= 0.5) return@mapNotNull null
-            }
-
-            // Hard C3 language gate on local/instant path too
-            val candArtistLang = ArtistLanguageMap.inferArtistLanguage(cand.artist, artistLanguageMap)
-            val (candLangs, candLangConf) = SessionVibe.resolveSongLanguage(cand, feat, artistLanguageMap)
-            if (allowedLangs.isNotEmpty()) {
-                if (candArtistLang != null && candArtistLang.second >= 0.72 && candArtistLang.first !in allowedLangs) {
-                    return@mapNotNull null
-                }
-                if (candLangs.isNotEmpty() && candLangConf >= 0.65 && candLangs.none { it in allowedLangs }) {
-                    return@mapNotNull null
-                }
-            }
-
-            // Score: Genre first, then Category/Type, Mood, Language, Era, Tier
             val hasBothGenres = seedFeat.genreIds.isNotEmpty() && feat.genreIds.isNotEmpty()
             val genreSim = seedFeat.genreIds.keys.maxOfOrNull { sg ->
                 feat.genreIds.keys.maxOfOrNull { cg -> GenreOntology.similarity(sg, cg) } ?: 0.0
@@ -140,25 +151,13 @@ object InstantTrackCatalog {
             } else 0.50
             val moodOverlap = seedFeat.moodIds.keys.intersect(feat.moodIds.keys).size.toDouble() /
                 maxOf(1, maxOf(seedFeat.moodIds.size, feat.moodIds.size))
-            val candArtistNorm = normalizePrimaryArtist(cand.artist)
-            val sameArtist = allowArtistHeavy && seedArtistNorm.isNotBlank() && candArtistNorm == seedArtistNorm
-
-            // Raised C3 genre/type gate (no broad shared-language loophole)
-            if (!seedIsDevotional && !sameArtist) {
-                if (typeSim < SessionVibe.MIN_TYPE_COMPATIBILITY) return@mapNotNull null
-                if (hasBothGenres && genreSim < SessionVibe.MIN_GENRE_SIMILARITY) return@mapNotNull null
-            }
-
+            val (candLangs, _) = SessionVibe.resolveSongLanguage(cand, feat, artistLanguageMap)
             val langBonus = when {
                 candLangs.any { it in allowedLangs } -> 0.16
                 seedFeat.languageIds.keys.any { it in feat.languageIds } -> 0.14
                 preferredLanguageIds.any { it in feat.languageIds } -> 0.10
                 else -> 0.0
             }
-            val sharedLangUnknownBlocked = allowedLangs.isNotEmpty() && !allowMixedLanguages && candLangs.isEmpty() &&
-                !(hasBothGenres && genreSim >= SessionVibe.MIN_UNKNOWN_LANG_GENRE_SIMILARITY && typeSim >= SessionVibe.MIN_UNKNOWN_LANG_TYPE_COMPATIBILITY) &&
-                !(moodOverlap >= 0.25 && typeSim >= 0.65) && !sameArtist
-            if (sharedLangUnknownBlocked) return@mapNotNull null
 
             val eraBonus = if (seedFeat.eraBucket != null && seedFeat.eraBucket == feat.eraBucket) 0.08 else 0.0
             val artistBonus = if (sameArtist) 0.35 else 0.0
@@ -253,6 +252,8 @@ class InstantTrackCatalogCandidateSource(
                 sessionSkippedArtistCounts = request.request.sessionSkippedArtistCounts,
                 sessionSkippedGenreCounts = request.request.sessionSkippedGenreCounts,
                 nowMillis = clock(),
+                recentSessionSongs = request.request.recentSongs,
+                sessionVibe = request.request.sessionVibe,
             )
             val wrapped = matches.mapIndexed { idx, song ->
                 RawTrackCandidate(

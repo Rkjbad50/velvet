@@ -72,18 +72,35 @@ class DefaultEligibilityPolicy : EligibilityPolicy {
             reasons.add(releaseCls.reasonCode)
         }
 
-        // 2. Exclusions: explicit request exclusions, profile dislikes/hides, fatigue, active session removal
+        // 2. Exclusions: explicit request exclusions, profile dislikes/hides, fatigue, active session removal,
+        // F2: last 50 played tracks in this session, and 14-day early-skip exclusions for library/instant catalog.
         if (song.id in request.excludedProviderIds ||
             recId in request.excludedRecordingIds ||
             legacyGroup in request.excludedRecordingIds
         ) {
             reasons.add("explicitly_excluded")
         }
+        val recent50 = request.recentSongs.takeLast(50)
+        val inRecent50 = recent50.any { prev ->
+            prev.id == song.id ||
+                RecordingIdentityResolver.resolve(prev).canonicalRecordingId == recId ||
+                SongIdentity.canonicalGroupId(prev) == legacyGroup ||
+                RecordingIdentityResolver.isSameRecording(prev, song) ||
+                (!request.allowExplicitUserIntentOverride && RecordingIdentityResolver.isSameCompositionTitle(prev, song))
+        }
+        if (inRecent50) {
+            reasons.add("played_in_last_50_session_tracks")
+        }
         if (profile.isExplicitlyDisliked(song)) {
             reasons.add("user_disliked_or_hidden")
         }
         if (profile.isFatiguedOrRemovedInSession(song)) {
             reasons.add("fatigued_or_session_removed")
+        }
+        val fromLibraryOrInstant = candidate.sourceIds.any { it == "g6_library" || it == "g0_instant_catalog" }
+        val hasOnlineDiscoveryLineage = candidate.sourceIds.any { it in SessionVibe.TRUSTED_LINEAGE_SOURCES }
+        if (fromLibraryOrInstant && !hasOnlineDiscoveryLineage && profile.isEarlySkippedWithin14Days(song)) {
+            reasons.add("library_early_skipped_14d")
         }
 
         // 3. Spoken / podcast hard gate

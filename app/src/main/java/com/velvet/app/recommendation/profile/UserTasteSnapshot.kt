@@ -81,6 +81,8 @@ data class SearchIntentSnapshot(
 data class FatigueSnapshot(
     val fatiguedRecordingIds: Set<String> = emptySet(),
     val fatiguedProviderIds: Set<String> = emptySet(),
+    val earlySkipped14dRecordingIds: Set<String> = emptySet(),
+    val earlySkipped14dProviderIds: Set<String> = emptySet(),
     val sessionRemovedRecordingIds: Set<String> = emptySet(),
     val sessionRemovedProviderIds: Set<String> = emptySet(),
     val dailyOverplayedRecordingIds: Set<String> = emptySet(),
@@ -133,6 +135,14 @@ data class UserTasteSnapshot(
             song.id in fatigue.sessionRemovedProviderIds ||
             identity.canonicalRecordingId in fatigue.sessionRemovedRecordingIds ||
             legacyGroup in fatigue.sessionRemovedRecordingIds
+    }
+
+    fun isEarlySkippedWithin14Days(song: Song): Boolean {
+        val identity = RecordingIdentityResolver.resolve(song)
+        val legacyGroup = SongIdentity.canonicalGroupId(song)
+        return song.id in fatigue.earlySkipped14dProviderIds ||
+            identity.canonicalRecordingId in fatigue.earlySkipped14dRecordingIds ||
+            legacyGroup in fatigue.earlySkipped14dRecordingIds
     }
 
     /**

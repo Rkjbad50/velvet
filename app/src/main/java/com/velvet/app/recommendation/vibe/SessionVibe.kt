@@ -181,5 +181,90 @@ data class SessionVibe(
                 candGenres.maxOfOrNull { cg -> GenreOntology.similarity(sg, cg) } ?: 0.0
             } ?: 0.0
         }
+
+        /**
+         * Shared strict SessionVibe gate used by local/library sources (`g6_library`, `g0_instant_catalog`)
+         * so off-vibe, wrong-language, wrong-category, or unknown-language library tracks never leak into pools.
+         */
+        fun matchesLocalLibraryOrInstantGate(
+            song: Song,
+            features: com.velvet.app.recommendation.model.TrackFeatureRecord,
+            seedFeatures: com.velvet.app.recommendation.model.TrackFeatureRecord?,
+            vibe: SessionVibe,
+            requestedLanguageIds: Set<String>,
+            allowMixedLanguages: Boolean,
+            artistLanguageMap: Map<String, ArtistLanguageProfile>,
+            isSelectedArtistInArtistRadio: Boolean = false,
+            widenMood: Boolean = false,
+        ): Boolean {
+            val candType = features.musicTypes.maxByOrNull { it.value }?.key
+                ?: com.velvet.app.recommendation.model.MusicType.UNKNOWN
+            if (candType == com.velvet.app.recommendation.model.MusicType.PODCAST_OR_SPOKEN) return false
+
+            if (seedFeatures != null) {
+                val seedType = seedFeatures.musicTypes.maxByOrNull { it.value }?.key
+                    ?: com.velvet.app.recommendation.model.MusicType.UNKNOWN
+                val seedIsDevotional = GenreOntology.DEVOTIONAL in seedFeatures.genreIds
+                if (seedIsDevotional) {
+                    val compatibility = GenreOntology.musicTypeCompatibility(seedType, candType)
+                    val candHasPartyMood = (features.moodIds["party_celebratory"] ?: 0.0) >= 0.5
+                    val candDevOrClassical = GenreOntology.DEVOTIONAL in features.genreIds ||
+                        com.velvet.app.recommendation.model.MusicType.CLASSICAL in features.musicTypes
+                    if (!candDevOrClassical || compatibility <= 0.1 || candHasPartyMood) return false
+
+                    val seedIsHindiOrSanskrit = ("hi" in seedFeatures.languageIds || "sa" in seedFeatures.languageIds) &&
+                        GenreOntology.SOUTH_INDIAN !in seedFeatures.genreIds
+                    val candIsSouthIndic = GenreOntology.SOUTH_INDIAN in features.genreIds
+                    val wantsSouth = requestedLanguageIds.any { it.lowercase(Locale.ROOT) in setOf("ta", "te", "ml", "kn") }
+                    if (seedIsHindiOrSanskrit && candIsSouthIndic && !wantsSouth) return false
+                }
+            }
+
+            if (isSelectedArtistInArtistRadio) return true
+
+            val effectiveLangs = vibe.effectiveAllowedLanguages.ifEmpty {
+                requestedLanguageIds.mapTo(linkedSetOf()) { it.lowercase(Locale.ROOT) }
+            }
+            val candArtistLang = ArtistLanguageMap.inferArtistLanguage(song.artist, artistLanguageMap)
+            val (candLangs, candLangConf) = resolveSongLanguage(song, features, artistLanguageMap)
+            if (effectiveLangs.isNotEmpty()) {
+                if (candArtistLang != null && candArtistLang.second >= 0.72 && candArtistLang.first !in effectiveLangs) {
+                    return false
+                }
+                if (candLangs.isNotEmpty() && candLangConf >= 0.65 && candLangs.none { it in effectiveLangs }) {
+                    return false
+                }
+                // Library/instant catalog sources are NOT discovery lineage: reject unknown-language tracks when language is locked
+                if (candLangs.isEmpty() && !allowMixedLanguages) {
+                    return false
+                }
+            }
+
+            if (seedFeatures != null) {
+                val seedType = seedFeatures.musicTypes.maxByOrNull { it.value }?.key
+                    ?: com.velvet.app.recommendation.model.MusicType.UNKNOWN
+                val typeCompat = GenreOntology.musicTypeCompatibility(seedType, candType)
+                if (seedType != com.velvet.app.recommendation.model.MusicType.UNKNOWN &&
+                    candType != com.velvet.app.recommendation.model.MusicType.UNKNOWN &&
+                    typeCompat < MIN_TYPE_COMPATIBILITY
+                ) {
+                    return false
+                }
+                val vibeGenres = vibe.genreWeights.keys.ifEmpty { seedFeatures.genreIds.keys }
+                val candGenres = features.genreIds.keys
+                if (vibeGenres.isNotEmpty() && candGenres.isNotEmpty()) {
+                    if (maxGenreSimilarity(vibeGenres, candGenres) < MIN_GENRE_SIMILARITY) {
+                        return false
+                    }
+                }
+                if (!widenMood) {
+                    val secularMoodClash =
+                        (seedFeatures.moodIds.containsKey("sad_melancholic") && features.moodIds.containsKey("party_celebratory")) ||
+                            (seedFeatures.moodIds.containsKey("party_celebratory") && features.moodIds.containsKey("sad_melancholic"))
+                    if (secularMoodClash) return false
+                }
+            }
+            return true
+        }
     }
 }
