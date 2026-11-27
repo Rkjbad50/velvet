@@ -134,6 +134,9 @@ data class QueueHealthSnapshot(
     val totalStreamResolveStallMs: Long = 0L,
     val recentStalls: List<StallEventRecord> = emptyList(),
     val lowRunwaySinceMs: Long? = null,
+    val stateMismatchCount: Int = 0,
+    val lastStateMismatch: String? = null,
+    val recentStateMismatches: List<String> = emptyList(),
 )
 
 /**
@@ -151,6 +154,7 @@ object QueueHealthMonitor {
     private val decisions = ArrayDeque<RefillDecisionRecord>(MAX_DECISIONS)
     private val funnels = ArrayDeque<RefillFunnelRecord>(MAX_FUNNELS)
     private val stalls = ArrayDeque<StallEventRecord>(MAX_STALLS)
+    private val stateMismatches = ArrayDeque<String>(MAX_STALLS)
     private val cumulativeRejects = linkedMapOf<String, Int>()
     private val latestSourceHealth = linkedMapOf<String, SourceHealth>()
     private var lowRunwayStallRecordedForEpisode = false
@@ -443,6 +447,27 @@ object QueueHealthMonitor {
         }
     }
 
+    fun recordStateMismatch(
+        queueCurrentId: String?,
+        playerSongId: String,
+        source: String,
+        passedOverCount: Int = 0,
+        timestampMs: Long = System.currentTimeMillis(),
+    ) {
+        val summary = "source=$source queueCurrent=${queueCurrentId ?: "null"} playerItem=$playerSongId passedOver=$passedOverCount"
+        synchronized(lock) {
+            if (stateMismatches.size >= MAX_STALLS) stateMismatches.removeFirst()
+            stateMismatches.addLast("${timestampMs}|$summary")
+            val prev = _state.value
+            _state.value = prev.copy(
+                stateMismatchCount = prev.stateMismatchCount + 1,
+                lastStateMismatch = summary,
+                recentStateMismatches = stateMismatches.toList().reversed(),
+            )
+        }
+        DiagnosticsLogger.w("StateMismatch", "state mismatch: $summary")
+    }
+
     fun formatPlainText(snapshot: QueueHealthSnapshot = _state.value): String {
         val tf = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
         val lastAt = snapshot.lastRefillAtMs?.let { tf.format(Date(it)) } ?: "Never"
@@ -492,6 +517,17 @@ object QueueHealthMonitor {
             if (snapshot.recentStalls.isNotEmpty()) {
                 snapshot.recentStalls.take(10).forEachIndexed { idx, s ->
                     appendLine("  ${idx + 1}. [${tf.format(Date(s.timestampMs))}] ${s.kind.name} ${s.durationMs}ms target=${s.targetId} (${s.targetTitle}) ${s.detail}".trimEnd())
+                }
+            }
+            appendLine()
+            appendLine("--- STATE MISMATCHES ---")
+            appendLine("Total: ${snapshot.stateMismatchCount} | Last: ${snapshot.lastStateMismatch ?: "None"}")
+            if (snapshot.recentStateMismatches.isNotEmpty()) {
+                snapshot.recentStateMismatches.take(10).forEachIndexed { idx, raw ->
+                    val sep = raw.indexOf('|')
+                    val tsLabel = raw.substring(0, sep.coerceAtLeast(0)).toLongOrNull()?.let { tf.format(Date(it)) } ?: "??:??:??"
+                    val msg = if (sep >= 0) raw.substring(sep + 1) else raw
+                    appendLine("  ${idx + 1}. [$tsLabel] $msg")
                 }
             }
             appendLine()
@@ -644,6 +680,7 @@ object QueueHealthMonitor {
             decisions.clear()
             funnels.clear()
             stalls.clear()
+            stateMismatches.clear()
             cumulativeRejects.clear()
             latestSourceHealth.clear()
             lowRunwayStallRecordedForEpisode = false

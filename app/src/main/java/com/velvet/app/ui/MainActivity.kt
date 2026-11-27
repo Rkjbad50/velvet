@@ -133,6 +133,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         configurePreferredRefreshRate()
+        PlayerConnection.onForeground()
         AppUpdater.checkInstallResult(this) { message ->
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         }

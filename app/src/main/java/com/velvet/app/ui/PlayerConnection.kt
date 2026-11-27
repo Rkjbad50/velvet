@@ -43,7 +43,10 @@ import com.velvet.app.playback.PlaylistStart
 import com.velvet.app.playback.QueueExoAdapter
 import com.velvet.app.playback.QueueItem
 import com.velvet.app.playback.QueueManager
+import com.velvet.app.playback.QueuePlayerSync
 import com.velvet.app.playback.QueueState
+import com.velvet.app.playback.ReconcileOutcome
+import com.velvet.app.playback.ReconcileResult
 import com.velvet.app.playback.RepeatMode
 import com.velvet.app.playback.ShuffleMode
 import com.velvet.app.playback.toMediaItem
@@ -80,6 +83,8 @@ object PlayerConnection {
     private var optimisticPlayUntilMs: Long = 0L
     private var pendingSeekTargetMs: Long? = null
     private var pendingSeekUntilMs: Long = 0L
+    private var pendingExpectedExoSongId: String? = null
+    private var pendingExpectedExoUntilMs: Long = 0L
     private fun monoNowMs(): Long = System.nanoTime() / 1_000_000L
     var error by mutableStateOf<String?>(null)
     var brokenStreamingBanner by mutableStateOf<String?>(null)
@@ -359,6 +364,8 @@ object PlayerConnection {
         startPositionMs: Long = 0L,
     ) {
         val parentArt = activeParentAlbumArt
+        pendingExpectedExoSongId = queueManager.current?.id
+        pendingExpectedExoUntilMs = monoNowMs() + 900L
         exoSyncSerializer.submit {
             withController { c ->
                 QueueExoAdapter.syncToExoPlayer(
@@ -434,6 +441,17 @@ object PlayerConnection {
         controller = null
     }
 
+    fun onForeground() {
+        val c = controller ?: run {
+            ensureConnected()
+            return
+        }
+        if (c.mediaItemCount > 0) {
+            reconcileFromPlayer(c, source = "lifecycle_foreground", force = true)
+            syncBasicState(c)
+        }
+    }
+
     private fun ensureConnected() {
         val context = appContext ?: return
         if (!started || future != null) return
@@ -456,10 +474,12 @@ object PlayerConnection {
             if (c == null) { future = null; error = "Couldn't connect to the player"; return@addListener }
             c.addListener(listener)
             controller = c
-            syncBasicState(c)
             if (c.mediaItemCount == 0) {
                 restoreSavedPlaybackState(c)
+            } else {
+                reconcileFromPlayer(c, source = "controller_connect", force = true)
             }
+            syncBasicState(c)
             while (pending.isNotEmpty()) pending.removeFirst().invoke(c)
         }, ContextCompat.getMainExecutor(context))
     }
@@ -560,74 +580,137 @@ object PlayerConnection {
             }
         }
         override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
-            // When ExoPlayer auto-advances (track finished naturally), pop from our queue
-            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
-                reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-                val endReason = if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-                    com.velvet.app.data.ListenEndReason.REPLAY
-                } else {
-                    com.velvet.app.data.ListenEndReason.COMPLETED
-                }
-                val completedOutgoing = current ?: queueManager.current
-                recordCurrentPlaybackEnd(endReason = endReason)
-                queueManager.advance(manual = false)
-                syncQueueState()
-                syncToExoPlayer()
-                // Chained re-seeding: merge RDAMVM<completedTrack> into rolling pool & instant catalog off-main
-                if (completedOutgoing != null && (VelvetApp.library.data.value.autoplay || isRadioActive)) {
-                    runwayBgScope.launch {
-                        val chained = runCatching {
-                            StreamResolver.relatedWithContinuation(
-                                videoId = completedOutgoing.id,
-                                seedHint = completedOutgoing,
-                                loadNextPage = false,
-                            )
-                        }.getOrDefault(emptyList())
-                        if (chained.isNotEmpty()) {
-                            runCatching {
-                                VelvetApp.autoplayRefillCoordinator.mergeIntoRollingPool(chained)
-                            }
-                        }
-                    }
-                }
-                requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
-                if (queueManager.upNext.size < RunwayPolicy.REFILL_BELOW) {
-                    (queueManager.upNext.lastOrNull()?.song ?: queueManager.current)?.let {
-                        StreamResolver.prefetchRelated(it)
-                    }
-                }
-            }
-        }
-    }
-
-    /** Syncs basic playback state (play/pause/buffer/duration/repeat) from ExoPlayer. */
-    private fun syncBasicState(p: Player) {
-        val exoCurrent = p.currentMediaItem?.toSong()
-        if (exoCurrent != null && exoCurrent.id != current?.id) {
-            if (queueManager.current == null) {
+            val c = controller ?: return
+            val isNaturalTransition = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+            val exoSong = mediaItem?.toSong() ?: c.currentMediaItem?.toSong()
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
+                exoSong != null &&
+                exoSong.id == (current?.id ?: queueManager.current?.id)
+            ) {
+                recordCurrentPlaybackEnd(endReason = com.velvet.app.data.ListenEndReason.REPLAY)
                 trackStartedAt = System.currentTimeMillis()
                 lastRecordedEventSongId = null
                 savedInitialPositionMs = 0L
                 pendingSeekTargetMs = null
                 pendingSeekUntilMs = 0L
-                current = exoCurrent
+                queueManager.advance(manual = false)
+                syncQueueState(resetPositionOnTrackChange = false)
                 requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
-            } else if (queueManager.current?.id != exoCurrent.id) {
-                if (queueManager.userQueue.firstOrNull()?.song?.id == exoCurrent.id ||
-                    queueManager.upNext.firstOrNull()?.song?.id == exoCurrent.id) {
-                    trackStartedAt = System.currentTimeMillis()
-                    lastRecordedEventSongId = null
-                    queueManager.advance()
-                    syncQueueState()
-                    syncToExoPlayer()
-                    requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
-                }
-                // Otherwise ignore stale pre-transition events while ExoPlayer catches up to queueManager.current
+                return
             }
+            reconcileFromPlayer(
+                p = c,
+                source = "transition_$reason",
+                force = isNaturalTransition || reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+                recordExpectedSingleStepMismatch = !isNaturalTransition,
+                isNaturalTrackEnd = (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO),
+            )
+        }
+    }
+
+    /**
+     * Reconciles [queueManager] and UI state (`current`) to ExoPlayer's authoritative item,
+     * fixing any multi-step background/idle desync without duplicating or skipping tracks.
+     */
+    private fun reconcileFromPlayer(
+        p: Player,
+        source: String,
+        force: Boolean,
+        recordExpectedSingleStepMismatch: Boolean = true,
+        isNaturalTrackEnd: Boolean = false,
+    ): ReconcileResult? {
+        val mediaItem = p.currentMediaItem ?: return null
+        val exoSong = mediaItem.toSong()
+        if (exoSong.id.isBlank()) return null
+
+        val prevCurrent = queueManager.current ?: current
+        val prevQueueCurrentId = queueManager.current?.id
+        val nowMs = monoNowMs()
+
+        if (prevQueueCurrentId != null && prevQueueCurrentId == exoSong.id) {
+            val mediaArtwork = mediaItem.mediaMetadata.artworkUri?.toString()?.takeIf { it.isNotBlank() }
+            if (mediaArtwork != null) {
+                val merged = com.velvet.app.playback.CoverArtResolver.mergeTrackArtwork(
+                    existingTrackThumb = prevCurrent?.thumb,
+                    candidateTrackThumb = mediaArtwork,
+                    albumThumb = activeParentAlbumArt,
+                    videoId = exoSong.id,
+                )
+                if (merged != null && merged != prevCurrent?.thumb) {
+                    com.velvet.app.playback.updateKnownSongArtwork(exoSong.id, merged)
+                    queueManager.updateSongArtwork(
+                        songId = exoSong.id,
+                        newThumb = merged,
+                        albumArtFallback = activeParentAlbumArt,
+                        markSquareArtwork = true,
+                    )
+                }
+            }
+            if (current?.id != queueManager.current?.id || current != queueManager.current) {
+                syncQueueState(resetPositionOnTrackChange = (current?.id != queueManager.current?.id))
+            }
+            return ReconcileResult(queueManager.state, ReconcileOutcome.NO_OP)
+        }
+
+        val canCheckPending = !force && pendingExpectedExoSongId != null && nowMs < pendingExpectedExoUntilMs
+        if (canCheckPending && exoSong.id != pendingExpectedExoSongId) {
+            return null
+        }
+
+        if (prevCurrent != null && prevCurrent.id != exoSong.id) {
+            val endReason = if (isNaturalTrackEnd) com.velvet.app.data.ListenEndReason.COMPLETED else null
+            recordCurrentPlaybackEnd(endReason = endReason)
+        }
+
+        val result = QueuePlayerSync.reconcileIfChanged(
+            queueManager = queueManager,
+            playerSong = exoSong,
+            source = source,
+            pendingExpectedSongId = pendingExpectedExoSongId,
+            pendingExpectedUntilMs = pendingExpectedExoUntilMs,
+            nowMs = nowMs,
+            force = force,
+            recordExpectedSingleStepMismatch = recordExpectedSingleStepMismatch,
+        ) ?: return null
+
+        if (result.outcome != ReconcileOutcome.NO_OP) {
+            pendingExpectedExoSongId = null
+            pendingExpectedExoUntilMs = 0L
+            trackStartedAt = System.currentTimeMillis()
+            lastRecordedEventSongId = null
+            syncQueueState(resetPositionOnTrackChange = true)
+            syncToExoPlayer(autoPlay = p.playWhenReady)
+            requestRunwayRefill(RunwayTrigger.TRACK_CHANGE)
             if (queueManager.upNext.size < RunwayPolicy.REFILL_BELOW) {
-                StreamResolver.prefetchRelated(queueManager.upNext.lastOrNull()?.song ?: (queueManager.current ?: exoCurrent))
+                (queueManager.upNext.lastOrNull()?.song ?: queueManager.current)?.let {
+                    StreamResolver.prefetchRelated(it)
+                }
+            }
+            if (prevCurrent != null && (VelvetApp.library.data.value.autoplay || isRadioActive)) {
+                runwayBgScope.launch {
+                    val chained = runCatching {
+                        StreamResolver.relatedWithContinuation(
+                            videoId = prevCurrent.id,
+                            seedHint = prevCurrent,
+                            loadNextPage = false,
+                        )
+                    }.getOrDefault(emptyList())
+                    if (chained.isNotEmpty()) {
+                        runCatching {
+                            VelvetApp.autoplayRefillCoordinator.mergeIntoRollingPool(chained)
+                        }
+                    }
+                }
             }
         }
+        return result
+    }
+
+    /** Syncs basic playback state (play/pause/buffer/duration/repeat) from ExoPlayer. */
+    private fun syncBasicState(p: Player) {
+        val exoCurrent = p.currentMediaItem?.toSong()
+        reconcileFromPlayer(p, source = "sync_basic_state", force = false)
 
         val nowMs = monoNowMs()
         val exoPlayIntended = p.playWhenReady && p.playbackState != Player.STATE_ENDED
@@ -681,26 +764,32 @@ object PlayerConnection {
     }
 
     private fun buildPersistedStateOrNull(): PersistedPlaybackState? {
-        val cur = current ?: queueManager.current ?: return null
+        val exoSong = controller?.currentMediaItem?.toSong()
+        val rawState = queueManager.state
+        val reconciled = if (exoSong != null && exoSong.id.isNotBlank()) {
+            QueueManager.reconcileTo(rawState, exoSong.id, exoSong).state
+        } else {
+            rawState
+        }
+        val cur = reconciled.current?.song ?: current ?: exoSong ?: return null
         val pos = controller?.currentPosition ?: savedInitialPositionMs
-        val qState = queueManager.state
         return PersistedPlaybackState(
             song = cur,
             positionMs = pos.coerceAtLeast(0L),
             durationMs = durationMs.coerceAtLeast(0L),
-            upNext = queueManager.upNext.map { it.song },
-            userQueue = queueManager.userQueue.map { it.song },
-            history = queueManager.history,
-            sourceList = queueManager.sourceList,
+            upNext = reconciled.upNext.map { it.song },
+            userQueue = reconciled.userQueue.map { it.song },
+            history = reconciled.history.map { it.song },
+            sourceList = reconciled.sourceList.map { it.song },
             playlistId = currentPlaylistId,
             isRadio = isRadioActive,
             isArtistRadio = isArtistRadioActive,
             radioSeedSong = radioSeedSong,
-            shuffleMode = queueManager.shuffleMode,
-            repeatMode = queueManager.repeatMode,
-            removedSongIds = qState.removedSongIds,
-            removedGroupIds = qState.removedGroupIds,
-            removedRecordingIds = qState.removedRecordingIds,
+            shuffleMode = reconciled.shuffleMode,
+            repeatMode = reconciled.repeatMode,
+            removedSongIds = reconciled.removedSongIds,
+            removedGroupIds = reconciled.removedGroupIds,
+            removedRecordingIds = reconciled.removedRecordingIds,
         )
     }
 
@@ -1109,6 +1198,7 @@ object PlayerConnection {
 
     /** Jump to a specific queue item by qid. */
     fun jumpToQid(qid: String) {
+        controller?.let { reconcileFromPlayer(it, source = "before_jump_to_qid", force = true) }
         val outgoing = current
         val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
         val outgoingDur = durationMs
@@ -1273,6 +1363,7 @@ object PlayerConnection {
     }
 
     private fun performNextAdvance() {
+        controller?.let { reconcileFromPlayer(it, source = "before_next", force = true) }
         val outgoing = current ?: queueManager.current
         val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
         val outgoingDur = durationMs
@@ -1679,6 +1770,7 @@ object PlayerConnection {
 
     fun previous() {
         withController { c ->
+            reconcileFromPlayer(c, source = "before_previous", force = true)
             val pos = c.currentPosition.coerceAtLeast(0L)
             val dur = durationMs
             val outgoing = current

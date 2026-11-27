@@ -19,6 +19,20 @@ enum class RepeatMode {
     ONE,
 }
 
+enum class ReconcileOutcome {
+    NO_OP,
+    ADVANCED_USER_QUEUE,
+    ADVANCED_UP_NEXT,
+    MOVED_FROM_HISTORY,
+    ADOPTED_UNKNOWN,
+}
+
+data class ReconcileResult(
+    val state: QueueState,
+    val outcome: ReconcileOutcome,
+    val passedOverItems: List<QueueItem> = emptyList(),
+)
+
 /**
  * A single queue item with a stable unique ID (UUID) so that swipe/move/remove/reorder
  * actions always target the exact item without depending on shifting list indices.
@@ -300,6 +314,20 @@ class QueueManager(
         update { Companion.appendAutoplay(it, songs) }
     }
 
+    /**
+     * Reconciles this queue state to [playerSongId] as the authoritative playing track reported by ExoPlayer.
+     * Moves any skipped-over tracks cleanly into history without duplicating or dropping upcoming tracks.
+     */
+    fun reconcileTo(playerSongId: String, playerSong: Song? = null): ReconcileResult {
+        var captured: ReconcileResult? = null
+        update { currentState ->
+            val res = Companion.reconcileTo(currentState, playerSongId, playerSong)
+            captured = res
+            res.state
+        }
+        return captured ?: ReconcileResult(state, ReconcileOutcome.NO_OP)
+    }
+
     fun injectSmartRecommendations(recommendations: List<Song>, rng: Random = Random()) {
         update { Companion.injectSmartRecommendations(it, recommendations, rng) }
     }
@@ -531,6 +559,75 @@ class QueueManager(
                 upNext = newUpNext,
             )
             return Pair(newState, false)
+        }
+
+        /**
+         * Reconciles [state] to the authoritative [playerSongId] currently playing in ExoPlayer:
+         * - Same as current -> NO_OP (idempotent).
+         * - Present anywhere in userQueue/upNext -> advances to that item and records skipped-over
+         *   items cleanly into history in chronological order without duplication.
+         * - Present in history -> restores playback position back to that history item.
+         * - Unknown -> appends old current to history and adopts [playerSong] as current without
+         *   discarding remaining upcoming queues.
+         */
+        fun reconcileTo(
+            state: QueueState,
+            playerSongId: String,
+            playerSong: Song? = null,
+        ): ReconcileResult {
+            if (playerSongId.isBlank()) return ReconcileResult(state, ReconcileOutcome.NO_OP)
+            if (state.current?.song?.id == playerSongId) {
+                return ReconcileResult(state, ReconcileOutcome.NO_OP)
+            }
+
+            val userIdx = state.userQueue.indexOfFirst { it.song.id == playerSongId }
+            if (userIdx >= 0) {
+                val passedUser = state.userQueue.take(userIdx)
+                val targetItem = state.userQueue[userIdx]
+                val newState = state.copy(
+                    history = state.history + listOfNotNull(state.current) + passedUser,
+                    current = targetItem,
+                    userQueue = state.userQueue.drop(userIdx + 1),
+                )
+                return ReconcileResult(newState, ReconcileOutcome.ADVANCED_USER_QUEUE, passedUser)
+            }
+
+            val upNextIdx = state.upNext.indexOfFirst { it.song.id == playerSongId }
+            if (upNextIdx >= 0) {
+                val passedUpcoming = state.userQueue + state.upNext.take(upNextIdx)
+                val targetItem = state.upNext[upNextIdx]
+                val newState = state.copy(
+                    history = state.history + listOfNotNull(state.current) + passedUpcoming,
+                    current = targetItem,
+                    userQueue = emptyList(),
+                    upNext = state.upNext.drop(upNextIdx + 1),
+                )
+                return ReconcileResult(newState, ReconcileOutcome.ADVANCED_UP_NEXT, passedUpcoming)
+            }
+
+            val historyIdx = state.history.indexOfLast { it.song.id == playerSongId }
+            if (historyIdx >= 0) {
+                val targetItem = state.history[historyIdx]
+                val restoredUpcoming = (state.history.drop(historyIdx + 1) + listOfNotNull(state.current))
+                    .filterNot { it.song.id == playerSongId }
+                val newState = state.copy(
+                    history = state.history.take(historyIdx),
+                    current = targetItem,
+                    userQueue = state.userQueue.filterNot { it.song.id == playerSongId },
+                    upNext = restoredUpcoming + state.upNext.filterNot { it.song.id == playerSongId },
+                )
+                return ReconcileResult(newState, ReconcileOutcome.MOVED_FROM_HISTORY, emptyList())
+            }
+
+            val adoptedSong = playerSong ?: Song(id = playerSongId, title = "Unknown", artist = "")
+            val adoptedItem = QueueItem(adoptedSong)
+            val newState = state.copy(
+                history = state.history + listOfNotNull(state.current),
+                current = adoptedItem,
+                userQueue = state.userQueue.filterNot { it.song.id == playerSongId },
+                upNext = state.upNext.filterNot { it.song.id == playerSongId },
+            )
+            return ReconcileResult(newState, ReconcileOutcome.ADOPTED_UNKNOWN, emptyList())
         }
 
         /**

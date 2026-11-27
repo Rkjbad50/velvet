@@ -184,24 +184,26 @@ class PlaybackService : MediaSessionService() {
     private fun buildCurrentPersistedStateOrNull(): PersistedPlaybackState? {
         if (!::exo.isInitialized) return null
         val currentSong = exo.currentMediaItem?.toSong() ?: return null
-        val qState = PlayerConnection.queueManager.state
+        val rawState = PlayerConnection.queueManager.state
+        val reconciled = QueueManager.reconcileTo(rawState, currentSong.id, currentSong).state
+        val activeSong = reconciled.current?.song ?: currentSong
         return PersistedPlaybackState(
-            song = currentSong,
+            song = activeSong,
             positionMs = exo.currentPosition.coerceAtLeast(0L),
             durationMs = exo.duration.coerceAtLeast(0L),
-            upNext = PlayerConnection.upNext.map { it.song },
-            userQueue = PlayerConnection.userQueue.map { it.song },
-            history = PlayerConnection.history.map { it.song },
-            sourceList = PlayerConnection.queueManager.sourceList,
+            upNext = reconciled.upNext.map { it.song },
+            userQueue = reconciled.userQueue.map { it.song },
+            history = reconciled.history.map { it.song },
+            sourceList = reconciled.sourceList.map { it.song },
             playlistId = PlayerConnection.currentPlaylistId,
             isRadio = PlayerConnection.isRadioActive,
             isArtistRadio = PlayerConnection.isArtistRadioActive,
             radioSeedSong = PlayerConnection.radioSeedSong,
-            shuffleMode = PlayerConnection.queueManager.shuffleMode,
-            repeatMode = PlayerConnection.queueManager.repeatMode,
-            removedSongIds = qState.removedSongIds,
-            removedGroupIds = qState.removedGroupIds,
-            removedRecordingIds = qState.removedRecordingIds,
+            shuffleMode = reconciled.shuffleMode,
+            repeatMode = reconciled.repeatMode,
+            removedSongIds = reconciled.removedSongIds,
+            removedGroupIds = reconciled.removedGroupIds,
+            removedRecordingIds = reconciled.removedRecordingIds,
         )
     }
 
