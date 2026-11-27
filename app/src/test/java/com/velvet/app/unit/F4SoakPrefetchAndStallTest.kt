@@ -29,7 +29,8 @@ import com.velvet.app.recommendation.model.CandidateSourceStatus
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationRequest
 import com.velvet.app.recommendation.model.RecommendationResult
-import com.velvet.app.recommendation.model.ScoredCandidate
+import com.velvet.app.recommendation.model.RecommendedTrack
+import com.velvet.app.recommendation.model.ReleaseAudioClass
 import com.velvet.app.recommendation.profile.DefaultUserProfileRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -279,11 +280,10 @@ class F4SoakPrefetchAndStallTest {
                     requestId = req.requestId,
                     mode = mode,
                     candidates = chosen.mapIndexed { idx, song ->
-                        ScoredCandidate(
+                        toRecommendedTrack(
+                            idx = idx,
                             song = song,
-                            score = 1.0 - idx * 0.01,
-                            sourceIds = setOf(if (widenEra) "g5_genre_neighbours" else "g1_related"),
-                            evidence = emptyList(),
+                            sourceId = if (widenEra) "g5_genre_neighbours" else "g1_related",
                         )
                     },
                     modelVersion = "test",
@@ -466,7 +466,7 @@ class F4SoakPrefetchAndStallTest {
                     requestId = "soak-$seq",
                     mode = mode,
                     candidates = batch.mapIndexed { idx, s ->
-                        ScoredCandidate(s, 0.9 - idx * 0.01, setOf("g1_related"), emptyList())
+                        toRecommendedTrack(idx = idx, song = s, sourceId = "g1_related")
                     },
                     modelVersion = "test",
                     generatedAtMillis = stallClockMs,
@@ -495,5 +495,23 @@ class F4SoakPrefetchAndStallTest {
             stallResult.emptyOrExhaustedDecisions.isNotEmpty(),
         )
         assertTrue(stallResult.formatPlainText().contains("EMPTY / EXHAUSTED DECISIONS (${stallResult.emptyOrExhaustedDecisions.size})"))
+    }
+
+    private fun toRecommendedTrack(idx: Int, song: Song, sourceId: String): RecommendedTrack {
+        val score = 1.0 - idx * 0.01
+        return RecommendedTrack(
+            song = song,
+            recordingId = "rec-${song.id}",
+            workId = "work-${song.id}",
+            sourceIds = setOf(sourceId),
+            rankScore = score,
+            sequenceScore = score,
+            finalScore = score,
+            featureConfidence = 0.9,
+            releaseAudioClass = ReleaseAudioClass.VERIFIED_TOPIC_AUDIO,
+            reasons = emptyList(),
+            scoreBreakdown = emptyMap(),
+            selectedPosition = idx,
+        )
     }
 }
