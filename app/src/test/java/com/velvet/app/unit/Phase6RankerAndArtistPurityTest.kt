@@ -85,11 +85,26 @@ class Phase6RankerAndArtistPurityTest {
     @Test
     fun artistRadio_enforces60PercentSelectedArtist_collaborators_sameEraNeighbours_andZeroUnrelated() = runBlocking {
         val seed = topic("seed_arijit", "Tum Hi Ho", "Arijit Singh, Mithoon", album = "Aashiqui 2")
-        val arijitTracks = (1..14).map { idx ->
-            val tag = ('A' + idx)
-            topic("ar_$idx", "Dil Ka Safar Part$tag (2018)", "Arijit Singh", album = if (idx % 2 == 0) "AlbumAlpha" else "AlbumBeta")
+        val arijitTitles = listOf(
+            "Channa Mereya",
+            "Khairiyat Pucho",
+            "Ae Dil Hai Mushkil",
+            "Shayad Kal Ho",
+            "Hawayein Romantic",
+            "Kalank Title Track",
+            "Ghungroo Toot Gaye",
+            "Agar Tum Saath Ho",
+            "Phir Bhi Tumko Chaahunga",
+            "Zaalima Pyar Song",
+            "Nashe Si Chadh Gayi",
+            "Gerua Dilwale Geet",
+            "Tera Yaar Hoon Main",
+            "Kesariya Tera Ishq",
+        )
+        val arijitTracks = arijitTitles.mapIndexed { idx, songTitle ->
+            topic("ar_${idx + 1}", songTitle, "Arijit Singh", album = if (idx % 2 == 0) "AlbumAlpha" else "AlbumBeta")
         }
-        val duplicateComposition = topic("ar_dup", "Dil Ka Safar PartB (Unplugged)", "Arijit Singh", album = "AlbumAlpha")
+        val duplicateComposition = topic("ar_dup", "Channa Mereya (Unplugged)", "Arijit Singh", album = "AlbumAlpha")
         val collaboratorTracks = listOf(
             topic("co_1", "Sun Raha Hai", "Ankit Tiwari", album = "Aashiqui 2"),
             topic("co_2", "Banjaara Romantic", "Mohammed Irfan, Mithoon", album = "Ek Villain"),
@@ -177,9 +192,23 @@ class Phase6RankerAndArtistPurityTest {
     @Test
     fun deterministicExploration_sameSeedProducesIdenticalOrder_differentSeedVariesWithinVibe() = runBlocking {
         val seed = topic("seed_det", "Tum Hi Ho", "Arijit Singh", album = "Aashiqui 2 (2013)")
-        val hindiPool = (1..12).map { i ->
-            val letter = ('A' + i)
-            topic("hi_$i", "Dil Ki Baat $letter", "Hindi Singer $letter", album = "Romance ${2013 + (i % 5)}")
+        val hindiTitles = listOf(
+            "Raataan Lambiyan Romance",
+            "Tujhe Kitna Chahne Lage",
+            "Bekhayali Yaad Geet",
+            "Apna Bana Le Piya",
+            "Pehle Bhi Main Pyar",
+            "Ve Kamleya Ishq",
+            "O Maahi Romantic",
+            "Satranga Mohabbat",
+            "Tere Hawaale Dil",
+            "Chaleya Ishq Song",
+            "Sajni Re Pyar",
+            "Heeriye Duniya Geet",
+        )
+        val hindiPool = hindiTitles.mapIndexed { idx, songTitle ->
+            val artistTag = listOf("Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Theta", "Kappa", "Lambda", "Omega", "Sigma", "Nova")[idx]
+            topic("hi_${idx + 1}", songTitle, "Hindi Singer $artistTag", album = "Romance ${2013 + (idx % 5)}")
         }
         val (engine, _) = buildEngine(relatedCatalog = hindiPool)
 
@@ -316,12 +345,22 @@ class Phase6RankerAndArtistPurityTest {
         )
 
         // Add more known/played tracks + brand-new Hindi discoveries for 1-in-5 novelty slot
-        val knownFiller = (1..8).map { i ->
-            val letter = ('A' + i)
-            val s = topic("known_$i", "Dil Yaad Song $letter", "Hindi Vocalist $letter", album = "Mix $letter (2014)")
+        val knownTitles = listOf(
+            "Duniyaa Mohabbat",
+            "Pal Ek Pal",
+            "Thodi Jagah Pyar",
+            "Ranjha Ishq Geet",
+            "Tum Prem Ho Geet",
+            "Naino Ne Baandhi",
+            "Makhna Dil Song",
+            "Kaise Hua Pyar",
+        )
+        val knownFiller = knownTitles.mapIndexed { idx, songTitle ->
+            val artistTag = listOf("Vikas", "Rohan", "Kabir", "Aryan", "Meera", "Tara", "Dev", "Neha")[idx]
+            val s = topic("known_${idx + 1}", songTitle, "Hindi Vocalist $artistTag", album = "Mix $artistTag (2014)")
             eventRepo.record(
                 RecommendationEvent(
-                    eventId = "ev_k_$i",
+                    eventId = "ev_k_${idx + 1}",
                     eventType = RecommendationEventType.TRACK_COMPLETED,
                     occurredAtMillis = now - TimeUnit.DAYS.toMillis(2),
                     providerItemId = s.id,
@@ -331,9 +370,16 @@ class Phase6RankerAndArtistPurityTest {
             )
             s
         }
-        val unseenDiscoveries = (1..5).map { i ->
-            val letter = ('M' + i)
-            topic("new_$i", "Nayi Subah Geet $letter", "Shreya Ghoshal", album = "Fresh $letter (2018)")
+        val unseenTitles = listOf(
+            "Barso Re Megha",
+            "Sunn Raha Pyar",
+            "Teri Meri Prem",
+            "Manwa Laage Ishq",
+            "Deewani Mastani Geet",
+        )
+        val unseenArtists = listOf("Shreya Ghoshal", "Palak Muchhal", "Armaan Malik", "Jubin Nautiyal", "Mohit Chauhan")
+        val unseenDiscoveries = unseenTitles.mapIndexed { idx, songTitle ->
+            topic("new_${idx + 1}", songTitle, unseenArtists[idx], album = "FreshAlbum${idx + 1} (2018)")
         }
 
         val (engine, features) = buildEngine(
