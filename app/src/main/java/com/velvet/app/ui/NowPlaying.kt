@@ -308,7 +308,7 @@ fun MiniPlayer(
             Crossfade(
                 targetState = song,
                 modifier = Modifier.weight(1f).padding(start = 12.dp),
-                animationSpec = tween(220, easing = FastOutSlowInEasing),
+                animationSpec = VelvetMotion.fastTween(VelvetMotion.Duration.ArtworkCrossfade),
                 label = "miniPlayerTrack",
             ) {
                 Column {
@@ -334,9 +334,9 @@ private fun MiniPlayerProgressBar(artColor: Color) {
     LaunchedEffect(songId, targetProgress) {
         val delta = kotlin.math.abs(targetProgress - smooth.value)
         if (delta > 0.03f) {
-            smooth.animateTo(targetProgress, spring(dampingRatio = 0.92f, stiffness = 460f))
+            smooth.animateTo(targetProgress, VelvetMotion.Springs.WindowOpen)
         } else if (delta > 0.0005f) {
-            smooth.animateTo(targetProgress, tween(durationMillis = 150, easing = LinearEasing))
+            smooth.animateTo(targetProgress, VelvetMotion.linearTween(150))
         } else {
             smooth.snapTo(targetProgress)
         }
@@ -1413,10 +1413,7 @@ private fun ModernControlDock(accent: Color) {
         val isShufflePressed by shuffleInteractionSource.collectIsPressedAsState()
         val shuffleScale by animateFloatAsState(
             targetValue = if (isShufflePressed) 0.88f else 1.0f,
-            animationSpec = spring(
-                dampingRatio = 0.88f,
-                stiffness = 480f,
-            ),
+            animationSpec = VelvetMotion.Springs.TactilePress,
             label = "shuffleScale",
         )
 
@@ -1479,10 +1476,7 @@ private fun ModernControlDock(accent: Color) {
         val isPrevPressed by prevInteractionSource.collectIsPressedAsState()
         val prevScale by animateFloatAsState(
             targetValue = if (isPrevPressed) 0.86f else 1.0f,
-            animationSpec = spring(
-                dampingRatio = 0.88f,
-                stiffness = 480f,
-            ),
+            animationSpec = VelvetMotion.Springs.TactilePress,
             label = "prevScale",
         )
 
@@ -1515,10 +1509,7 @@ private fun ModernControlDock(accent: Color) {
         val isPressed by playPauseInteractionSource.collectIsPressedAsState()
         val playPauseScale by animateFloatAsState(
             targetValue = if (isPressed) 0.90f else 1.0f,
-            animationSpec = spring(
-                dampingRatio = 0.88f,
-                stiffness = 480f,
-            ),
+            animationSpec = VelvetMotion.Springs.TactilePress,
             label = "playPauseScale",
         )
         val playPauseIconColor = if (accent.luminance() > 0.55f) Color(0xFF09140D) else Color.White
@@ -1554,8 +1545,8 @@ private fun ModernControlDock(accent: Color) {
             AnimatedContent(
                 targetState = playVisualState,
                 transitionSpec = {
-                    (fadeIn(tween(150, easing = FastOutSlowInEasing)) + scaleIn(initialScale = 0.86f, animationSpec = tween(160)))
-                        .togetherWith(fadeOut(tween(110, easing = FastOutSlowInEasing)) + scaleOut(targetScale = 0.86f, animationSpec = tween(110)))
+                    (fadeIn(VelvetMotion.fastTween(150)) + scaleIn(initialScale = 0.86f, animationSpec = VelvetMotion.fastTween(160)))
+                        .togetherWith(fadeOut(VelvetMotion.fastTween(110)) + scaleOut(targetScale = 0.86f, animationSpec = VelvetMotion.fastTween(110)))
                 },
                 label = "nowPlayingPlayPauseMorph",
             ) { state ->
@@ -1585,10 +1576,7 @@ private fun ModernControlDock(accent: Color) {
         val isNextPressed by nextInteractionSource.collectIsPressedAsState()
         val nextScale by animateFloatAsState(
             targetValue = if (isNextPressed) 0.86f else 1.0f,
-            animationSpec = spring(
-                dampingRatio = 0.88f,
-                stiffness = 480f,
-            ),
+            animationSpec = VelvetMotion.Springs.TactilePress,
             label = "nextScale",
         )
 
@@ -1621,10 +1609,7 @@ private fun ModernControlDock(accent: Color) {
         val isRepeatPressed by repeatInteractionSource.collectIsPressedAsState()
         val repeatScale by animateFloatAsState(
             targetValue = if (isRepeatPressed) 0.88f else 1.0f,
-            animationSpec = spring(
-                dampingRatio = 0.88f,
-                stiffness = 480f,
-            ),
+            animationSpec = VelvetMotion.Springs.TactilePress,
             label = "repeatScale",
         )
 
@@ -1673,7 +1658,7 @@ private fun PlayerBottomCards(
     val isUltraPressed by ultraInteraction.collectIsPressedAsState()
     val ultraScale by animateFloatAsState(
         targetValue = if (isUltraPressed) 0.93f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f),
+        animationSpec = VelvetMotion.Springs.TactilePress,
         label = "ultraScale",
     )
 
@@ -1681,7 +1666,7 @@ private fun PlayerBottomCards(
     val isQueuePressed by queueInteraction.collectIsPressedAsState()
     val queueScale by animateFloatAsState(
         targetValue = if (isQueuePressed) 0.93f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f),
+        animationSpec = VelvetMotion.Springs.TactilePress,
         label = "queueScale",
     )
 
@@ -1689,7 +1674,7 @@ private fun PlayerBottomCards(
     val isSleepPressed by sleepInteraction.collectIsPressedAsState()
     val sleepScale by animateFloatAsState(
         targetValue = if (isSleepPressed) 0.93f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f),
+        animationSpec = VelvetMotion.Springs.TactilePress,
         label = "sleepScale",
     )
 

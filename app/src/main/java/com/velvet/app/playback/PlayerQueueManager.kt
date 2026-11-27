@@ -282,6 +282,52 @@ class QueueManager(initialState: QueueState = QueueState()) {
         update { Companion.restore(it, saved, allowSmartShuffle) }
     }
 
+    /**
+     * Updates cached artwork for [songId] across current, upcoming, userQueue, sourceList, and
+     * history without altering playback indices, queue IDs, or active playback.
+     */
+    fun updateSongArtwork(
+        songId: String,
+        thumbUrl: String,
+        albumArtFallback: String? = null,
+        markSquareArtwork: Boolean = false,
+    ): Boolean {
+        if (songId.isBlank() || thumbUrl.isBlank()) return false
+        var changed = false
+        update { st ->
+            fun patchItem(item: QueueItem): QueueItem {
+                if (item.song.id != songId) return item
+                val merged = CoverArtResolver.mergeTrackArtwork(
+                    existingTrackThumb = item.song.thumb,
+                    candidateTrackThumb = thumbUrl,
+                    albumThumb = albumArtFallback,
+                    videoId = songId,
+                )
+                if (merged == null || merged == item.song.thumb) return item
+                changed = true
+                return item.copy(
+                    song = item.song.copy(
+                        thumb = merged,
+                        hasSquareArtwork = item.song.hasSquareArtwork || markSquareArtwork || merged.contains("lh3.googleusercontent.com"),
+                    ),
+                )
+            }
+            val newCurrent = st.current?.let(::patchItem)
+            val newUserQueue = st.userQueue.map(::patchItem)
+            val newUpNext = st.upNext.map(::patchItem)
+            val newSource = st.sourceList.map(::patchItem)
+            val newHistory = st.history.map(::patchItem)
+            if (!changed) st else st.copy(
+                current = newCurrent,
+                userQueue = newUserQueue,
+                upNext = newUpNext,
+                sourceList = newSource,
+                history = newHistory,
+            )
+        }
+        return changed
+    }
+
     // Properties for UI and test callers
     val current: Song? get() = state.current?.song
     val history: List<Song> get() = state.history.map { it.song }

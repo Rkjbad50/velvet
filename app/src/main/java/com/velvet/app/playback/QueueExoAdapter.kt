@@ -12,6 +12,36 @@ import androidx.media3.common.Player
  */
 object QueueExoAdapter {
     /**
+     * Updates upcoming (not currently playing) ExoPlayer MediaItems in-place when enriched track
+     * artwork or metadata arrives asynchronously, avoiding any interruption to active audio.
+     */
+    fun refreshUpcomingMetadata(
+        player: Player,
+        upcomingSongs: List<com.velvet.app.data.Song>,
+        fallbackAlbumArt: String? = null,
+    ) {
+        val curIdx = player.currentMediaItemIndex
+        if (curIdx < 0 || curIdx >= player.mediaItemCount) return
+        val byId = upcomingSongs.associateBy { it.id }
+        for (idx in (curIdx + 1) until player.mediaItemCount) {
+            val existing = player.getMediaItemAt(idx)
+            val updated = byId[existing.mediaId] ?: continue
+            val resolvedThumb = CoverArtResolver.resolveTrackArtworkUrl(
+                trackArtworkUrl = updated.thumb,
+                albumArtworkUrl = fallbackAlbumArt,
+                placeholderUrl = "https://i.ytimg.com/vi/${updated.id}/hqdefault.jpg",
+            )
+            val currentUri = existing.mediaMetadata.artworkUri?.toString()
+            if (resolvedThumb != null && resolvedThumb != currentUri) {
+                player.replaceMediaItem(
+                    idx,
+                    updated.toMediaItem(fallbackAlbumArt = fallbackAlbumArt),
+                )
+            }
+        }
+    }
+
+    /**
      * Diffs [state] against [player] and synchronizes media items downstream.
      */
     fun syncToExoPlayer(
@@ -21,6 +51,7 @@ object QueueExoAdapter {
         isRadio: Boolean = false,
         autoPlay: Boolean = true,
         startPositionMs: Long = 0L,
+        fallbackAlbumArt: String? = null,
     ) {
         val currentItem = state.current
         if (currentItem == null) {
@@ -39,6 +70,7 @@ object QueueExoAdapter {
                 item.song.toMediaItem(
                     radio = isRadio && i == 0,
                     playlistStart = if (i == 0) playlistStart else null,
+                    fallbackAlbumArt = fallbackAlbumArt,
                 )
             }
             val pos = if (startPositionMs > 0L) startPositionMs else 0L
@@ -57,6 +89,7 @@ object QueueExoAdapter {
                 item.song.toMediaItem(
                     radio = isRadio && i == 0,
                     playlistStart = if (i == 0) playlistStart else null,
+                    fallbackAlbumArt = fallbackAlbumArt,
                 )
             }
             val pos = if (startPositionMs > 0L) startPositionMs else 0L
@@ -83,8 +116,10 @@ object QueueExoAdapter {
                 player.removeMediaItems(after, player.mediaItemCount)
             }
             if (targetUpcoming.isNotEmpty()) {
-                player.addMediaItems(targetUpcoming.map { it.song.toMediaItem() })
+                player.addMediaItems(targetUpcoming.map { it.song.toMediaItem(fallbackAlbumArt = fallbackAlbumArt) })
             }
+        } else if (targetUpcoming.isNotEmpty()) {
+            refreshUpcomingMetadata(player, targetUpcoming.map { it.song }, fallbackAlbumArt)
         }
 
         // Sync repeatMode to ExoPlayer

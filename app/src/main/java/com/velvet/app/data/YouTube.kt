@@ -31,10 +31,29 @@ object YouTube {
 
     private val service get() = ServiceList.YouTube
 
-    /** A paged search. Keep the instance around to load further pages. */
-    class Search(private val query: String, private val filter: String) {
+    private fun activeLanguageState(): SearchLanguageState? = runCatching {
+        LanguageLocaleConfig.fromSelectedLanguages(com.velvet.app.VelvetApp.library.data.value.musicLanguages)
+    }.getOrNull()
+
+    /** A paged search bound to an active [SearchLanguageState] for consistent locale & filtering. */
+    class Search(
+        private val query: String,
+        private val filter: String,
+        private val languageState: SearchLanguageState? = null,
+    ) {
+        private val effectiveQuery: String = if (languageState != null && filter != FILTER_ARTISTS) {
+            SearchLanguageFilter.scopeSearchQuery(query, languageState)
+        } else query
+
         private val extractor: SearchExtractor =
-            service.getSearchExtractor(query, listOf(filter), "")
+            service.getSearchExtractor(effectiveQuery, listOf(filter), "").apply {
+                if (languageState != null) {
+                    runCatching {
+                        forceLocalization(languageState.newPipeLocalization)
+                        forceContentCountry(languageState.newPipeContentCountry)
+                    }
+                }
+            }
         private var nextPage: Page? = null
         private var started = false
 
@@ -56,34 +75,49 @@ object YouTube {
                 page.items.mapNotNull { it.toBrowseItem(isAlbum = filter == FILTER_ALBUMS) }
             }
             val items = pageResult.getOrNull().orEmpty()
-            return if (filter == FILTER_ARTISTS) {
-                if (items.isEmpty() && isFirstPage) {
-                    hasMore = false
-                    YouTubeMusicInnertube.searchArtists(query).map { BrowseItem.ArtistItem(it) }
-                } else {
+            val rawItems = when (filter) {
+                FILTER_ARTISTS -> {
+                    if (items.isEmpty() && isFirstPage) {
+                        hasMore = false
+                        YouTubeMusicInnertube.searchArtists(
+                            query = effectiveQuery,
+                            glOverride = languageState?.gl,
+                            hlOverride = languageState?.hl,
+                        ).map { BrowseItem.ArtistItem(it) }
+                    } else {
+                        items
+                    }
+                }
+                FILTER_SONGS -> {
+                    val baseItems = if (items.isEmpty() && isFirstPage) {
+                        hasMore = false
+                        YouTubeMusicInnertube.searchSongs(
+                            query = effectiveQuery,
+                            glOverride = languageState?.gl,
+                            hlOverride = languageState?.hl,
+                        ).map { BrowseItem.SongItem(it) }
+                    } else {
+                        items
+                    }
+                    baseItems.mapNotNull { item ->
+                        val songItem = item as? BrowseItem.SongItem ?: return@mapNotNull item
+                        val catalogSong = songItem.song.copy(
+                            isYouTubeMusicCatalog = true,
+                            preferredMusicSource = songItem.song.preferredMusicSource || songItem.song.hasSquareArtwork,
+                        )
+                        if (catalogSong.isPureMusic() && catalogSong.isOriginalMusicAudio()) {
+                            BrowseItem.SongItem(catalogSong)
+                        } else null
+                    }.sortedByDescending { (it as? BrowseItem.SongItem)?.song?.preferredMusicSource == true }
+                }
+                else -> {
+                    pageResult.getOrThrow()
                     items
                 }
-            } else if (filter == FILTER_SONGS) {
-                val baseItems = if (items.isEmpty() && isFirstPage) {
-                    hasMore = false
-                    YouTubeMusicInnertube.searchSongs(query).map { BrowseItem.SongItem(it) }
-                } else {
-                    items
-                }
-                baseItems.mapNotNull { item ->
-                    val songItem = item as? BrowseItem.SongItem ?: return@mapNotNull item
-                    val catalogSong = songItem.song.copy(
-                        isYouTubeMusicCatalog = true,
-                        preferredMusicSource = songItem.song.preferredMusicSource || songItem.song.hasSquareArtwork,
-                    )
-                    if (catalogSong.isPureMusic() && catalogSong.isOriginalMusicAudio()) {
-                        BrowseItem.SongItem(catalogSong)
-                    } else null
-                }.sortedByDescending { (it as? BrowseItem.SongItem)?.song?.preferredMusicSource == true }
-            } else {
-                pageResult.getOrThrow()
-                items
             }
+            return if (languageState != null) {
+                SearchLanguageFilter.filterBrowseItems(rawItems, languageState, explicitQuery = query)
+            } else rawItems
         }
     }
 
@@ -95,26 +129,48 @@ object YouTube {
         val playlists: List<AlbumRef>,
     )
 
-    suspend fun searchAll(query: String): TopResults = coroutineScope {
+    suspend fun searchAll(
+        query: String,
+        languageState: SearchLanguageState? = activeLanguageState(),
+    ): TopResults = coroutineScope {
         fun section(filter: String) = async(Dispatchers.IO) {
-            runCatching { Search(query, filter).loadNext() }.getOrDefault(emptyList())
+            runCatching { Search(query, filter, languageState).loadNext() }.getOrDefault(emptyList())
         }
         val songs = section(FILTER_SONGS)
         val artists = section(FILTER_ARTISTS)
         val albums = section(FILTER_ALBUMS)
         val playlists = section(FILTER_PLAYLISTS)
+        val songList = songs.await().filterIsInstance<BrowseItem.SongItem>().map { it.song }
+            .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
+            .sortedByDescending { it.preferredMusicSource }
+        val artistList = artists.await().filterIsInstance<BrowseItem.ArtistItem>().map { it.artist }
+        val albumList = albums.await().filterIsInstance<BrowseItem.AlbumItem>().map { it.album }
+        val playlistList = playlists.await().filterIsInstance<BrowseItem.AlbumItem>().map { it.album }
         TopResults(
-            songs = songs.await().filterIsInstance<BrowseItem.SongItem>().map { it.song }
-                .filter { it.isPureMusic() && it.isOriginalMusicAudio() }
-                .sortedByDescending { it.preferredMusicSource },
-            artists = artists.await().filterIsInstance<BrowseItem.ArtistItem>().map { it.artist },
-            albums = albums.await().filterIsInstance<BrowseItem.AlbumItem>().map { it.album },
-            playlists = playlists.await().filterIsInstance<BrowseItem.AlbumItem>().map { it.album },
+            songs = if (languageState != null) SearchLanguageFilter.filterSongs(songList, languageState, explicitQuery = query) else songList,
+            artists = if (languageState != null) SearchLanguageFilter.filterArtists(artistList, languageState, explicitQuery = query) else artistList,
+            albums = if (languageState != null) SearchLanguageFilter.filterAlbums(albumList, languageState, explicitQuery = query) else albumList,
+            playlists = if (languageState != null) SearchLanguageFilter.filterAlbums(playlistList, languageState, explicitQuery = query) else playlistList,
         )
     }
 
-    fun suggestions(query: String): List<String> =
-        service.suggestionExtractor.suggestionList(query)
+    fun suggestions(
+        query: String,
+        languageState: SearchLanguageState? = activeLanguageState(),
+    ): List<String> {
+        val extractor = service.suggestionExtractor.apply {
+            if (languageState != null) {
+                runCatching {
+                    forceLocalization(languageState.newPipeLocalization)
+                    forceContentCountry(languageState.newPipeContentCountry)
+                }
+            }
+        }
+        val raw = extractor.suggestionList(query)
+        return if (languageState != null) {
+            SearchLanguageFilter.filterSuggestions(raw, query, languageState)
+        } else raw
+    }
 
     fun streamInfo(videoId: String): StreamInfo =
         StreamInfo.getInfo(service, "https://www.youtube.com/watch?v=$videoId")
@@ -231,13 +287,12 @@ object YouTube {
         )
         AlbumPage(
             album,
-            songs.distinctBy { it.id }.map {
-                it.copy(
-                    album = album.title,
-                    isYouTubeMusicCatalog = album.isAlbum,
-                    preferredMusicSource = it.preferredMusicSource || (album.isAlbum && it.hasSquareArtwork),
-                )
-            },
+            com.velvet.app.playback.CoverArtResolver.enrichAlbumTracks(
+                collectionUrl = normalized,
+                album = album,
+                rawSongs = songs,
+                languageState = activeLanguageState(),
+            ),
         )
     }
 

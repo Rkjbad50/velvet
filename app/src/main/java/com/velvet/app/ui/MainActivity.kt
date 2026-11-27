@@ -199,7 +199,11 @@ private fun AppRoot() {
     val imeBottom = WindowInsets.ime.getBottom(density)
     val isImeVisible = imeBottom > 0
     val targetBottomRoom = if (isImeVisible) 0.dp else dockHeight
-    val bottomRoom by animateDpAsState(targetBottomRoom, label = "bottomRoom")
+    val bottomRoom by animateDpAsState(
+        targetValue = targetBottomRoom,
+        animationSpec = VelvetMotion.Springs.DpStandard,
+        label = "bottomRoom",
+    )
 
     // tell the user once if their library file had to be recovered
     LaunchedEffect(Unit) {
@@ -435,11 +439,8 @@ private fun AppRoot() {
             val libraryData by VelvetApp.library.data.collectAsStateWithLifecycle()
             AnimatedVisibility(
                 visible = !libraryData.onboardingCompleted,
-                enter = fadeIn(animationSpec = tween(220)),
-                exit = fadeOut(animationSpec = tween(320)) + scaleOut(
-                    targetScale = 0.96f,
-                    animationSpec = tween(320),
-                ),
+                enter = VelvetMotion.modalFadeEnter(),
+                exit = VelvetMotion.modalFadeExit(),
             ) {
                 OnboardingSurveyScreen(
                     initialData = libraryData,
@@ -624,12 +625,8 @@ private fun PersistentRootTabs(
             glideAnim.snapTo(0f)
             glideAnim.animateTo(
                 targetValue = 1f,
-                // Fast, crisp 120Hz critically-damped glide with sub-pixel threshold
-                animationSpec = spring(
-                    dampingRatio = 0.90f,
-                    stiffness = 560f,
-                    visibilityThreshold = 0.001f,
-                ),
+                // Fast, crisp 120Hz critically-damped glide driven by VelvetMotion
+                animationSpec = VelvetMotion.Springs.WindowOpen,
             )
             outgoingTab = activeTab
         }
@@ -713,12 +710,12 @@ private fun BottomTabs(selected: Int, onSelect: (Int) -> Unit) {
             val active = i == selected
             val background by animateColorAsState(
                 if (active) velvetColors.surface else velvetColors.background,
-                tween(220, easing = FastOutSlowInEasing),
+                VelvetMotion.fastTween(),
                 label = "tabBackground",
             )
             val tint by animateColorAsState(
                 if (active) velvetColors.accentText else velvetColors.muted,
-                tween(220, easing = FastOutSlowInEasing),
+                VelvetMotion.fastTween(),
                 label = "tabContent",
             )
             Column(

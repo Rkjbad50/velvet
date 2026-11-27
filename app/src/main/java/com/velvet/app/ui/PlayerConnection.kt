@@ -250,6 +250,8 @@ object PlayerConnection {
         private set
     var shuffleMode by mutableStateOf(ShuffleMode.OFF)
         private set
+    private var activeParentAlbumArt: String? = null
+    private val attemptedArtworkLookups = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     /**
      * What the queue sheet shows: current song first (highlighted), then
@@ -285,8 +287,56 @@ object PlayerConnection {
             requestedLanguages = langIds,
             featureRepository = featRepo,
         )
+        enrichActiveAndUpcomingArtworkIfNeeded()
         if (!restoringPlaybackState && current != null) {
             checkpointScheduler.scheduleDebounced()
+        }
+    }
+
+    private fun enrichActiveAndUpcomingArtworkIfNeeded() {
+        val parentArt = activeParentAlbumArt
+        val candidates = (listOfNotNull(queueManager.current) +
+            queueManager.userQueue.take(2).map { it.song } +
+            queueManager.upNext.take(2).map { it.song })
+            .distinctBy { it.id }
+            .filter { song ->
+                com.velvet.app.playback.CoverArtResolver.shouldAttemptTrackArtworkLookup(song, parentArt) &&
+                    attemptedArtworkLookups.add("${song.id}|${parentArt.orEmpty()}")
+            }
+        if (candidates.isEmpty()) return
+
+        val langState = com.velvet.app.data.LanguageLocaleConfig.fromSelectedLanguages(
+            runCatching { VelvetApp.library.data.value.musicLanguages }.getOrDefault(emptyList()),
+        )
+        runwayBgScope.launch {
+            for (song in candidates) {
+                val resolved = runCatching {
+                    com.velvet.app.data.YouTubeMusicInnertube.fetchTrackArtworkUrl(
+                        videoId = song.id,
+                        glOverride = langState.gl,
+                        hlOverride = langState.hl,
+                    )
+                }.getOrNull()?.takeIf { it.isNotBlank() } ?: continue
+
+                withContext(Dispatchers.Main) {
+                    val merged = com.velvet.app.playback.CoverArtResolver.mergeTrackArtwork(
+                        existingTrackThumb = song.thumb,
+                        candidateTrackThumb = resolved,
+                        albumThumb = activeParentAlbumArt,
+                        videoId = song.id,
+                    ) ?: return@withContext
+                    com.velvet.app.playback.updateKnownSongArtwork(song.id, merged)
+                    if (queueManager.updateSongArtwork(song.id, merged, albumArtFallback = activeParentAlbumArt, markSquareArtwork = true)) {
+                        syncQueueState(resetPositionOnTrackChange = false)
+                        val upcoming = (queueManager.userQueue + queueManager.upNext).map { it.song }
+                        exoSyncSerializer.submit {
+                            withController { c ->
+                                QueueExoAdapter.refreshUpcomingMetadata(c, upcoming, activeParentAlbumArt)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -296,9 +346,18 @@ object PlayerConnection {
         autoPlay: Boolean = true,
         startPositionMs: Long = 0L,
     ) {
+        val parentArt = activeParentAlbumArt
         exoSyncSerializer.submit {
             withController { c ->
-                QueueExoAdapter.syncToExoPlayer(c, queueManager.state, playlistStart, isRadio, autoPlay, startPositionMs)
+                QueueExoAdapter.syncToExoPlayer(
+                    player = c,
+                    state = queueManager.state,
+                    playlistStart = playlistStart,
+                    isRadio = isRadio,
+                    autoPlay = autoPlay,
+                    startPositionMs = startPositionMs,
+                    fallbackAlbumArt = parentArt,
+                )
             }
         }
     }
@@ -713,10 +772,13 @@ object PlayerConnection {
         if (context != null) {
             VelvetApp.library.addContextRecent(context)
         }
+        val albumFallback = context?.artworkUrl?.trim()?.takeIf { it.isNotBlank() }
+        activeParentAlbumArt = albumFallback
+        val preparedSongs = com.velvet.app.playback.CoverArtResolver.applyAlbumFallback(songs, albumFallback)
         currentPlaylistId = playlistId
         isRadioActive = radio
         isArtistRadioActive = if (radio) isArtistRadio else false
-        radioSeedSong = if (radio) (songs.getOrNull(startIndex) ?: songs.firstOrNull()) else null
+        radioSeedSong = if (radio) (preparedSongs.getOrNull(startIndex) ?: preparedSongs.firstOrNull()) else null
         if (!radio) {
             activeRadioSessionId = null
             VelvetApp.radioSessionManagerOrNull()?.clearSession()
@@ -727,15 +789,15 @@ object PlayerConnection {
         val isUserPlaylist = playlistId != null && VelvetApp.library.data.value.playlists.any { it.id == playlistId }
         val start = playlistId?.let { PlaylistStart(it, UUID.randomUUID().toString()) }
         val savedShuffleMode = persistedShuffleEnum()
-        val effectiveShuffled = shuffled || (!radio && songs.size > 1 && savedShuffleMode != ShuffleMode.OFF)
+        val effectiveShuffled = shuffled || (!radio && preparedSongs.size > 1 && savedShuffleMode != ShuffleMode.OFF)
         if (shuffled) {
             VelvetApp.library.setPersistedShuffleMode("STANDARD")
         }
 
         com.velvet.app.playback.DismissedTrackRegistry.clear()
-        queueManager.start(songs, startIndex, effectiveShuffled)
+        queueManager.start(preparedSongs, startIndex, effectiveShuffled)
         // Restore persisted Smart Shuffle strictly on user-created playlists; keep Standard elsewhere without clobbering stored mode
-        val shouldApplySmart = !shuffled && !radio && songs.size > 1 && savedShuffleMode == ShuffleMode.SMART && isUserPlaylist
+        val shouldApplySmart = !shuffled && !radio && preparedSongs.size > 1 && savedShuffleMode == ShuffleMode.SMART && isUserPlaylist
         if (shouldApplySmart) {
             queueManager.setShuffleMode(ShuffleMode.SMART, allowSmartShuffle = true)
         } else if (!isUserPlaylist && queueManager.shuffleMode == ShuffleMode.SMART) {
@@ -774,7 +836,7 @@ object PlayerConnection {
         }
 
         runwayBgScope.launch {
-            com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(songs)
+            com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(preparedSongs)
         }
         val isAutoplayOn = VelvetApp.library.data.value.autoplay || radio
         if (isAutoplayOn && queueManager.upNext.isEmpty()) {
@@ -1275,20 +1337,8 @@ object PlayerConnection {
         )
     }
 
-    private fun mapLanguagesToIso(languages: List<String>): Set<String> = languages.mapNotNullTo(mutableSetOf()) { raw ->
-        when (raw.trim().lowercase()) {
-            "hindi" -> "hi"
-            "english" -> "en"
-            "punjabi" -> "pa"
-            "tamil" -> "ta"
-            "telugu" -> "te"
-            "malayalam" -> "ml"
-            "kannada" -> "kn"
-            "bengali" -> "bn"
-            "sanskrit" -> "sa"
-            else -> null
-        }
-    }
+    private fun mapLanguagesToIso(languages: List<String>): Set<String> =
+        com.velvet.app.data.LanguageLocaleConfig.mapLanguagesToIso(languages)
 
     internal fun computeInstantAutoplayMatches(
         seed: Song,

@@ -220,12 +220,17 @@ object YouTubeMusicInnertube {
     }
 
     /**
-     * Direct YT Music Songs search fallback using InnerTube WEB_REMIX.
+     * Direct YT Music Songs search with explicit gl/hl localization support.
      */
-    fun searchSongs(query: String, limit: Int = 20): List<Song> {
+    fun searchSongs(
+        query: String,
+        limit: Int = 20,
+        glOverride: String? = null,
+        hlOverride: String? = null,
+    ): List<Song> {
         if (query.isBlank()) return emptyList()
         val body = JsonObject().apply {
-            put("context", webRemixContext())
+            put("context", webRemixContext(glOverride = glOverride, hlOverride = hlOverride))
             put("query", query)
             put("params", SONGS_SEARCH_PARAMS)
         }
@@ -234,12 +239,17 @@ object YouTubeMusicInnertube {
     }
 
     /**
-     * Direct YT Music Artist search fallback using InnerTube WEB_REMIX.
+     * Direct YT Music Artist search with explicit gl/hl localization support.
      */
-    fun searchArtists(query: String, limit: Int = 20): List<ArtistRef> {
+    fun searchArtists(
+        query: String,
+        limit: Int = 20,
+        glOverride: String? = null,
+        hlOverride: String? = null,
+    ): List<ArtistRef> {
         if (query.isBlank()) return emptyList()
         val body = JsonObject().apply {
-            put("context", webRemixContext())
+            put("context", webRemixContext(glOverride = glOverride, hlOverride = hlOverride))
             put("query", query)
         }
         val root = postJson(YTM_SEARCH_URL, body) ?: return emptyList()
@@ -256,8 +266,10 @@ object YouTubeMusicInnertube {
         preferredLanguages: List<String> = emptyList(),
         limit: Int = 30,
     ): List<Song> {
-        val gl = countryForLanguages(preferredLanguages)
-        val ctx = webRemixContext(glOverride = gl)
+        val state = LanguageLocaleConfig.fromSelectedLanguages(preferredLanguages)
+        val gl = state.gl
+        val hl = state.hl
+        val ctx = webRemixContext(glOverride = gl, hlOverride = hl)
 
         val chartsRoot = postJson(
             YTM_BROWSE_URL,
@@ -303,20 +315,86 @@ object YouTubeMusicInnertube {
     fun browsePlaylistSongs(
         browseId: String,
         glOverride: String? = null,
+        hlOverride: String? = null,
         limit: Int = 30,
     ): List<Song> {
         if (browseId.isBlank()) return emptyList()
-        val normalizedId = if (browseId.startsWith("VL") || browseId.startsWith("FE") || browseId.startsWith("MP")) {
-            browseId
-        } else {
-            "VL$browseId"
+        val normalizedId = when {
+            browseId.startsWith("VL") || browseId.startsWith("FE") || browseId.startsWith("MP") -> browseId
+            else -> "VL$browseId"
         }
         val body = JsonObject().apply {
-            put("context", webRemixContext(glOverride = glOverride))
+            put("context", webRemixContext(glOverride = glOverride, hlOverride = hlOverride))
             put("browseId", normalizedId)
         }
         val root = postJson(YTM_BROWSE_URL, body) ?: return emptyList()
         return parseSearchOrBrowseSongsJson(root).take(limit)
+    }
+
+    /**
+     * Extracts a YouTube / YouTube Music playlist or album browseId from a URL or raw ID and fetches
+     * track-level metadata (including per-track square artwork when present in InnerTube browse).
+     */
+    fun browseCollectionTracks(
+        urlOrBrowseId: String,
+        glOverride: String? = null,
+        hlOverride: String? = null,
+        limit: Int = 100,
+    ): List<Song> {
+        val browseId = extractBrowseId(urlOrBrowseId) ?: return emptyList()
+        return browsePlaylistSongs(browseId, glOverride = glOverride, hlOverride = hlOverride, limit = limit)
+    }
+
+    /**
+     * Fetches the individual track's official square cover art and metadata from InnerTube `next`
+     * for [videoId], used when an album/compilation playlist returned only parent album artwork.
+     */
+    fun fetchTrackArtworkUrl(
+        videoId: String,
+        glOverride: String? = null,
+        hlOverride: String? = null,
+    ): String? {
+        if (!isValidVideoId(videoId)) return null
+        val body = JsonObject().apply {
+            put("context", webRemixContext(glOverride = glOverride, hlOverride = hlOverride))
+            put("videoId", videoId)
+            put("isAudioOnly", true)
+        }
+        val root = postJson(YTM_NEXT_URL, body) ?: return null
+        return parseSelectedTrackArtworkJson(root, videoId)
+    }
+
+    internal fun extractBrowseId(urlOrId: String): String? {
+        val trimmed = urlOrId.trim()
+        if (trimmed.isBlank()) return null
+        val listParam = Regex("""[?&]list=([^&#]+)""").find(trimmed)?.groupValues?.getOrNull(1)
+        if (!listParam.isNullOrBlank()) {
+            return if (listParam.startsWith("VL") || listParam.startsWith("MP")) listParam else "VL$listParam"
+        }
+        val browseMatch = Regex("""/browse/([^/?#]+)""").find(trimmed)?.groupValues?.getOrNull(1)
+        if (!browseMatch.isNullOrBlank()) return browseMatch
+        if (!trimmed.contains('/')) {
+            return when {
+                trimmed.startsWith("VL") || trimmed.startsWith("FE") || trimmed.startsWith("MP") -> trimmed
+                trimmed.startsWith("OL") || trimmed.startsWith("PL") || trimmed.startsWith("RD") -> "VL$trimmed"
+                else -> trimmed
+            }
+        }
+        return null
+    }
+
+    internal fun parseSelectedTrackArtworkJson(root: JsonObject, targetVideoId: String): String? {
+        val panelRenderers = mutableListOf<JsonObject>()
+        collectRenderersRecursive(root, "playlistPanelVideoRenderer", panelRenderers)
+        for (renderer in panelRenderers) {
+            if (renderer.getString("videoId") != targetVideoId) continue
+            val thumbs = renderer.getObject("thumbnail").getArray("thumbnails")
+            val (url, hasSquare) = parseThumbnails(thumbs, targetVideoId)
+            if (url.isNotBlank() && (hasSquare || !url.contains("i.ytimg.com/vi/"))) {
+                return url
+            }
+        }
+        return null
     }
 
     /**

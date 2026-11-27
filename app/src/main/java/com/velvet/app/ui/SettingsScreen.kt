@@ -994,20 +994,7 @@ private fun MusicLanguagesDialog(
     onDismiss: () -> Unit,
     onSave: (List<String>) -> Unit,
 ) {
-    val allLanguages = listOf(
-        "Hindi",
-        "English",
-        "Punjabi",
-        "Bhojpuri",
-        "Haryanvi",
-        "Bengali",
-        "Tamil",
-        "Telugu",
-        "Malayalam",
-        "Marathi",
-        "Gujarati",
-        "Kannada",
-    )
+    val allLanguages = remember { LanguageLocaleConfig.allLanguages.map { it.id } }
     val chosen = remember { mutableStateListOf<String>().apply { addAll(selected) } }
 
     VelvetAlertDialog(

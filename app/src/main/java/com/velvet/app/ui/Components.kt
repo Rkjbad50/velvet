@@ -141,7 +141,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 // ------------------------------------------------------------------ artwork
 
-/** Album art at the right resolution for its size, over a matte placeholder. */
+/** Album art at the right resolution for its size, over a matte placeholder with smooth crossfade. */
 @Composable
 fun Artwork(
     url: String?,
@@ -150,7 +150,17 @@ fun Artwork(
     corner: Dp = 14.dp,
     placeholder: ImageVector = AppIcons.MusicNote,
 ) {
+    val context = LocalContext.current
     val px = with(LocalDensity.current) { size.roundToPx() }
+    val sizedUrl = remember(url, px) { url?.let { thumbSized(it, px) } }
+    val request = remember(context, sizedUrl) {
+        sizedUrl?.let { target ->
+            ImageRequest.Builder(context)
+                .data(target)
+                .crossfade(VelvetMotion.Duration.ArtworkCrossfade)
+                .build()
+        }
+    }
     Box(
         modifier
             .size(size)
@@ -159,9 +169,9 @@ fun Artwork(
         contentAlignment = Alignment.Center,
     ) {
         Icon(placeholder, null, tint = velvetColors.muted, modifier = Modifier.fillMaxSize(0.4f))
-        if (url != null) {
+        if (request != null) {
             AsyncImage(
-                model = thumbSized(url, px),
+                model = request,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -992,27 +1002,27 @@ fun ShuffleActionButton(
 
     val pressScale by animateFloatAsState(
         targetValue = if (isPressed && enabled) 0.88f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = 540f),
+        animationSpec = VelvetMotion.Springs.TactilePress,
         label = "shufflePressScale",
     )
     val iconRotation by animateFloatAsState(
         targetValue = spinCount * 360f,
-        animationSpec = spring(dampingRatio = 0.80f, stiffness = 360f),
+        animationSpec = VelvetMotion.Springs.Expressive,
         label = "shuffleIconSpin",
     )
     val dotProgress by animateFloatAsState(
         targetValue = if (isShuffled && enabled) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f),
+        animationSpec = VelvetMotion.Springs.Interactive,
         label = "shuffleActiveDot",
     )
     val containerColor by animateColorAsState(
         targetValue = if (isShuffled && enabled) velvetColors.accent.copy(alpha = 0.22f) else velvetColors.surface,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        animationSpec = VelvetMotion.fastTween(),
         label = "shuffleFill",
     )
     val borderColor by animateColorAsState(
         targetValue = if (isShuffled && enabled) velvetColors.accent.copy(alpha = 0.85f) else velvetColors.glassBorder,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        animationSpec = VelvetMotion.fastTween(),
         label = "shuffleBorder",
     )
     val iconTint by animateColorAsState(
@@ -1021,7 +1031,7 @@ fun ShuffleActionButton(
             isShuffled -> velvetColors.accentText
             else -> velvetColors.text
         },
-        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        animationSpec = VelvetMotion.fastTween(),
         label = "shuffleTint",
     )
 
@@ -1029,8 +1039,8 @@ fun ShuffleActionButton(
         if (previousShuffled != isShuffled) {
             previousShuffled = isShuffled
             if (!pulseScale.isRunning) {
-                pulseScale.animateTo(1.10f, spring(dampingRatio = 0.65f, stiffness = 560f))
-                pulseScale.animateTo(1.0f, spring(dampingRatio = 0.76f, stiffness = 420f))
+                pulseScale.animateTo(1.10f, VelvetMotion.Springs.TactilePress)
+                pulseScale.animateTo(1.0f, VelvetMotion.Springs.Expressive)
             }
         }
     }
@@ -1322,15 +1332,15 @@ fun ErrorBox(message: String, onRetry: () -> Unit) {
 }
 
 
-/** Shared silky spring motion constants and container primitives for popups, sheets, dialogs and menus. */
+/** Shared silky spring motion constants and container primitives mapped cleanly to [VelvetMotion]. */
 object VelvetPopupMotion {
-    val DialogShape = RoundedCornerShape(24.dp)
-    val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-    val MenuShape = RoundedCornerShape(16.dp)
-    val enterSpring = spring<Float>(dampingRatio = 0.88f, stiffness = 580f, visibilityThreshold = 0.001f)
-    val exitSpring = spring<Float>(dampingRatio = 0.94f, stiffness = 640f, visibilityThreshold = 0.001f)
-    val exitTween = tween<Float>(durationMillis = 160, easing = FastOutSlowInEasing)
-    val sliderSpring = spring<Float>(dampingRatio = 0.86f, stiffness = 620f, visibilityThreshold = 0.001f)
+    val DialogShape = VelvetMotion.Shape.Dialog
+    val SheetShape = VelvetMotion.Shape.Sheet
+    val MenuShape = VelvetMotion.Shape.Menu
+    val enterSpring = VelvetMotion.Springs.PopupEnter
+    val exitSpring = VelvetMotion.Springs.PopupExit
+    val exitTween = VelvetMotion.fastTween<Float>(durationMillis = VelvetMotion.Duration.Fast)
+    val sliderSpring = VelvetMotion.Springs.Interactive
 }
 
 class VelvetDialogScope internal constructor(

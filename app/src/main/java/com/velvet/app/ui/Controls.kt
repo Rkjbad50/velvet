@@ -88,10 +88,7 @@ fun PanelIconButton(
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.90f else 1.0f,
-        animationSpec = spring(
-            dampingRatio = 0.88f,
-            stiffness = 480f,
-        ),
+        animationSpec = VelvetMotion.Springs.TactilePress,
         label = "panelIconScale",
     )
     val haptic = LocalHapticFeedback.current
@@ -137,10 +134,7 @@ fun AccentCircleButton(
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isPressed && enabled) 0.90f else 1.0f,
-        animationSpec = spring(
-            dampingRatio = 0.88f,
-            stiffness = 480f,
-        ),
+        animationSpec = VelvetMotion.Springs.TactilePress,
         label = "accentCircleScale",
     )
     val haptic = LocalHapticFeedback.current
@@ -213,11 +207,11 @@ private fun rememberSmoothSeekFraction(
             when {
                 delta > 0.03f -> smooth.animateTo(
                     clampedProgress,
-                    spring(dampingRatio = 0.92f, stiffness = 460f),
+                    VelvetMotion.Springs.WindowOpen,
                 )
                 delta > 0.0005f -> smooth.animateTo(
                     clampedProgress,
-                    tween(durationMillis = 110, easing = LinearEasing),
+                    VelvetMotion.linearTween(durationMillis = VelvetMotion.Duration.Micro),
                 )
                 else -> smooth.snapTo(clampedProgress)
             }
@@ -317,12 +311,12 @@ fun WavySeekBar(
     )
     val haloAlpha by animateFloatAsState(
         targetValue = if (isDragging) 0.44f else 0.28f,
-        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+        animationSpec = VelvetMotion.fastTween(),
         label = "seekHaloAlpha",
     )
     val activePulse by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0f,
-        animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+        animationSpec = VelvetMotion.standardTween(VelvetMotion.Duration.Emphasized),
         label = "seekDotActivePulse",
     )
     var phase by remember(songId) { mutableFloatStateOf(0f) }

@@ -1,7 +1,28 @@
 package com.velvet.app.ui
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -28,8 +50,132 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.pow
+
+/**
+ * Centralized app-wide motion system for VELVET: standardized durations, Material-inspired
+ * easing curves, tuned 60/120fps spring physics, shape radii, shimmer loaders, and tactile
+ * interaction modifiers.
+ */
+object VelvetMotion {
+
+    object Duration {
+        const val Micro = 120
+        const val Fast = 180
+        const val Standard = 240
+        const val Emphasized = 320
+        const val ColorTransition = 360
+        const val ArtworkCrossfade = 180
+        const val BannerEnter = 240
+        const val BannerExit = 200
+        const val ShimmerCycle = 1150
+    }
+
+    object Easing {
+        val Standard: androidx.compose.animation.core.Easing = CubicBezierEasing(0.2f, 0.0f, 0.0f, 1.0f)
+        val Decelerate: androidx.compose.animation.core.Easing = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
+        val Accelerate: androidx.compose.animation.core.Easing = CubicBezierEasing(0.3f, 0.0f, 1.0f, 1.0f)
+        val Linear: androidx.compose.animation.core.Easing = LinearEasing
+    }
+
+    object Springs {
+        val WindowOpen = spring<Float>(dampingRatio = 0.90f, stiffness = 560f, visibilityThreshold = 0.001f)
+        val WindowClose = spring<Float>(dampingRatio = 0.94f, stiffness = 620f, visibilityThreshold = 0.001f)
+        val PopupEnter = spring<Float>(dampingRatio = 0.88f, stiffness = 580f, visibilityThreshold = 0.001f)
+        val PopupExit = spring<Float>(dampingRatio = 0.94f, stiffness = 640f, visibilityThreshold = 0.001f)
+        val Interactive = spring<Float>(dampingRatio = 0.88f, stiffness = 560f, visibilityThreshold = 0.001f)
+        val TactilePress = spring<Float>(dampingRatio = 0.82f, stiffness = 620f, visibilityThreshold = 0.001f)
+        val Expressive = spring<Float>(dampingRatio = 0.78f, stiffness = 440f, visibilityThreshold = 0.001f)
+        val ListPlacement = spring<IntOffset>(dampingRatio = 0.88f, stiffness = 480f)
+        val DpStandard = spring<Dp>(dampingRatio = 0.90f, stiffness = 520f)
+    }
+
+    object Shape {
+        val Dialog = RoundedCornerShape(24.dp)
+        val Sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        val Menu = RoundedCornerShape(16.dp)
+        val Tile = RoundedCornerShape(16.dp)
+    }
+
+    fun <T> standardTween(durationMillis: Int = Duration.Standard) =
+        tween<T>(durationMillis = durationMillis, easing = Easing.Standard)
+
+    fun <T> fastTween(durationMillis: Int = Duration.Fast) =
+        tween<T>(durationMillis = durationMillis, easing = Easing.Standard)
+
+    fun <T> linearTween(durationMillis: Int = Duration.Micro) =
+        tween<T>(durationMillis = durationMillis, easing = Easing.Linear)
+
+    fun modalFadeEnter(): EnterTransition =
+        fadeIn(tween(Duration.Standard, easing = Easing.Decelerate)) +
+            scaleIn(initialScale = 0.96f, animationSpec = Springs.WindowOpen)
+
+    fun modalFadeExit(): ExitTransition =
+        fadeOut(tween(Duration.Emphasized, easing = Easing.Accelerate)) +
+            scaleOut(targetScale = 0.96f, animationSpec = tween(Duration.Emphasized, easing = Easing.Accelerate))
+
+    fun bannerEnter(): EnterTransition =
+        slideInVertically(
+            initialOffsetY = { -it - 48 },
+            animationSpec = tween(Duration.BannerEnter, easing = Easing.Decelerate),
+        ) + fadeIn(tween(Duration.BannerEnter, easing = Easing.Standard)) +
+            scaleIn(initialScale = 0.95f, animationSpec = Springs.PopupEnter)
+
+    fun bannerExit(): ExitTransition =
+        slideOutVertically(
+            targetOffsetY = { -it - 48 },
+            animationSpec = tween(Duration.BannerExit, easing = Easing.Accelerate),
+        ) + fadeOut(tween(Duration.BannerExit, easing = Easing.Accelerate)) +
+            scaleOut(targetScale = 0.95f, animationSpec = tween(Duration.BannerExit, easing = Easing.Accelerate))
+}
+
+/**
+ * Shared infinite shimmer brush for skeleton placeholders across Home, Search, and Genre hubs.
+ */
+@Composable
+fun rememberVelvetShimmerBrush(
+    baseColor: Color = velvetColors.raised,
+    highlightColor: Color = velvetColors.pressed.copy(alpha = 0.85f),
+): Brush {
+    val transition = rememberInfiniteTransition(label = "velvetShimmer")
+    val shift by transition.animateFloat(
+        initialValue = -600f,
+        targetValue = 1400f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = VelvetMotion.Duration.ShimmerCycle, easing = VelvetMotion.Easing.Linear),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "velvetShimmerShift",
+    )
+    return Brush.linearGradient(
+        colors = listOf(baseColor, highlightColor, baseColor),
+        start = Offset(shift - 320f, 0f),
+        end = Offset(shift, 320f),
+    )
+}
+
+/**
+ * Consistent press scale-down micro-interaction tied to [VelvetMotion.Springs.TactilePress].
+ */
+fun Modifier.velvetTactilePress(
+    interactionSource: InteractionSource,
+    pressedScale: Float = 0.95f,
+    enabled: Boolean = true,
+): Modifier = composed {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) pressedScale else 1f,
+        animationSpec = VelvetMotion.Springs.TactilePress,
+        label = "velvetTactilePress",
+    )
+    graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+    }
+}
 
 /** Root-coordinate bounds and corner radius of the UI element launching a popup or screen. */
 @Immutable

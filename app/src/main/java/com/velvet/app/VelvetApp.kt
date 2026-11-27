@@ -203,14 +203,14 @@ class VelvetApp : Application(), ImageLoaderFactory {
         com.velvet.app.diagnostics.CrashHandler.install(java.io.File(filesDir, "crash"))
 
         http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
-        val locale = Locale.getDefault()
-        // the content country decides which songs YouTube Music lets you stream
+        library = Library(filesDir)
+        val initialLangState = com.velvet.app.data.LanguageLocaleConfig.fromSelectedLanguages(library.data.value.musicLanguages)
+        // the content country & localization match user's listening language preference
         NewPipe.init(
             YtDownloader(http),
-            Localization.fromLocale(locale),
-            ContentCountry(locale.country.ifEmpty { "US" }),
+            initialLangState.newPipeLocalization,
+            initialLangState.newPipeContentCountry,
         )
-        library = Library(filesDir)
         library.onRecommendationAction = { hook ->
             when (hook) {
                 is com.velvet.app.data.LibraryActionHook.LikeToggled ->
@@ -237,6 +237,13 @@ class VelvetApp : Application(), ImageLoaderFactory {
 
         CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
             library.data.map { it.dataSaver }.distinctUntilChanged().collect { StreamResolver.dataSaver = it }
+        }
+        CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
+            library.data.map { it.musicLanguages }.distinctUntilChanged().drop(1).collect { langs ->
+                val state = com.velvet.app.data.LanguageLocaleConfig.fromSelectedLanguages(langs)
+                NewPipe.setPreferredLocalization(state.newPipeLocalization)
+                NewPipe.setPreferredContentCountry(state.newPipeContentCountry)
+            }
         }
 
         var lastLangLearningDigest = ""

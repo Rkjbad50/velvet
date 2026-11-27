@@ -118,22 +118,11 @@ private data class SurveyGenreOption(
     val swatch: Color,
 )
 
-private val SURVEY_LANGUAGES = listOf(
-    SurveyLanguageOption("Hindi", "हिन्दी", Color(0xFFFF6B6B)),
-    SurveyLanguageOption("English", "Global", Color(0xFF4DABF7)),
-    SurveyLanguageOption("Punjabi", "ਪੰਜਾਬੀ", Color(0xFFFF922B)),
-    SurveyLanguageOption("Bhojpuri", "भोजपुरी", Color(0xFFFCC419)),
-    SurveyLanguageOption("Haryanvi", "हरियाणवी", Color(0xFF51CF66)),
-    SurveyLanguageOption("Tamil", "தமிழ்", Color(0xFFCC5DE8)),
-    SurveyLanguageOption("Telugu", "తెలుగు", Color(0xFF20C997)),
-    SurveyLanguageOption("Bengali", "বাংলা", Color(0xFF339AF0)),
-    SurveyLanguageOption("Malayalam", "മലയാളം", Color(0xFF22B8CF)),
-    SurveyLanguageOption("Kannada", "ಕನ್ನಡ", Color(0xFFF06595)),
-    SurveyLanguageOption("Marathi", "मराठी", Color(0xFFFF8787)),
-    SurveyLanguageOption("Gujarati", "ગુજરાતી", Color(0xFF94D82D)),
-    SurveyLanguageOption("Sanskrit", "संस्कृतम्", Color(0xFFFFA94D)),
-    SurveyLanguageOption("Urdu", "اردو", Color(0xFF845EF7)),
-)
+private val SURVEY_LANGUAGES: List<SurveyLanguageOption> by lazy {
+    com.velvet.app.data.LanguageLocaleConfig.allLanguages.map { spec ->
+        SurveyLanguageOption(spec.id, spec.nativeLabel, Color(spec.accentArgb))
+    }
+}
 
 private val ARTISTS_BY_LANGUAGE: Map<String, List<String>> = mapOf(
     "Hindi" to listOf(

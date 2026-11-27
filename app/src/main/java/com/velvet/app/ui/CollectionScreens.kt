@@ -163,8 +163,13 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
     val songs = vm.page?.songs.orEmpty()
     val saved = data.albums.any { it.url == album.url }
     val tint = rememberArtColor(info.thumb)
-    // album pages list tracks by number; their thumbnails are all the same cover
+    // Show track art on playlists and whenever tracks in an album/compilation have distinct artwork
     val isAlbum = info.isAlbum
+    val hasDistinctTrackArtwork = songs.any { song ->
+        val t = song.thumb?.trim().orEmpty()
+        t.isNotBlank() && t != info.thumb?.trim().orEmpty()
+    }
+    val showTrackArt = !isAlbum || hasDistinctTrackArtwork
     val playbackContext = PlaybackContext(
         id = album.url,
         type = if (isAlbum) RecentType.ALBUM else RecentType.REMOTE_PLAYLIST,
@@ -214,7 +219,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
                     song,
                     onClick = { PlayerConnection.play(songs, i, playlistId = albumSessionId, context = playbackContext) },
                     trackNumber = if (isAlbum) i + 1 else null,
-                    showArt = !isAlbum,
+                    showArt = showTrackArt,
                 )
             }
         }
