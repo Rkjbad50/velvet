@@ -197,7 +197,8 @@ class F3SupplyAndContinuationTest {
         assertTrue("Initial call should accumulate >= 60 raw candidates via continuations (got ${initial.size})", initial.size >= 60)
         assertTrue("Should have paged beyond TOK_1 (fetchedTokens=$fetchedTokens)", fetchedTokens.contains("TOK_1") && fetchedTokens.contains("TOK_2"))
 
-        // Subsequent call fetches remaining TOK_4 and places fresh songs at the FRONT ahead of page1
+        // Subsequent call fetches the next unread continuation token and places fresh songs at the FRONT ahead of page1
+        val tokensBeforeSecondCall = fetchedTokens.size
         val next = StreamResolver.relatedWithContinuation(
             videoId = seed.id,
             seedHint = seed,
@@ -205,9 +206,19 @@ class F3SupplyAndContinuationTest {
             minRawCandidates = 20,
             maxContinuationPages = 1,
         )
-        val firstFreshIdx = next.indexOfFirst { it.id.startsWith("sr_c4_") }
+        val newlyFetchedTok = fetchedTokens.drop(tokensBeforeSecondCall).lastOrNull()
+        val expectedFreshPrefix = when (newlyFetchedTok) {
+            "TOK_2" -> "sr_c2_"
+            "TOK_3" -> "sr_c3_"
+            "TOK_4" -> "sr_c4_"
+            else -> error("Unexpected continuation token fetched on second call: $newlyFetchedTok (all=$fetchedTokens)")
+        }
+        val firstFreshIdx = next.indexOfFirst { it.id.startsWith(expectedFreshPrefix) }
         val firstOldPage1Idx = next.indexOfFirst { it.id == page1.songs.first().id }
-        assertTrue("Fresh continuation tracks must be placed before cached page1 ($firstFreshIdx vs $firstOldPage1Idx)", firstFreshIdx in 0 until firstOldPage1Idx)
+        assertTrue(
+            "Fresh continuation tracks ($expectedFreshPrefix) must be placed before cached page1 ($firstFreshIdx vs $firstOldPage1Idx)",
+            firstFreshIdx in 0 until firstOldPage1Idx,
+        )
     }
 
     @Test
