@@ -17,6 +17,8 @@ data class SequenceConfig(
     val candidateLookaheadLimit: Int,
     val transitionWeight: Double,
     val minAcceptableRankScore: Double = -0.15,
+    val widenEra: Boolean = false,
+    val widenMood: Boolean = false,
 )
 
 object SequenceConfigs {

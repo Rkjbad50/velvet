@@ -257,11 +257,13 @@ object ArtistStationPolicy {
             }
         }
 
-        // Era compatibility: must be within 15 years or adjacent decade bucket when both known
+        // Era compatibility: must be within 15 years (25 when era-widened) or adjacent decade bucket when both known
+        val maxYearDiff = if (request.widenEra) 25 else 15
+        val maxBucketDiff = if (request.widenEra) 2 else 1
         val candYear = feat.eraStartYear
         if (candYear != null && ctx.stationEraYears.isNotEmpty()) {
             val minDiff = ctx.stationEraYears.minOf { abs(it - candYear) }
-            if (minDiff > 15) {
+            if (minDiff > maxYearDiff) {
                 return ArtistStationTier.UNRELATED_ARTIST
             }
         } else {
@@ -269,7 +271,7 @@ object ArtistStationPolicy {
             val stationBucketOrds = ctx.stationEraBuckets.mapNotNull { ERA_ORDER[it] }
             if (candBucketOrd != null && stationBucketOrds.isNotEmpty()) {
                 val minBucketDiff = stationBucketOrds.minOf { abs(it - candBucketOrd) }
-                if (minBucketDiff > 1) {
+                if (minBucketDiff > maxBucketDiff) {
                     return ArtistStationTier.UNRELATED_ARTIST
                 }
             }

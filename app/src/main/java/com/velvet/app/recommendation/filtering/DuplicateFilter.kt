@@ -101,18 +101,39 @@ class DuplicateFilter {
                 winners.add(cluster.first())
                 continue
             }
-            removedUploads += (cluster.size - 1)
-            val songs = cluster.map { it.song }
+            val orderedCluster = cluster
+                .distinctBy { it.song.id }
+                .sortedWith(
+                    compareByDescending<CandidateTrack> {
+                        if (request.requireVerifiedOriginalAudio) it.identity.releaseClassification.isVerifiedOriginalAudio else true
+                    }.thenByDescending { it.identity.releaseClassification.audioClass.qualityTier }
+                        .thenByDescending { it.sourceEvidence.size },
+                )
             val chosenSong = if (request.requireVerifiedOriginalAudio) {
-                RecordingIdentityResolver.selectBestVerifiedOriginalAudio(songs) ?: cluster.first().song
+                RecordingIdentityResolver.selectBestVerifiedOriginalAudio(orderedCluster.map { it.song })
+                    ?: orderedCluster.first().song
             } else {
-                cluster.maxByOrNull { it.identity.releaseClassification.audioClass.qualityTier }?.song ?: cluster.first().song
+                orderedCluster.first().song
             }
-            val chosenTrack = cluster.first { it.song.id == chosenSong.id }
+            val primaryWinner = orderedCluster.firstOrNull { it.song.id == chosenSong.id } ?: orderedCluster.first()
             val mergedEvidence = cluster
                 .flatMap { it.sourceEvidence }
                 .distinctBy { "${it.sourceId}:${it.rank}" }
-            winners.add(chosenTrack.copy(sourceEvidence = mergedEvidence))
+            if (request.allowNearDuplicateUnplayedUploads) {
+                // Step 1 gate degradation: preserve up to 1 additional unplayed alternate verified upload of same recording
+                val keptFromCluster = buildList {
+                    add(primaryWinner.copy(sourceEvidence = mergedEvidence))
+                    orderedCluster
+                        .filter { it.song.id != primaryWinner.song.id }
+                        .take(1)
+                        .forEach { add(it) }
+                }
+                removedUploads += (cluster.size - keptFromCluster.size).coerceAtLeast(0)
+                winners.addAll(keptFromCluster)
+            } else {
+                removedUploads += (cluster.size - 1)
+                winners.add(primaryWinner.copy(sourceEvidence = mergedEvidence))
+            }
         }
 
         return DuplicateFilterResult(

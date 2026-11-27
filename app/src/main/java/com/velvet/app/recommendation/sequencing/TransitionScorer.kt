@@ -59,7 +59,7 @@ class DefaultTransitionScorer : TransitionScorer {
         val genreCont = computeGenreContinuity(ref, candFeat)
         val typeCont = computeMusicTypeContinuity(ref, candFeat)
         val langCont = computeLanguageContinuity(ref, candFeat)
-        val eraSmooth = computeEraSmoothness(ref, candFeat)
+        val eraSmooth = computeEraSmoothness(ref, candFeat, config)
 
         val bridge = if (config.allowBridgeTransition && ref != null && anchorFeatures != null && candFeat != null) {
             val prevSim = GenreOntology.similarity(
@@ -147,18 +147,21 @@ class DefaultTransitionScorer : TransitionScorer {
         val denom = sqrt(normA) * sqrt(normB)
         var sim = if (denom > 0.0 && dot > 0.0) (dot / denom).coerceIn(0.0, 1.0) else 0.0
 
-        val clash = (prev.moodIds.containsKey("sad_melancholic") && cand.moodIds.containsKey("party_celebratory")) ||
-            (prev.moodIds.containsKey("party_celebratory") && cand.moodIds.containsKey("sad_melancholic")) ||
-            (prev.moodIds.containsKey("devotional_spiritual") && cand.moodIds.containsKey("party_celebratory"))
-        if (clash) {
+        val devotionalPartyClash = (prev.moodIds.containsKey("devotional_spiritual") && cand.moodIds.containsKey("party_celebratory")) ||
+            (prev.moodIds.containsKey("party_celebratory") && cand.moodIds.containsKey("devotional_spiritual"))
+        val secularClash = !config.widenMood && (
+            (prev.moodIds.containsKey("sad_melancholic") && cand.moodIds.containsKey("party_celebratory")) ||
+                (prev.moodIds.containsKey("party_celebratory") && cand.moodIds.containsKey("sad_melancholic"))
+            )
+        if (devotionalPartyClash || secularClash) {
             sim = -0.60
         }
 
-        // Prevent jarring endless sad-song rut when not explicitly searching sad mix
-        val trailingSadStreak = recentWindow.takeLast(config.maxSlowOrSadStreak).count {
+        // Prevent jarring endless sad-song rut unless mood is explicitly widened for supply rescue
+        val trailingSadStreak = if (config.widenMood) 0 else recentWindow.takeLast(config.maxSlowOrSadStreak).count {
             it.moodIds.containsKey("sad_melancholic") && !it.moodIds.containsKey("romantic_love")
         }
-        if (trailingSadStreak >= config.maxSlowOrSadStreak && cand.moodIds.containsKey("sad_melancholic")) {
+        if (!config.widenMood && trailingSadStreak >= config.maxSlowOrSadStreak && cand.moodIds.containsKey("sad_melancholic")) {
             sim -= 0.25
         }
         return sim.coerceIn(-0.85, 1.0)
@@ -195,23 +198,39 @@ class DefaultTransitionScorer : TransitionScorer {
         }
     }
 
-    private fun computeEraSmoothness(prev: TrackFeatureRecord?, cand: TrackFeatureRecord?): Double {
+    private fun computeEraSmoothness(
+        prev: TrackFeatureRecord?,
+        cand: TrackFeatureRecord?,
+        config: SequenceConfig,
+    ): Double {
         if (prev == null || cand == null) return 0.0
         val yearA = prev.eraStartYear
         val yearB = cand.eraStartYear
         if (yearA != null && yearB != null) {
             val diff = abs(yearA - yearB)
-            return when {
-                diff <= 5 -> 0.80
-                diff <= 12 -> 0.45
-                diff >= 30 -> -0.25
-                else -> 0.10
+            return if (config.widenEra) {
+                when {
+                    diff <= 8 -> 0.70
+                    diff <= 20 -> 0.35
+                    else -> 0.0
+                }
+            } else {
+                when {
+                    diff <= 5 -> 0.80
+                    diff <= 12 -> 0.45
+                    diff >= 30 -> -0.25
+                    else -> 0.10
+                }
             }
         }
         val bA = prev.eraBucket
         val bB = cand.eraBucket
         return if (bA != null && bB != null) {
-            if (bA == bB) 0.55 else 0.0
+            when {
+                bA == bB -> 0.55
+                config.widenEra -> 0.15
+                else -> 0.0
+            }
         } else 0.0
     }
 

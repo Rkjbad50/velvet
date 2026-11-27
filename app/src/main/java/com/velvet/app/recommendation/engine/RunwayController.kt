@@ -129,6 +129,7 @@ class RunwayController(
     private val preparedSeedCache = ConcurrentHashMap<String, List<Song>>()
     private val refillLatenciesMs = ArrayDeque<Long>(100)
     private var activeRefillJob: Job? = null
+    private var activeWarmUpJob: Job? = null
     private var periodicJob: Job? = null
 
     fun startPeriodicTick(
@@ -252,12 +253,35 @@ class RunwayController(
             } else if (decision is RefillDecision.SafeEmpty) {
                 DiagnosticsLogger.i("Runway", "Trigger=$trigger returned SafeEmpty(${decision.status}): ${decision.reason}")
             }
+            if (!snap.isArtistRadioActive && coordinator.rollingPoolSize() < 60) {
+                triggerRollingWarmUp(snapshotProvider, dismissedFilter, minTargetPoolSize = 60)
+            }
             withContext(mainDispatcher) {
                 onDecision(decision)
             }
         }
         activeRefillJob = job
         return job
+    }
+
+    /**
+     * Proactively keeps the rolling candidate pool >= [minTargetPoolSize] in the background
+     * so normal foreground refills resolve directly from RAM without waiting on network latency.
+     */
+    fun triggerRollingWarmUp(
+        snapshotProvider: () -> QueueRefillSnapshot,
+        dismissedFilter: (Song) -> Boolean = { false },
+        minTargetPoolSize: Int = 60,
+    ) {
+        if (coordinator.rollingPoolSize() >= minTargetPoolSize) return
+        if (activeWarmUpJob?.isActive == true) return
+        activeWarmUpJob = scope.launch {
+            coordinator.ensureRollingPoolWarm(
+                initialSnapshot = snapshotProvider(),
+                dismissedFilter = dismissedFilter,
+                targetPoolSize = minTargetPoolSize,
+            )
+        }
     }
 
     private fun recordLatency(ms: Long) {

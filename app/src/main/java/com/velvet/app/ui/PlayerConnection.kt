@@ -1487,15 +1487,22 @@ object PlayerConnection {
         }
 
         scheduleBackgroundSeedPrep(targetSeed)
+        val runway = VelvetApp.runwayControllerOrNull() ?: return
+        runway.startPeriodicTick(isPlayingProvider = { isPlaying }) {
+            requestRunwayRefill(RunwayTrigger.PERIODIC_TICK)
+        }
+        if (!isArtistRadioActive) {
+            runway.triggerRollingWarmUp(
+                snapshotProvider = { buildRefillSnapshot() },
+                dismissedFilter = { DismissedTrackRegistry.isDismissed(it) },
+                minTargetPoolSize = 60,
+            )
+        }
         if (queueManager.upNext.size >= RunwayPolicy.REFILL_BELOW && !autoPlayNext && !force) {
             isAutoplayLoading = false
             return
         }
 
-        val runway = VelvetApp.runwayControllerOrNull() ?: return
-        runway.startPeriodicTick(isPlayingProvider = { isPlaying }) {
-            requestRunwayRefill(RunwayTrigger.PERIODIC_TICK)
-        }
         isAutoplayLoading = queueManager.upNext.isEmpty() && queueManager.userQueue.isEmpty()
 
         val job = runway.triggerRefill(

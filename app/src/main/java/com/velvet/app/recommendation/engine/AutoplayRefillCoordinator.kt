@@ -104,6 +104,7 @@ class AutoplayRefillCoordinator(
     private val urgentFallbackProvider: (suspend (Song, QueueRefillSnapshot, Set<String>) -> List<Song>)? = null,
 ) {
     private val stateMutex = Mutex()
+    private val warmUpMutex = Mutex()
     private var state = RefillState()
 
     fun mergeIntoRollingPool(
@@ -450,8 +451,6 @@ class AutoplayRefillCoordinator(
                     initialSnapshot.upcomingSongs
                 ).distinctBy { it.id }
 
-            var engineResult: RecommendationResult? = null
-            var failureReason: String? = null
             val lockedVibe = com.velvet.app.recommendation.vibe.SessionVibe.fromSessionTracks(
                 tracks = listOf(anchor) + initialSnapshot.historySongs.takeLast(4).reversed(),
                 featureRepository = featureRepository,
@@ -459,45 +458,79 @@ class AutoplayRefillCoordinator(
                 requestedLanguageIds = initialSnapshot.preferredLanguageIds,
                 allowMixedLanguages = initialSnapshot.allowMixedLanguages,
             )
-            // Bypass stale candidate pool cache when paging forward on the same anchor or forcing
-            if (state.lastAnchorId == anchor.id || force) {
-                engine.invalidateCandidateCache(anchor.id)
-            }
-            try {
-                engineResult = withTimeout(watchdogTimeoutMs) {
-                    engine.nextSimilar(
-                        seed = anchor,
-                        contextSnapshot = contextPool,
-                        mode = mode,
-                        limit = neededCount,
-                        radioSessionId = initialSnapshot.radioSessionId,
-                        excludedProviderIds = initialSnapshot.excludedProviderIds,
-                        queueSongs = initialSnapshot.upcomingSongs,
-                        userQueueSongs = initialSnapshot.userQueueSongs,
-                        recentSongs = initialSnapshot.historySongs.takeLast(8),
-                        selectedArtistId = if (mode == RecommendationMode.ARTIST_RADIO) {
-                            (initialSnapshot.radioSeedSong ?: anchor).artist
-                        } else null,
-                        requestedLanguageIds = initialSnapshot.preferredLanguageIds,
-                        seedSongsOverride = initialSnapshot.seedSongsOverride,
-                        allowMixedLanguages = initialSnapshot.allowMixedLanguages,
-                        artistLanguageMap = initialSnapshot.artistLanguageMap,
-                        sessionVibeOverride = lockedVibe,
-                        randomSeed = initialSnapshot.randomSeed,
-                        sessionSkippedArtistCounts = initialSnapshot.sessionSkippedArtistCounts,
-                        sessionSkippedGenreCounts = initialSnapshot.sessionSkippedGenreCounts,
-                    )
+
+            // F3 Local-first RAM drain: satisfy up to neededCount from warm RollingCandidatePool before slow network fetches
+            val initialExclIds = buildQueueAndHistoryExcludedIds(initialSnapshot)
+            val initialSeenComps = buildQueueAndHistoryCompositionKeys(initialSnapshot)
+            val preDrainTake = if (mode != RecommendationMode.ARTIST_RADIO && rollingPool.size() > 0) {
+                capture.rollingPoolFetched = maxOf(capture.rollingPoolFetched, rollingPool.size())
+                rollingPool.drainEligible(
+                    maxCount = neededCount,
+                    excludedIds = initialExclIds + initialSnapshot.excludedProviderIds,
+                    excludedRecIds = initialExclIds,
+                    excludedCompositionKeys = initialSeenComps,
+                ) { song ->
+                    !dismissedFilter(song) &&
+                        matchesSessionVibe(song, anchor, lockedVibe, initialSnapshot, mode)
                 }
-            } catch (_: TimeoutCancellationException) {
-                failureReason = "watchdog_timeout"
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                failureReason = "engine_error"
+            } else {
+                emptyList()
+            }
+            if (preDrainTake.isNotEmpty()) {
+                capture.rollingPoolAccepted += preDrainTake.size
+            }
+
+            var engineResult: RecommendationResult? = null
+            var failureReason: String? = null
+            val preDrainIds = preDrainTake.map { it.id }
+            val preDrainRecIds = preDrainTake.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
+            val remainingNeeded = (neededCount - preDrainTake.size).coerceAtLeast(0)
+
+            if (remainingNeeded > 0 || (force && preDrainTake.isEmpty())) {
+                val chainedSeeds = buildChainedSeeds(anchor, initialSnapshot, mode)
+                // Bypass stale candidate pool cache when paging forward on the same anchor or forcing
+                if (state.lastAnchorId == anchor.id || force) {
+                    engine.invalidateCandidateCache(anchor.id)
+                }
+                try {
+                    engineResult = withTimeout(watchdogTimeoutMs) {
+                        engine.nextSimilar(
+                            seed = anchor,
+                            contextSnapshot = (contextPool + preDrainTake).distinctBy { it.id },
+                            mode = mode,
+                            limit = neededCount,
+                            radioSessionId = initialSnapshot.radioSessionId,
+                            excludedRecordingIds = preDrainRecIds.toSet(),
+                            excludedProviderIds = initialSnapshot.excludedProviderIds + preDrainIds,
+                            queueSongs = (initialSnapshot.upcomingSongs + preDrainTake).distinctBy { it.id },
+                            userQueueSongs = initialSnapshot.userQueueSongs,
+                            recentSongs = initialSnapshot.historySongs.takeLast(8),
+                            selectedArtistId = if (mode == RecommendationMode.ARTIST_RADIO) {
+                                (initialSnapshot.radioSeedSong ?: anchor).artist
+                            } else null,
+                            requestedLanguageIds = initialSnapshot.preferredLanguageIds,
+                            seedSongsOverride = chainedSeeds,
+                            allowMixedLanguages = initialSnapshot.allowMixedLanguages,
+                            artistLanguageMap = initialSnapshot.artistLanguageMap,
+                            sessionVibeOverride = lockedVibe,
+                            randomSeed = initialSnapshot.randomSeed,
+                            sessionSkippedArtistCounts = initialSnapshot.sessionSkippedArtistCounts,
+                            sessionSkippedGenreCounts = initialSnapshot.sessionSkippedGenreCounts,
+                        )
+                    }
+                } catch (_: TimeoutCancellationException) {
+                    failureReason = "watchdog_timeout"
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    failureReason = "engine_error"
+                }
+            } else {
+                capture.requestId = "rolling-pool-${clock()}"
             }
 
             val canTryUrgentFallback = isUrgent && urgentFallbackProvider != null
-            if (engineResult == null && !canTryUrgentFallback && rollingPool.size() == 0) {
+            if (engineResult == null && preDrainTake.isEmpty() && !canTryUrgentFallback && rollingPool.size() == 0) {
                 stateMutex.withLock {
                     if (state.activeGeneration == generation) {
                         val failures = state.consecutiveFailures + 1
@@ -560,21 +593,43 @@ class AutoplayRefillCoordinator(
             capture.engineDiag = engineResult?.diagnosticsId?.let { diagId ->
                 (engine as? DefaultRecommendationEngine)?.diagnosticsLog?.recent(12)?.find { it.diagnosticsId == diagId }
             }
-            capture.requestId = engineResult?.requestId.orEmpty()
+            if (capture.requestId.isBlank()) {
+                capture.requestId = engineResult?.requestId.orEmpty()
+            }
             capture.dismissedDropCount = rawEngineSongs.count { dismissedFilter(it) }
-            var acceptedSongs = rawEngineSongs.filter(::isSongEligibleForCommit)
+            val validPreDrain = preDrainTake.filter(::isSongEligibleForCommit)
+            val preDrainCommittedIds = validPreDrain.mapTo(HashSet()) { it.id }
+            val preDrainCommittedRecs = validPreDrain.mapTo(HashSet()) {
+                RecordingIdentityResolver.resolve(it).canonicalRecordingId
+            }
+            val preDrainCommittedComps = validPreDrain.mapNotNullTo(HashSet()) {
+                RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() }
+            }
+            val engineAccepted = rawEngineSongs.filter { s ->
+                isSongEligibleForCommit(s) &&
+                    s.id !in preDrainCommittedIds &&
+                    RecordingIdentityResolver.resolve(s).canonicalRecordingId !in preDrainCommittedRecs &&
+                    RecordingIdentityResolver.canonicalCompositionTitleKey(s).let { ck -> ck.isBlank() || ck !in preDrainCommittedComps }
+            }
+            var acceptedSongs = validPreDrain + engineAccepted
+            val engineTakeCount = (neededCount - validPreDrain.size).coerceAtLeast(0)
             val surplusEngineSongs = buildList {
-                if (acceptedSongs.size > neededCount) addAll(acceptedSongs.drop(neededCount))
-                addAll(engineResult?.overflowSongs.orEmpty().filter(::isSongEligibleForCommit))
+                if (engineAccepted.size > engineTakeCount) addAll(engineAccepted.drop(engineTakeCount))
+                addAll(
+                    engineResult?.overflowSongs.orEmpty().filter { s ->
+                        isSongEligibleForCommit(s) && s.id !in preDrainCommittedIds
+                    },
+                )
             }
             if (surplusEngineSongs.isNotEmpty()) {
+                val chosenNow = acceptedSongs.take(neededCount)
                 rollingPool.merge(
                     songs = surplusEngineSongs,
-                    excludedIds = alreadyInQueueIds + latest.excludedProviderIds + acceptedSongs.take(neededCount).map { it.id },
-                    excludedRecIds = alreadyInQueueIds + acceptedSongs.take(neededCount).map {
+                    excludedIds = alreadyInQueueIds + latest.excludedProviderIds + chosenNow.map { it.id },
+                    excludedRecIds = alreadyInQueueIds + chosenNow.map {
                         RecordingIdentityResolver.resolve(it).canonicalRecordingId
                     },
-                    excludedCompositionKeys = alreadySeenComps + acceptedSongs.take(neededCount).mapNotNull {
+                    excludedCompositionKeys = alreadySeenComps + chosenNow.mapNotNull {
                         RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() }
                     },
                 )
@@ -583,10 +638,10 @@ class AutoplayRefillCoordinator(
                 acceptedSongs = acceptedSongs.take(neededCount)
             }
 
-            // Top up from the rolling candidate pool (100-200 song buffer) before stepping anchors
-            var rollingTakeIds: Set<String> = emptySet()
+            // Top up from the rolling candidate pool before stepping anchors if still short
+            val rollingTakeIds = preDrainCommittedIds.toMutableSet()
             if (acceptedSongs.size < neededCount && rollingPool.size() > 0) {
-                capture.rollingPoolFetched = rollingPool.size()
+                capture.rollingPoolFetched = maxOf(capture.rollingPoolFetched, rollingPool.size())
                 val poolTake = rollingPool.drainEligible(
                     maxCount = neededCount - acceptedSongs.size,
                     excludedIds = alreadyInQueueIds + latest.excludedProviderIds + acceptedSongs.map { it.id },
@@ -596,12 +651,12 @@ class AutoplayRefillCoordinator(
                     },
                     predicate = { song ->
                         !dismissedFilter(song) &&
-                            RecordingIdentityResolver.resolve(song).releaseClassification.isVerifiedOriginalAudio
+                            matchesSessionVibe(song, anchor, lockedVibe, latest, mode)
                     },
                 )
                 if (poolTake.isNotEmpty()) {
-                    rollingTakeIds = poolTake.mapTo(HashSet()) { it.id }
-                    capture.rollingPoolAccepted = poolTake.size
+                    rollingTakeIds.addAll(poolTake.map { it.id })
+                    capture.rollingPoolAccepted += poolTake.size
                     acceptedSongs = (acceptedSongs + poolTake).distinctBy { it.id }
                 }
             }
@@ -762,7 +817,7 @@ class AutoplayRefillCoordinator(
             capture.libraryOrInstantAcceptedCount = libOnlyCount
 
             val resolvedResult = engineResult ?: RecommendationResult(
-                requestId = failureReason ?: "urgent-fallback",
+                requestId = capture.requestId.ifBlank { failureReason ?: "urgent-fallback" },
                 mode = mode,
                 candidates = emptyList(),
                 modelVersion = "fallback",
@@ -828,6 +883,181 @@ class AutoplayRefillCoordinator(
                 }
             }
         }
+    }
+
+    /**
+     * Proactively tops up the in-memory [rollingPool] off the critical path when buffer size drops
+     * below [targetPoolSize], using chained session anchors so foreground refills hit local RAM first.
+     */
+    suspend fun ensureRollingPoolWarm(
+        initialSnapshot: QueueRefillSnapshot,
+        dismissedFilter: (Song) -> Boolean = { false },
+        targetPoolSize: Int = 60,
+    ): Int {
+        if (!initialSnapshot.isAutoplayEnabled && !initialSnapshot.isRadioActive) return 0
+        if (initialSnapshot.isArtistRadioActive) return 0
+        if (rollingPool.size() >= targetPoolSize) return 0
+        if (warmUpMutex.isLocked) return 0
+        return warmUpMutex.withLock {
+            if (rollingPool.size() >= targetPoolSize) return@withLock 0
+            val anchor = resolveAnchor(initialSnapshot, null) ?: return@withLock 0
+            val mode = if (initialSnapshot.isRadioActive) RecommendationMode.SONG_RADIO else RecommendationMode.AUTOPLAY_REFILL
+            val chainedSeeds = buildChainedSeeds(anchor, initialSnapshot, mode)
+            val lockedVibe = com.velvet.app.recommendation.vibe.SessionVibe.fromSessionTracks(
+                tracks = listOf(anchor) + initialSnapshot.historySongs.takeLast(4).reversed(),
+                featureRepository = featureRepository,
+                artistLanguageMap = initialSnapshot.artistLanguageMap,
+                requestedLanguageIds = initialSnapshot.preferredLanguageIds,
+                allowMixedLanguages = initialSnapshot.allowMixedLanguages,
+            )
+            val exclIds = buildQueueAndHistoryExcludedIds(initialSnapshot)
+            val seenComps = buildQueueAndHistoryCompositionKeys(initialSnapshot)
+            val contextPool = (
+                initialSnapshot.historySongs +
+                    listOfNotNull(initialSnapshot.currentSong) +
+                    initialSnapshot.userQueueSongs +
+                    initialSnapshot.upcomingSongs
+                ).distinctBy { it.id }
+
+            engine.invalidateCandidateCache(anchor.id)
+            val res = try {
+                withTimeoutOrNull(watchdogTimeoutMs) {
+                    engine.nextSimilar(
+                        seed = anchor,
+                        contextSnapshot = contextPool,
+                        mode = mode,
+                        limit = 25,
+                        radioSessionId = initialSnapshot.radioSessionId,
+                        excludedProviderIds = initialSnapshot.excludedProviderIds + exclIds,
+                        queueSongs = initialSnapshot.upcomingSongs,
+                        userQueueSongs = initialSnapshot.userQueueSongs,
+                        recentSongs = initialSnapshot.historySongs.takeLast(8),
+                        requestedLanguageIds = initialSnapshot.preferredLanguageIds,
+                        seedSongsOverride = chainedSeeds,
+                        allowMixedLanguages = initialSnapshot.allowMixedLanguages,
+                        artistLanguageMap = initialSnapshot.artistLanguageMap,
+                        sessionVibeOverride = lockedVibe,
+                        randomSeed = initialSnapshot.randomSeed,
+                        sessionSkippedArtistCounts = initialSnapshot.sessionSkippedArtistCounts,
+                        sessionSkippedGenreCounts = initialSnapshot.sessionSkippedGenreCounts,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: return@withLock 0
+
+            val poolAdditions = (res.candidates.map { it.song } + res.overflowSongs)
+                .distinctBy { it.id }
+                .filter { s -> !dismissedFilter(s) && matchesSessionVibe(s, anchor, lockedVibe, initialSnapshot, mode) }
+            val added = rollingPool.merge(
+                songs = poolAdditions,
+                excludedIds = exclIds + initialSnapshot.excludedProviderIds,
+                excludedRecIds = exclIds,
+                excludedCompositionKeys = seenComps,
+            )
+            com.velvet.app.diagnostics.QueueHealthMonitor.recordRollingPoolSize(rollingPool.size())
+            added
+        }
+    }
+
+    private fun buildChainedSeeds(
+        anchor: Song,
+        snapshot: QueueRefillSnapshot,
+        mode: RecommendationMode,
+    ): List<Song> {
+        if (mode == RecommendationMode.ARTIST_RADIO) return listOf(anchor)
+        return (listOf(anchor) + snapshot.seedSongsOverride + snapshot.historySongs.takeLast(3).reversed())
+            .distinctBy { it.id }
+            .take(4)
+    }
+
+    private fun buildQueueAndHistoryExcludedIds(snapshot: QueueRefillSnapshot): Set<String> = buildSet {
+        val activeSongs = listOfNotNull(snapshot.currentSong) +
+            snapshot.upcomingSongs +
+            snapshot.userQueueSongs +
+            snapshot.historySongs
+        for (s in activeSongs) {
+            add(s.id)
+            add(RecordingIdentityResolver.resolve(s).canonicalRecordingId)
+            add(SongIdentity.canonicalGroupId(s))
+        }
+    }
+
+    private fun buildQueueAndHistoryCompositionKeys(snapshot: QueueRefillSnapshot): Set<String> = buildSet {
+        val activeSongs = listOfNotNull(snapshot.currentSong) +
+            snapshot.upcomingSongs +
+            snapshot.userQueueSongs +
+            snapshot.historySongs
+        for (s in activeSongs) {
+            val key = RecordingIdentityResolver.canonicalCompositionTitleKey(s)
+            if (key.isNotBlank()) add(key)
+        }
+    }
+
+    private fun matchesSessionVibe(
+        song: Song,
+        anchor: Song,
+        lockedVibe: com.velvet.app.recommendation.vibe.SessionVibe,
+        snapshot: QueueRefillSnapshot,
+        mode: RecommendationMode,
+    ): Boolean {
+        if (song.id.isBlank() || song.title.isBlank()) return false
+        if (song.durationSec in 0L..44L) return false
+        val identity = RecordingIdentityResolver.resolve(song)
+        if (!identity.releaseClassification.isVerifiedOriginalAudio) return false
+        if (RecordingIdentityResolver.isSameCompositionTitle(anchor, song)) return false
+
+        val feat = featureRepository.getCachedOrExtract(song)
+        val allowedVibeLangs = lockedVibe.effectiveAllowedLanguages
+        if (allowedVibeLangs.isNotEmpty()) {
+            val (candLangs, candLangConf) = com.velvet.app.recommendation.vibe.SessionVibe.resolveSongLanguage(
+                song = song,
+                features = feat,
+                artistLanguageMap = snapshot.artistLanguageMap,
+            )
+            val artistLang = com.velvet.app.recommendation.vibe.ArtistLanguageMap.inferArtistLanguage(
+                song.artist,
+                snapshot.artistLanguageMap,
+            )
+            if (artistLang != null && artistLang.second >= 0.72 && artistLang.first !in allowedVibeLangs) {
+                return false
+            }
+            if (candLangs.isNotEmpty() && candLangConf >= 0.65 && candLangs.none { it in allowedVibeLangs }) {
+                return false
+            }
+        }
+        if (mode != RecommendationMode.ARTIST_RADIO) {
+            val seedFeat = featureRepository.getCachedOrExtract(anchor)
+            val seedIsDevotional = com.velvet.app.recommendation.features.GenreOntology.DEVOTIONAL in seedFeat.genreIds
+            if (seedIsDevotional) {
+                val candHasParty = (feat.moodIds["party_celebratory"] ?: 0.0) >= 0.5
+                val candDevOrClass = com.velvet.app.recommendation.features.GenreOntology.DEVOTIONAL in feat.genreIds ||
+                    com.velvet.app.recommendation.model.MusicType.CLASSICAL in feat.musicTypes
+                if (!candDevOrClass || candHasParty) return false
+            }
+            val seedType = seedFeat.musicTypes.maxByOrNull { it.value }?.key
+                ?: com.velvet.app.recommendation.model.MusicType.UNKNOWN
+            val candType = feat.musicTypes.maxByOrNull { it.value }?.key
+                ?: com.velvet.app.recommendation.model.MusicType.UNKNOWN
+            if (seedType != com.velvet.app.recommendation.model.MusicType.UNKNOWN &&
+                candType != com.velvet.app.recommendation.model.MusicType.UNKNOWN &&
+                com.velvet.app.recommendation.features.GenreOntology.musicTypeCompatibility(seedType, candType) <
+                com.velvet.app.recommendation.vibe.SessionVibe.MIN_TYPE_COMPATIBILITY
+            ) {
+                return false
+            }
+            val vibeGenres = lockedVibe.genreWeights.keys.ifEmpty { seedFeat.genreIds.keys }
+            val candGenres = feat.genreIds.keys
+            if (vibeGenres.isNotEmpty() && candGenres.isNotEmpty() &&
+                com.velvet.app.recommendation.vibe.SessionVibe.maxGenreSimilarity(vibeGenres, candGenres) <
+                com.velvet.app.recommendation.vibe.SessionVibe.MIN_GENRE_SIMILARITY
+            ) {
+                return false
+            }
+        }
+        return true
     }
 
     private suspend fun validatePostFlightState(

@@ -45,10 +45,10 @@ class CandidatePoolBuilder(
     private val perSourceTimeoutMs: Long = 2_000L,
     private val overallDeadlineMs: Long = 2_300L,
     private val cacheTtlMs: Long = 15 * 60 * 1000L,
-    private val maxRawPoolSize: Int = 200,
+    private val maxRawPoolSize: Int = 280,
     private val enableEarlyQuorum: Boolean = false,
-    private val earlyQuorumMinCandidates: Int = 14,
-    private val earlyQuorumGraceMs: Long = 160L,
+    private val earlyQuorumMinCandidates: Int = 40,
+    private val earlyQuorumGraceMs: Long = 300L,
 ) {
     private data class CachedPoolEntry(
         val pool: CandidatePool,
@@ -262,32 +262,37 @@ class CandidatePoolBuilder(
     fun invalidateCache() = cache.clear()
 
     private fun buildCacheKey(req: RecommendationRequest): String {
-        val seedKey = req.primarySeed?.let { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
-            ?: req.seedRecordingIds.joinToString(",")
-        return "$seedKey|${req.mode.name}|${req.locale.orEmpty()}|${req.selectedArtistId.orEmpty()}|" +
-            "${req.requestedLanguageIds.sorted().joinToString(",")}|${req.allowMixedLanguages}|${req.artistLanguageMap.size}|v${TrackFeatureRecord.CURRENT_FEATURE_SCHEMA_VERSION}"
+        val seedKeys = if (req.seedSongs.isNotEmpty()) {
+            req.seedSongs.joinToString(",") { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
+        } else {
+            req.seedRecordingIds.joinToString(",")
+        }
+        val excludedBucket = req.excludedProviderIds.size / 25
+        return "$seedKeys|${req.mode.name}|${req.locale.orEmpty()}|${req.selectedArtistId.orEmpty()}|" +
+            "${req.requestedLanguageIds.sorted().joinToString(",")}|${req.allowMixedLanguages}|${req.artistLanguageMap.size}|" +
+            "${req.allowNearDuplicateUnplayedUploads}|${req.widenEra}|${req.widenMood}|$excludedBucket|v${TrackFeatureRecord.CURRENT_FEATURE_SCHEMA_VERSION}"
     }
 
     private fun computeSourceQuotas(mode: RecommendationMode): Map<String, Int> = when (mode) {
         RecommendationMode.ARTIST_RADIO -> mapOf(
-            "g0_instant_catalog" to 20,
-            "g3_primary_artist" to 45,
-            "g4_collaborators" to 20,
-            "g1_related" to 25,
-            "g5_genre_neighbours" to 15,
+            "g0_instant_catalog" to 25,
+            "g3_primary_artist" to 60,
+            "g4_collaborators" to 25,
+            "g1_related" to 50,
+            "g5_genre_neighbours" to 25,
             "g6_library" to 15,
-            "g2_same_release" to 15,
+            "g2_same_release" to 20,
         )
         else -> mapOf(
-            "g0_instant_catalog" to 25,
-            "g1_related" to 40,
-            "g5_genre_neighbours" to 35,
-            "g2_same_release" to 20,
-            "g3_primary_artist" to 10,
-            "g4_collaborators" to 15,
-            "g6_library" to 25,
+            "g0_instant_catalog" to 30,
+            "g1_related" to 120,
+            "g5_genre_neighbours" to 60,
+            "g2_same_release" to 25,
+            "g3_primary_artist" to 15,
+            "g4_collaborators" to 20,
+            "g6_library" to 30,
             "g7_session_momentum" to 15,
-            "g13_search_intent" to 12,
+            "g13_search_intent" to 15,
         )
     }
 

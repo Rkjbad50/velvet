@@ -57,11 +57,11 @@ class DefaultCandidateRanker(
             val feat = cand.features
             val rawType = computeMusicTypeFit(seedFeatures, feat)
             val rawGenre = computeGenreFit(seedFeatures, feat, request)
-            val rawMood = computeMoodFit(seedFeatures, feat)
+            val rawMood = computeMoodFit(seedFeatures, feat, request)
             val rawAudio = computeAudioFit(seedFeatures, feat)
             val rawTempo = computeTempoFit(seedFeatures, feat)
             val rawLanguage = computeLanguageFit(seedFeatures, feat, request, profile)
-            val rawEra = computeEraFit(seedFeatures, feat)
+            val rawEra = computeEraFit(seedFeatures, feat, request)
             val rawContext = computeContextFit(cand, seedFeatures, maxSourceCount)
 
             val compatibleMusic = rawType >= 0.0 && rawGenre >= -0.25 && rawMood >= -0.25
@@ -238,7 +238,7 @@ class DefaultCandidateRanker(
         }
     }
 
-    private fun computeMoodFit(seed: TrackFeatureRecord?, cand: TrackFeatureRecord?): Double {
+    private fun computeMoodFit(seed: TrackFeatureRecord?, cand: TrackFeatureRecord?, req: RecommendationRequest): Double {
         if (seed == null || cand == null || seed.moodIds.isEmpty() || cand.moodIds.isEmpty()) return 0.0
         val allMoods = seed.moodIds.keys + cand.moodIds.keys
         var dot = 0.0
@@ -255,10 +255,13 @@ class DefaultCandidateRanker(
         if (denom > 0.0 && dot > 0.0) {
             return (dot / denom).coerceIn(0.0, 1.0)
         }
-        val hasClash = (seed.moodIds.containsKey("sad_melancholic") && cand.moodIds.containsKey("party_celebratory")) ||
-            (seed.moodIds.containsKey("party_celebratory") && cand.moodIds.containsKey("sad_melancholic")) ||
-            (seed.moodIds.containsKey("devotional_spiritual") && cand.moodIds.containsKey("party_celebratory"))
-        return if (hasClash) -0.45 else 0.0
+        val devotionalPartyClash = (seed.moodIds.containsKey("devotional_spiritual") && cand.moodIds.containsKey("party_celebratory")) ||
+            (seed.moodIds.containsKey("party_celebratory") && cand.moodIds.containsKey("devotional_spiritual"))
+        val secularClash = !req.widenMood && (
+            (seed.moodIds.containsKey("sad_melancholic") && cand.moodIds.containsKey("party_celebratory")) ||
+                (seed.moodIds.containsKey("party_celebratory") && cand.moodIds.containsKey("sad_melancholic"))
+            )
+        return if (devotionalPartyClash || secularClash) -0.45 else 0.0
     }
 
     private fun computeAudioFit(seed: TrackFeatureRecord?, cand: TrackFeatureRecord?): Double {
@@ -332,7 +335,7 @@ class DefaultCandidateRanker(
         return if (inUserLangs) 0.15 else -0.45 * cand.languageConfidence
     }
 
-    private fun computeEraFit(seed: TrackFeatureRecord?, cand: TrackFeatureRecord?): Double {
+    private fun computeEraFit(seed: TrackFeatureRecord?, cand: TrackFeatureRecord?, req: RecommendationRequest): Double {
         if (seed == null || cand == null) return 0.0
         val conf = minOf(seed.eraConfidence, cand.eraConfidence)
         if (conf <= 0.0) return 0.0
@@ -340,16 +343,28 @@ class DefaultCandidateRanker(
         val yB = cand.eraStartYear
         if (yA != null && yB != null) {
             val diff = abs(yA - yB)
-            val sim = when {
-                diff <= 4 -> 1.0
-                diff <= 10 -> 0.70
-                diff <= 20 -> 0.30
-                else -> -0.25
+            val sim = if (req.widenEra) {
+                when {
+                    diff <= 10 -> 0.90
+                    diff <= 25 -> 0.50
+                    else -> 0.10
+                }
+            } else {
+                when {
+                    diff <= 4 -> 1.0
+                    diff <= 10 -> 0.70
+                    diff <= 20 -> 0.30
+                    else -> -0.25
+                }
             }
             return sim * conf
         }
         if (seed.eraBucket != null && cand.eraBucket != null) {
-            return if (seed.eraBucket == cand.eraBucket) 0.80 * conf else 0.0
+            return when {
+                seed.eraBucket == cand.eraBucket -> 0.80 * conf
+                req.widenEra -> 0.25 * conf
+                else -> 0.0
+            }
         }
         return 0.0
     }
@@ -508,7 +523,11 @@ class DefaultCandidateRanker(
         }
         if (rawType < -0.2) map["music_type_clash"] = 0.35 * scale
         if (rawGenre < -0.2) map["genre_clash"] = 0.25 * scale
-        if (rawMood < -0.2) map["mood_clash"] = 0.12 * scale
+        val devotionalPartyClash = (seed?.moodIds?.containsKey("devotional_spiritual") == true && feat?.moodIds?.containsKey("party_celebratory") == true) ||
+            (feat?.moodIds?.containsKey("devotional_spiritual") == true && seed?.moodIds?.containsKey("party_celebratory") == true)
+        if (rawMood < -0.2 && (!req.widenMood || devotionalPartyClash)) {
+            map["mood_clash"] = 0.12 * scale
+        }
         return map
     }
 

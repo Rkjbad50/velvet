@@ -78,42 +78,58 @@ class DefaultRecommendationEngine(
         )
         val effectiveRequest = if (request.sessionVibe != null) request else request.copy(sessionVibe = vibe)
 
-        val rejectionCounts = linkedMapOf<String, Int>()
-        val evalReasonsById = LinkedHashMap<String, List<String>>(pool.candidates.size)
-        val eligible = pool.candidates.filter { cand ->
-            val decision = eligibilityPolicy.evaluate(cand, effectiveRequest, profile, seedFeatures)
-            evalReasonsById[cand.song.id] = decision.reasons
-            if (!decision.eligible) {
-                decision.reasons.forEach { reason ->
-                    rejectionCounts[reason] = (rejectionCounts[reason] ?: 0) + 1
-                }
-            }
-            decision.eligible
+        // F3 Fixed-order gate degradation ladder when verified survivors < 40 (never relaxing language or devotional safety):
+        // Step 1: allow near-duplicates of unplayed songs -> Step 2: widen era -> Step 3: widen mood
+        var passRequest = effectiveRequest
+        val appliedRelaxations = linkedSetOf<String>()
+        var eval = evaluateFilteringPass(pool.candidates, passRequest, profile, seedFeatures)
+
+        if (eval.deduped.kept.size < TARGET_VERIFIED_SURVIVORS && !passRequest.allowNearDuplicateUnplayedUploads) {
+            passRequest = passRequest.copy(allowNearDuplicateUnplayedUploads = true)
+            appliedRelaxations += "near_duplicate_unplayed_uploads"
+            eval = evaluateFilteringPass(pool.candidates, passRequest, profile, seedFeatures)
+        }
+        if (eval.deduped.kept.size < TARGET_VERIFIED_SURVIVORS && !passRequest.widenEra) {
+            passRequest = passRequest.copy(widenEra = true)
+            appliedRelaxations += "widen_era"
+            eval = evaluateFilteringPass(pool.candidates, passRequest, profile, seedFeatures)
+        }
+        if (eval.deduped.kept.size < TARGET_VERIFIED_SURVIVORS && !passRequest.widenMood) {
+            passRequest = passRequest.copy(widenMood = true)
+            appliedRelaxations += "widen_mood"
+            eval = evaluateFilteringPass(pool.candidates, passRequest, profile, seedFeatures)
         }
 
-        val dedupedResult = duplicateFilter.filter(eligible, effectiveRequest)
-        val ranked = ranker.rank(dedupedResult.kept, effectiveRequest, profile, seedFeatures)
+        val eligible = eval.eligible
+        val evalReasonsById = eval.evalReasonsById
+        val rejectionCounts = eval.rejectionCounts
+        val dedupedResult = eval.deduped
+        val ranked = ranker.rank(dedupedResult.kept, passRequest, profile, seedFeatures)
 
         val chronologicalLeadIn = (
-            effectiveRequest.recentSongs.takeLast(4) +
+            passRequest.recentSongs.takeLast(4) +
                 listOfNotNull(primarySeed) +
-                effectiveRequest.userQueueSongs +
-                effectiveRequest.queueSongs
+                passRequest.userQueueSongs +
+                passRequest.queueSongs
             ).distinctBy { it.id }.takeLast(6)
         val recentFeatures = chronologicalLeadIn
             .map { featureRepository.getCachedOrExtract(it) }
         val seamAnchorFeatures = recentFeatures.lastOrNull() ?: seedFeatures
+        val seqConfig = com.velvet.app.recommendation.sequencing.SequenceConfigs
+            .forMode(passRequest.mode, passRequest.limit)
+            .copy(widenEra = passRequest.widenEra, widenMood = passRequest.widenMood)
         val sequenced = sequenceOptimizer.optimize(
             ranked = ranked,
-            request = effectiveRequest,
+            request = passRequest,
             recentHistoryFeatures = recentFeatures,
             seedFeatures = seamAnchorFeatures,
+            config = seqConfig,
             userProfile = profile,
         )
         val finalTracks = applyLibraryRediscoveryCap(
             selected = sequenced.tracks,
             rankedPool = ranked,
-            request = effectiveRequest,
+            request = passRequest,
             recentHistoryFeatures = recentFeatures,
             seedFeatures = seamAnchorFeatures,
             userProfile = profile,
@@ -125,7 +141,7 @@ class DefaultRecommendationEngine(
             evalReasonsById = evalReasonsById,
             keptAfterDuplicateFilter = dedupedResult.kept,
             acceptedTracks = finalTracks,
-            request = effectiveRequest,
+            request = passRequest,
         )
         val diagnosticsId = UUID.randomUUID().toString()
         val diagRecord = RecommendationDiagnostics(
@@ -138,7 +154,7 @@ class DefaultRecommendationEngine(
             rejectedReasonCounts = rejectionCounts,
             sourceHealth = pool.sourceHealth,
             averageTransitionScore = sequenced.averageTransitionScore,
-            constraintRelaxations = sequenced.constraintRelaxations,
+            constraintRelaxations = (appliedRelaxations + sequenced.constraintRelaxations).distinct(),
             returnedCount = finalTracks.size,
             durationMs = (finishedAt - startedAt).coerceAtLeast(0L),
             usedCache = pool.fromCache,
@@ -171,6 +187,44 @@ class DefaultRecommendationEngine(
             diagnosticsId = diagnosticsId,
             overflowSongs = overflowSongs,
         )
+    }
+
+    private data class FilteringPassOutcome(
+        val eligible: List<com.velvet.app.recommendation.model.CandidateTrack>,
+        val evalReasonsById: LinkedHashMap<String, List<String>>,
+        val rejectionCounts: LinkedHashMap<String, Int>,
+        val deduped: com.velvet.app.recommendation.filtering.DuplicateFilterResult,
+    )
+
+    private fun evaluateFilteringPass(
+        candidates: List<com.velvet.app.recommendation.model.CandidateTrack>,
+        request: RecommendationRequest,
+        profile: com.velvet.app.recommendation.profile.UserTasteSnapshot,
+        seedFeatures: com.velvet.app.recommendation.model.TrackFeatureRecord?,
+    ): FilteringPassOutcome {
+        val rejectionCounts = linkedMapOf<String, Int>()
+        val evalReasonsById = LinkedHashMap<String, List<String>>(candidates.size)
+        val eligible = candidates.filter { cand ->
+            val decision = eligibilityPolicy.evaluate(cand, request, profile, seedFeatures)
+            evalReasonsById[cand.song.id] = decision.reasons
+            if (!decision.eligible) {
+                decision.reasons.forEach { reason ->
+                    rejectionCounts[reason] = (rejectionCounts[reason] ?: 0) + 1
+                }
+            }
+            decision.eligible
+        }
+        val deduped = duplicateFilter.filter(eligible, request)
+        return FilteringPassOutcome(
+            eligible = eligible,
+            evalReasonsById = evalReasonsById,
+            rejectionCounts = rejectionCounts,
+            deduped = deduped,
+        )
+    }
+
+    companion object {
+        const val TARGET_VERIFIED_SURVIVORS = 40
     }
 
     private fun isLibraryOnlySource(sourceIds: Set<String>): Boolean =

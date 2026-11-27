@@ -184,10 +184,13 @@ class DefaultEligibilityPolicy : EligibilityPolicy {
                     candLangs.isEmpty() && isContinuationMode && !mixedAllowed && !isSelectedArtistInArtistRadio -> {
                         val hasTrustedLineage = candidate.sourceIds.any { it in SessionVibe.TRUSTED_LINEAGE_SOURCES }
                         val minGenreOk = !hasBothGenres || maxGenreSim >= SessionVibe.MIN_UNKNOWN_LANG_GENRE_SIMILARITY
-                        val moodClash = seedFeatures != null &&
+                        val devotionalPartyClash = seedFeatures != null &&
+                            ((seedFeatures.moodIds.containsKey("devotional_spiritual") && features.moodIds.containsKey("party_celebratory")) ||
+                                (seedFeatures.moodIds.containsKey("party_celebratory") && features.moodIds.containsKey("devotional_spiritual")))
+                        val secularMoodClash = !request.widenMood && seedFeatures != null &&
                             ((seedFeatures.moodIds.containsKey("sad_melancholic") && features.moodIds.containsKey("party_celebratory")) ||
-                                (seedFeatures.moodIds.containsKey("party_celebratory") && features.moodIds.containsKey("sad_melancholic")) ||
-                                (seedFeatures.moodIds.containsKey("devotional_spiritual") && features.moodIds.containsKey("party_celebratory")))
+                                (seedFeatures.moodIds.containsKey("party_celebratory") && features.moodIds.containsKey("sad_melancholic")))
+                        val moodClash = devotionalPartyClash || secularMoodClash
                         val highCompatibility = minGenreOk &&
                             typeCompat >= SessionVibe.MIN_UNKNOWN_LANG_TYPE_COMPATIBILITY &&
                             !moodClash
