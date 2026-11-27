@@ -27,7 +27,7 @@ class F1RemovedTrackShufflePersistenceTest {
         id = id,
         title = title,
         artist = artist,
-        durationSec = durationSec,
+        durationSec = durationSec.toLong(),
     )
 
     @Before
@@ -188,7 +188,7 @@ class F1RemovedTrackShufflePersistenceTest {
         val qmAfter = QueueManager()
         qmAfter.restore(decoded, allowSmartShuffle = true)
         assertTrue(qmAfter.sourceList.none { it.id == "ck_3" || it.id == "ck_3_alt" })
-        assertTrue(qmAfter.upNext.none { it.id == "ck_3" || it.id == "ck_3_alt" })
+        assertTrue(qmAfter.upNext.none { it.song.id == "ck_3" || it.song.id == "ck_3_alt" })
 
         repeat(4) { idx ->
             qmAfter.enableShuffle(ShuffleMode.STANDARD, rng = Random(90L + idx))
