@@ -17,11 +17,11 @@ import com.velvet.app.recommendation.engine.RefillDecision
 import com.velvet.app.recommendation.engine.RefillPolicy
 import com.velvet.app.recommendation.engine.RunwayPolicy
 import com.velvet.app.recommendation.events.InMemoryEventBackend
-import com.velvet.app.recommendation.events.RecommendationEvent
 import com.velvet.app.recommendation.events.RecommendationEventRepository
-import com.velvet.app.recommendation.events.RecommendationEventType
 import com.velvet.app.recommendation.features.TrackFeatureRepository
 import com.velvet.app.recommendation.identity.RecordingIdentityResolver
+import com.velvet.app.recommendation.model.RecommendationEvent
+import com.velvet.app.recommendation.model.RecommendationEventType
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationRequest
 import com.velvet.app.recommendation.profile.DefaultUserProfileRepository
