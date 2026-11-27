@@ -2,7 +2,6 @@ package com.velvet.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -54,7 +53,7 @@ object VelvetAccents {
         "EMERALD" -> if (dark) Color(0xFF34D399) else Color(0xFF059669)
         "CYAN" -> if (dark) Color(0xFF22D3EE) else Color(0xFF0891B2)
         "ROSE" -> if (dark) Color(0xFFFB7185) else Color(0xFFE11D48)
-        "AMBER" -> if (dark) Color(0xFFFBBF24) else Color(0xFFD97706)
+        "AMBER" -> if (dark) Color(0xFFFBBF24) else Color(0xFFB45309)
         "BLUE" -> if (dark) Color(0xFF60A5FA) else Color(0xFF2563EB)
         "SUNSET" -> if (dark) Color(0xFFFF8A50) else Color(0xFFE65100)
         "LIME" -> if (dark) Color(0xFFA3E635) else Color(0xFF65A30D)
@@ -95,8 +94,21 @@ internal data class VelvetColors(
     val onAccent = Color.White
 }
 
+/** Warm creamy linen and soft ivory palette for Light Mode (no stark #FFFFFF). */
+internal object VelvetLightPalette {
+    val Background = Color(0xFFF6F0E6) // Warm creamy linen canvas
+    val Surface = Color(0xFFFAF6EE)    // Soft warm ivory card (no stark #FFFFFF)
+    val Raised = Color(0xFFEFE7DA)     // Warm oat elevated panel
+    val Pressed = Color(0xFFE3D8C8)    // Muted warm stone pressed state
+    val Text = Color(0xFF1C1917)       // Rich warm espresso charcoal
+    val Muted = Color(0xFF686056)      // Warm umber muted text
+    val Rule = Color(0xFFE0D7C8)       // Soft cream hairline divider
+    val Track = Color(0xFFC8BCAE)      // Warm taupe slider track
+    val GlassBorder = Color(0xFFDAD0C0)// Warm sand surface border
+}
+
 /** Material 3 Expressive pitch AMOLED black solid theme */
-private fun createPitchAmoledColors(accent: Color) = VelvetColors(
+internal fun createPitchAmoledColors(accent: Color) = VelvetColors(
     background = Color(0xFF000000), // Extreme AMOLED pitch black
     surface = Color(0xFF141416), // 100% Solid opaque dark container
     raised = Color(0xFF1F1F24), // 100% Solid opaque elevated card
@@ -110,19 +122,19 @@ private fun createPitchAmoledColors(accent: Color) = VelvetColors(
     glassBorder = Color(0xFF2A2A34), // Subtle solid border
 )
 
-/** Material 3 Expressive clean light solid theme */
-private fun createLightGlassColors(accent: Color) = VelvetColors(
-    background = Color(0xFFF6F8FA),
-    surface = Color(0xFFFFFFFF), // 100% Solid opaque pure white
-    raised = Color(0xFFF0F2F5), // Solid opaque elevated card
-    pressed = Color(0xFFE5E7EB),
-    text = Color(0xFF0F172A),
-    muted = Color(0xFF64748B),
+/** Material 3 Expressive warm creamy ivory light theme */
+internal fun createLightGlassColors(accent: Color) = VelvetColors(
+    background = VelvetLightPalette.Background,
+    surface = VelvetLightPalette.Surface,
+    raised = VelvetLightPalette.Raised,
+    pressed = VelvetLightPalette.Pressed,
+    text = VelvetLightPalette.Text,
+    muted = VelvetLightPalette.Muted,
     accentText = accent,
-    danger = Color(0xFFEF4444),
-    rule = Color(0xFFE2E8F0),
-    track = Color(0xFFCBD5E1),
-    glassBorder = Color(0xFFE2E8F0),
+    danger = Color(0xFFDC2626),
+    rule = VelvetLightPalette.Rule,
+    track = VelvetLightPalette.Track,
+    glassBorder = VelvetLightPalette.GlassBorder,
 )
 
 private val LocalVelvetColors = staticCompositionLocalOf { createPitchAmoledColors(VelvetAccents.Purple) }
@@ -169,8 +181,8 @@ private fun VelvetColors.colorScheme(dark: Boolean) =
         surface = surface,
         surfaceTint = accent,
         onSurface = text,
-        inverseSurface = if (dark) Color(0xFFF4F6F9) else Color(0xFF000000),
-        inverseOnSurface = if (dark) Color(0xFF0F172A) else Color(0xFFFFFFFF),
+        inverseSurface = if (dark) Color(0xFFF4F6F9) else VelvetLightPalette.Text,
+        inverseOnSurface = if (dark) Color(0xFF0F172A) else VelvetLightPalette.Surface,
         surfaceVariant = raised,
         onSurfaceVariant = muted,
         surfaceContainerLowest = background,

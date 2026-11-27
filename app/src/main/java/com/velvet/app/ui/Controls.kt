@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -331,6 +332,9 @@ fun WavySeekBar(
         }
     }
 
+    val isDarkSurface = velvetColors.surface.luminance() < 0.5f
+    val handleFillColor = if (isDarkSurface) Color.White else VelvetLightPalette.Surface
+
     Canvas(
         modifier
             .semantics {
@@ -378,17 +382,27 @@ fun WavySeekBar(
                 // Tactile vertical pill handle
                 val thumbW = 6.dp.toPx() * (0.95f + 0.15f * thumbScale)
                 val thumbH = 22.dp.toPx() * (0.85f + 0.15f * thumbScale)
+                val thumbTopLeft = Offset(playheadX - thumbW / 2f, centerY - thumbH / 2f)
+                val thumbSize = Size(thumbW, thumbH)
+                val thumbCorner = CornerRadius(thumbW / 2f, thumbW / 2f)
                 drawRoundRect(
                     color = playheadColor.copy(alpha = haloAlpha),
-                    topLeft = Offset(playheadX - thumbW / 2f - 2.5.dp.toPx(), centerY - thumbH / 2f - 2.5.dp.toPx()),
+                    topLeft = Offset(thumbTopLeft.x - 2.5.dp.toPx(), thumbTopLeft.y - 2.5.dp.toPx()),
                     size = Size(thumbW + 5.dp.toPx(), thumbH + 5.dp.toPx()),
                     cornerRadius = CornerRadius((thumbW + 5.dp.toPx()) / 2f, (thumbW + 5.dp.toPx()) / 2f),
                 )
                 drawRoundRect(
-                    color = Color.White,
-                    topLeft = Offset(playheadX - thumbW / 2f, centerY - thumbH / 2f),
-                    size = Size(thumbW, thumbH),
-                    cornerRadius = CornerRadius(thumbW / 2f, thumbW / 2f),
+                    color = handleFillColor,
+                    topLeft = thumbTopLeft,
+                    size = thumbSize,
+                    cornerRadius = thumbCorner,
+                )
+                drawRoundRect(
+                    color = playedColor,
+                    topLeft = thumbTopLeft,
+                    size = thumbSize,
+                    cornerRadius = thumbCorner,
+                    style = Stroke(width = 1.4.dp.toPx()),
                 )
             }
 
@@ -418,7 +432,7 @@ fun WavySeekBar(
                         if (isNearest) {
                             val pulse = 1.08f + (0.28f * kotlin.math.sin(phase.toDouble()).toFloat()) * activePulse
                             drawCircle(
-                                color = Color.White,
+                                color = handleFillColor,
                                 radius = dotRadius * pulse * 0.8f,
                                 center = Offset(dotX, centerY),
                             )
@@ -456,20 +470,22 @@ fun WavySeekBar(
                     )
                 }
                 // Refined luminous circular thumb
+                val thumbRadius = 5.dp.toPx() * (0.90f + 0.14f * thumbScale)
+                val thumbCenter = Offset(playheadX, centerY)
                 drawCircle(
                     color = playheadColor.copy(alpha = haloAlpha),
                     radius = 9.dp.toPx() * thumbScale,
-                    center = Offset(playheadX, centerY),
+                    center = thumbCenter,
                 )
                 drawCircle(
-                    color = Color.White,
-                    radius = 5.dp.toPx() * (0.90f + 0.14f * thumbScale),
-                    center = Offset(playheadX, centerY),
+                    color = handleFillColor,
+                    radius = thumbRadius,
+                    center = thumbCenter,
                 )
                 drawCircle(
                     color = playedColor,
-                    radius = 5.dp.toPx() * (0.90f + 0.14f * thumbScale),
-                    center = Offset(playheadX, centerY),
+                    radius = thumbRadius,
+                    center = thumbCenter,
                     style = Stroke(width = 1.5.dp.toPx()),
                 )
             }

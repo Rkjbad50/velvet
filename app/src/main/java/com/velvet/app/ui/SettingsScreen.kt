@@ -168,6 +168,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text("Accent color", style = MaterialTheme.typography.titleMedium)
                 Text("Choose your preferred theme accent", style = MaterialTheme.typography.bodySmall, color = velvetColors.muted)
                 Spacer(Modifier.size(10.dp))
+                val isDark = velvetColors.surface.luminance() < 0.5f
+                val selectionRingColor = if (isDark) Color.White else velvetColors.text
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -175,6 +177,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ) {
                     VelvetAccents.available.forEach { (name, color) ->
                         val isSelected = data.accentColor.equals(name, ignoreCase = true)
+                        val checkTint = if (color.luminance() > 0.55f) VelvetInk else Color.White
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
@@ -182,12 +185,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 .background(color)
                                 .clickable { library.setAccentColor(name) }
                                 .then(
-                                    if (isSelected) Modifier.border(2.5.dp, Color.White, CircleShape) else Modifier,
+                                    if (isSelected) Modifier.border(2.5.dp, selectionRingColor, CircleShape) else Modifier,
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
                             if (isSelected) {
-                                Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Check, null, tint = checkTint, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -924,7 +927,7 @@ private fun VelvetSwitch(
             checkedTrackColor = velvetColors.accent,
             checkedBorderColor = velvetColors.accent,
             checkedIconColor = velvetColors.accent,
-            uncheckedThumbColor = if (isDark) Color(0xFFE2E2E8) else Color(0xFFFFFFFF),
+            uncheckedThumbColor = if (isDark) Color(0xFFE2E2E8) else VelvetLightPalette.Surface,
             uncheckedTrackColor = if (isDark) Color(0xFF232328) else Color(0xFFD6D6DE),
             uncheckedBorderColor = if (isDark) Color(0xFF45454F) else Color(0xFFA8A8B5),
             uncheckedIconColor = if (isDark) Color(0xFF71717A) else Color(0xFF8E8E93),

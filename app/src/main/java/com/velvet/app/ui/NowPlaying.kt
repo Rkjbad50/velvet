@@ -1089,6 +1089,8 @@ private fun AudioWaveformVisualizer(
 
     // Toned down theme accent color for refined luminous acoustic aesthetic
     val tonedAccent = remember(accent) { accent.copy(alpha = 0.85f) }
+    val isDark = velvetColors.surface.luminance() < 0.5f
+    val coreCenterColor = if (isDark) Color.White.copy(alpha = 0.95f) else velvetColors.text.copy(alpha = 0.85f)
 
     Box(
         modifier = modifier
@@ -1221,7 +1223,7 @@ private fun AudioWaveformVisualizer(
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.95f),
+                                coreCenterColor,
                                 tonedAccent,
                                 tonedAccent.copy(alpha = 0.25f),
                                 Color.Transparent,
