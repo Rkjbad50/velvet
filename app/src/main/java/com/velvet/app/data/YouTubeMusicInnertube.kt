@@ -393,6 +393,52 @@ object YouTubeMusicInnertube {
         return parseSelectedTrackArtworkJson(root, videoId)
     }
 
+    /**
+     * Searches YT Music Songs for the track's own official single/soundtrack artwork,
+     * accepting a result ONLY when normalized title and primary artist strictly match
+     * and the candidate is not a remix/live/cover variant.
+     */
+    fun searchStrictSongArtwork(
+        title: String,
+        artist: String,
+        glOverride: String? = null,
+        hlOverride: String? = null,
+    ): String? {
+        val cleanTitle = com.velvet.app.playback.CoverArtResolver.cleanTitleForArtworkLookup(title)
+        val primaryArtist = com.velvet.app.playback.CoverArtResolver.extractPrimaryArtistForArtworkLookup(artist)
+        val query = listOf(cleanTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
+        if (query.isBlank()) return null
+        val body = JsonObject().apply {
+            put("context", webRemixContext(glOverride = glOverride, hlOverride = hlOverride))
+            put("query", query)
+            put("params", SONGS_SEARCH_PARAMS)
+        }
+        val root = postJson(YTM_SEARCH_URL, body) ?: return null
+        return parseStrictSongArtworkSearchJson(root, title, artist)
+    }
+
+    internal fun parseStrictSongArtworkSearchJson(
+        root: JsonObject,
+        sourceTitle: String,
+        sourceArtist: String,
+    ): String? {
+        val candidates = parseSearchOrBrowseSongsJson(root)
+        for (candidate in candidates) {
+            val thumb = candidate.thumb?.trim()?.takeIf { it.isNotBlank() } ?: continue
+            if (com.velvet.app.playback.CoverArtResolver.isGenericVideoFallbackThumb(thumb)) continue
+            if (com.velvet.app.playback.CoverArtResolver.isExactStudioSongMatch(
+                    sourceTitle = sourceTitle,
+                    sourceArtist = sourceArtist,
+                    candidateTitle = candidate.title,
+                    candidateArtist = candidate.artist,
+                )
+            ) {
+                return thumb
+            }
+        }
+        return null
+    }
+
     internal fun extractBrowseId(urlOrId: String): String? {
         val trimmed = urlOrId.trim()
         if (trimmed.isBlank()) return null
@@ -996,7 +1042,9 @@ object YouTubeMusicInnertube {
                 if (url.isBlank()) continue
                 val w = obj.getInt("width", 0)
                 val h = obj.getInt("height", 0)
-                if ((w > 0 && h > 0 && w == h) || url.contains("lh3.googleusercontent.com", ignoreCase = true)) {
+                val isGoogleCoverHost = url.contains("lh3.googleusercontent.com", ignoreCase = true) ||
+                    url.contains("yt3.googleusercontent.com", ignoreCase = true)
+                if ((w > 0 && h > 0 && w == h) || isGoogleCoverHost) {
                     hasSquare = true
                 }
                 if (h >= bestHeight) {

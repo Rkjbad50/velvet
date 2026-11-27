@@ -205,8 +205,15 @@ class VelvetApp : Application(), ImageLoaderFactory {
         instance = this
         com.velvet.app.diagnostics.DiagnosticsLogger.attachLogDirectory(java.io.File(filesDir, "diagnostics"))
         com.velvet.app.diagnostics.CrashHandler.install(java.io.File(filesDir, "crash"))
+        com.velvet.app.playback.CoverArtCache.attachDirectory(filesDir)
 
-        http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
+        http = OkHttpClient.Builder()
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 12
+            })
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
         library = Library(filesDir)
         val initialLangState = com.velvet.app.data.LanguageLocaleConfig.fromSelectedLanguages(library.data.value.musicLanguages)
         // the content country & localization match user's listening language preference

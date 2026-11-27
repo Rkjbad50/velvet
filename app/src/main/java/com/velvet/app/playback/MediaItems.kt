@@ -22,11 +22,16 @@ private val knownSongs = BoundedCache<String, Song>(2000)
 
 fun songUri(id: String): Uri = Uri.Builder().scheme(SONG_SCHEME).authority("song").appendPath(id).build()
 
+fun getKnownSongArtwork(songId: String): String? =
+    knownSongs[songId]?.thumb?.trim()?.takeIf { it.isNotBlank() }
+
 /**
- * Updates cached artwork in [knownSongs] when asynchronous track-level cover art is resolved.
+ * Updates cached artwork in [knownSongs] and [CoverArtCache] when asynchronous track-level cover art is resolved.
  */
 fun updateKnownSongArtwork(songId: String, thumbUrl: String) {
     if (songId.isBlank() || thumbUrl.isBlank()) return
+    val looksSquare = CoverArtResolver.isSquareHostedThumb(thumbUrl)
+    CoverArtCache.put(songId, thumbUrl, isSquareArtwork = looksSquare)
     val existing = knownSongs[songId] ?: return
     val merged = CoverArtResolver.mergeTrackArtwork(
         existingTrackThumb = existing.thumb,
@@ -36,7 +41,7 @@ fun updateKnownSongArtwork(songId: String, thumbUrl: String) {
     if (merged != existing.thumb) {
         knownSongs[songId] = existing.copy(
             thumb = merged,
-            hasSquareArtwork = existing.hasSquareArtwork || merged.contains("lh3.googleusercontent.com"),
+            hasSquareArtwork = existing.hasSquareArtwork || CoverArtResolver.isSquareHostedThumb(merged),
         )
     }
 }
@@ -49,12 +54,21 @@ internal fun resolveMediaItemArtworkUrl(
     song: Song,
     existingCached: Song?,
     fallbackAlbumArt: String? = null,
-): String? = CoverArtResolver.mergeTrackArtwork(
-    existingTrackThumb = existingCached?.thumb,
-    candidateTrackThumb = song.thumb,
-    albumThumb = fallbackAlbumArt,
-    videoId = song.id,
-)
+): String? {
+    val persisted = CoverArtCache.get(song.id)
+    val bestExisting = CoverArtResolver.mergeTrackArtwork(
+        existingTrackThumb = existingCached?.thumb,
+        candidateTrackThumb = persisted,
+        albumThumb = fallbackAlbumArt,
+        videoId = song.id,
+    )
+    return CoverArtResolver.mergeTrackArtwork(
+        existingTrackThumb = bestExisting,
+        candidateTrackThumb = song.thumb,
+        albumThumb = fallbackAlbumArt,
+        videoId = song.id,
+    )
+}
 
 /**
  * Pure JVM reconciliation helper used when mapping a Media3 [MediaItem] back to [Song],

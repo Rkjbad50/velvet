@@ -287,11 +287,9 @@ object YouTube {
         )
         AlbumPage(
             album,
-            com.velvet.app.playback.CoverArtResolver.enrichAlbumTracks(
-                collectionUrl = normalized,
-                album = album,
-                rawSongs = songs,
-                languageState = activeLanguageState(),
+            com.velvet.app.playback.CoverArtResolver.applyInitialKnownArtwork(
+                songs = songs,
+                albumArtworkUrl = album.thumb,
             ),
         )
     }
@@ -400,7 +398,10 @@ object YouTube {
 
     private fun hasSquareThumb(images: List<Image>): Boolean =
         images.any { it.width > 0 && it.height > 0 && it.width == it.height } ||
-            images.any { it.url.contains("lh3.googleusercontent.com", ignoreCase = true) }
+            images.any {
+                it.url.contains("lh3.googleusercontent.com", ignoreCase = true) ||
+                    it.url.contains("yt3.googleusercontent.com", ignoreCase = true)
+            }
 
     private fun cleanArtist(name: String?): String = name.orEmpty().removeSuffix(" - Topic")
 

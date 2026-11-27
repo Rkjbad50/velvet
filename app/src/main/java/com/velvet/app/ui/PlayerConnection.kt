@@ -310,6 +310,36 @@ object PlayerConnection {
         }
     }
 
+    fun updateResolvedTrackArtwork(
+        songId: String,
+        thumbUrl: String,
+        albumArtFallback: String? = activeParentAlbumArt,
+    ) {
+        if (songId.isBlank() || thumbUrl.isBlank()) return
+        com.velvet.app.playback.updateKnownSongArtwork(songId, thumbUrl)
+        val merged = com.velvet.app.playback.CoverArtResolver.mergeTrackArtwork(
+            existingTrackThumb = com.velvet.app.playback.getKnownSongArtwork(songId),
+            candidateTrackThumb = thumbUrl,
+            albumThumb = albumArtFallback,
+            videoId = songId,
+        ) ?: thumbUrl
+        if (queueManager.updateSongArtwork(
+                songId = songId,
+                thumbUrl = merged,
+                albumArtFallback = albumArtFallback,
+                markSquareArtwork = true,
+            )
+        ) {
+            syncQueueState(resetPositionOnTrackChange = false)
+            val upcoming = (queueManager.userQueue + queueManager.upNext).map { it.song }
+            exoSyncSerializer.submit {
+                withController { c ->
+                    QueueExoAdapter.refreshUpcomingMetadata(c, upcoming, activeParentAlbumArt)
+                }
+            }
+        }
+    }
+
     private fun enrichActiveAndUpcomingArtworkIfNeeded() {
         val parentArt = activeParentAlbumArt
         val candidates = (listOfNotNull(queueManager.current) +
@@ -327,13 +357,33 @@ object PlayerConnection {
         )
         runwayBgScope.launch {
             for (song in candidates) {
-                val resolved = runCatching {
+                val cached = com.velvet.app.playback.CoverArtCache.get(song.id)
+                val resolvedFromCache = cached?.takeIf {
+                    !com.velvet.app.playback.CoverArtResolver.isGenericVideoFallbackThumb(it) && it != song.thumb
+                }
+                val fromNext = resolvedFromCache ?: runCatching {
                     com.velvet.app.data.YouTubeMusicInnertube.fetchTrackArtworkUrl(
                         videoId = song.id,
                         glOverride = langState.gl,
                         hlOverride = langState.hl,
                     )
-                }.getOrNull()?.takeIf { it.isNotBlank() } ?: continue
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+
+                val needSingleLookup = fromNext == null ||
+                    com.velvet.app.playback.CoverArtResolver.isGenericVideoFallbackThumb(fromNext) ||
+                    (parentArt != null && fromNext == parentArt)
+                val resolved = if (needSingleLookup) {
+                    runCatching {
+                        com.velvet.app.data.YouTubeMusicInnertube.searchStrictSongArtwork(
+                            title = song.title,
+                            artist = song.artist,
+                            glOverride = langState.gl,
+                            hlOverride = langState.hl,
+                        )
+                    }.getOrNull()?.takeIf { it.isNotBlank() } ?: fromNext
+                } else {
+                    fromNext
+                } ?: continue
 
                 withContext(Dispatchers.Main) {
                     val merged = com.velvet.app.playback.CoverArtResolver.mergeTrackArtwork(
@@ -342,16 +392,7 @@ object PlayerConnection {
                         albumThumb = activeParentAlbumArt,
                         videoId = song.id,
                     ) ?: return@withContext
-                    com.velvet.app.playback.updateKnownSongArtwork(song.id, merged)
-                    if (queueManager.updateSongArtwork(song.id, merged, albumArtFallback = activeParentAlbumArt, markSquareArtwork = true)) {
-                        syncQueueState(resetPositionOnTrackChange = false)
-                        val upcoming = (queueManager.userQueue + queueManager.upNext).map { it.song }
-                        exoSyncSerializer.submit {
-                            withController { c ->
-                                QueueExoAdapter.refreshUpcomingMetadata(c, upcoming, activeParentAlbumArt)
-                            }
-                        }
-                    }
+                    updateResolvedTrackArtwork(song.id, merged, activeParentAlbumArt)
                 }
             }
         }
@@ -888,7 +929,7 @@ object PlayerConnection {
         }
         val albumFallback = context?.artworkUrl?.trim()?.takeIf { it.isNotBlank() }
         activeParentAlbumArt = albumFallback
-        val preparedSongs = com.velvet.app.playback.CoverArtResolver.applyAlbumFallback(songs, albumFallback)
+        val preparedSongs = com.velvet.app.playback.CoverArtResolver.applyInitialKnownArtwork(songs, albumFallback)
         currentPlaylistId = playlistId
         isRadioActive = radio
         isArtistRadioActive = if (radio) isArtistRadio else false

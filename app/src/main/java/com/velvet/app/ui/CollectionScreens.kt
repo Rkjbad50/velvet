@@ -72,6 +72,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,7 +80,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -113,7 +116,9 @@ import com.velvet.app.data.YouTube
 import com.velvet.app.data.totalDuration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -135,16 +140,38 @@ class AlbumViewModel : ViewModel() {
     var error by mutableStateOf<String?>(null)
         private set
     private var loaded: String? = null
+    private var artworkJob: Job? = null
+    private val visibleWindow = MutableStateFlow(0..20)
+
+    fun updateVisibleWindow(firstVisible: Int, lastVisible: Int) {
+        val safeFirst = firstVisible.coerceAtLeast(0)
+        val safeLast = maxOf(safeFirst, lastVisible)
+        if (visibleWindow.value.first != safeFirst || visibleWindow.value.last != safeLast) {
+            visibleWindow.value = safeFirst..safeLast
+        }
+    }
+
+    fun cancelProgressiveArtwork() {
+        artworkJob?.cancel()
+        artworkJob = null
+    }
+
+    override fun onCleared() {
+        cancelProgressiveArtwork()
+        super.onCleared()
+    }
 
     fun load(album: AlbumRef, force: Boolean = false) {
-        if (!force && loaded == album.url) return
+        if (!force && loaded == album.url && (page != null || error == null)) return
         loaded = album.url
         error = null
+        cancelProgressiveArtwork()
         viewModelScope.launch {
             try {
                 val loadedPage = YouTube.albumPage(album.url, album)
                 page = loadedPage
                 com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(loadedPage.songs)
+                startProgressiveArtwork(loadedPage)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -152,12 +179,57 @@ class AlbumViewModel : ViewModel() {
             }
         }
     }
+
+    private fun startProgressiveArtwork(initialPage: YouTube.AlbumPage) {
+        cancelProgressiveArtwork()
+        if (initialPage.songs.isEmpty()) return
+        val langState = com.velvet.app.data.LanguageLocaleConfig.fromSelectedLanguages(
+            runCatching { VelvetApp.library.data.value.musicLanguages }.getOrDefault(emptyList()),
+        )
+        artworkJob = viewModelScope.launch {
+            com.velvet.app.playback.CoverArtResolver.resolveAlbumArtworkProgressively(
+                collectionUrl = initialPage.album.url,
+                album = initialPage.album,
+                initialSongs = initialPage.songs,
+                languageState = langState,
+                visibleWindowProvider = { visibleWindow.value },
+                onSongsUpdated = { updatedSongs ->
+                    page?.let { current ->
+                        page = YouTube.AlbumPage(current.album, updatedSongs)
+                    }
+                    com.velvet.app.recommendation.candidates.InstantTrackCatalog.seed(updatedSongs)
+                },
+                onTrackResolved = { updatedSong ->
+                    val thumb = updatedSong.thumb ?: return@resolveAlbumArtworkProgressively
+                    PlayerConnection.updateResolvedTrackArtwork(
+                        songId = updatedSong.id,
+                        thumbUrl = thumb,
+                        albumArtFallback = initialPage.album.thumb,
+                    )
+                },
+            )
+        }
+    }
 }
 
 @Composable
 fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
     val vm: AlbumViewModel = viewModel(key = "album-" + album.url)
+    val listState = rememberLazyListState()
     LaunchedEffect(album.url) { vm.load(album) }
+    DisposableEffect(album.url) {
+        onDispose { vm.cancelProgressiveArtwork() }
+    }
+    LaunchedEffect(listState, vm.page?.songs?.size) {
+        snapshotFlow {
+            val visible = listState.layoutInfo.visibleItemsInfo
+            val first = ((visible.firstOrNull()?.index ?: 0) - 1).coerceAtLeast(0)
+            val last = ((visible.lastOrNull()?.index ?: 15) - 1).coerceAtLeast(first)
+            first to last
+        }.collect { (first, last) ->
+            vm.updateVisibleWindow(first, last)
+        }
+    }
     val library = VelvetApp.library
     val data by library.data.collectAsStateWithLifecycle()
     val nav = LocalNav.current
@@ -165,13 +237,18 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
     val songs = vm.page?.songs.orEmpty()
     val saved = data.albums.any { it.url == album.url }
     val tint = rememberArtColor(info.thumb)
-    // Show track art on playlists and whenever tracks in an album/compilation have distinct artwork
+    // Show track art on playlists, compilations, and whenever tracks have distinct artwork
     val isAlbum = info.isAlbum
     val hasDistinctTrackArtwork = songs.any { song ->
         val t = song.thumb?.trim().orEmpty()
         t.isNotBlank() && t != info.thumb?.trim().orEmpty()
     }
-    val showTrackArt = !isAlbum || hasDistinctTrackArtwork
+    val isCompilationHint = remember(info.title, info.subtitle) {
+        info.subtitle.contains("various", ignoreCase = true) ||
+            info.title.contains("jhankar", ignoreCase = true) ||
+            info.title.contains("evergreen", ignoreCase = true)
+    }
+    val showTrackArt = !isAlbum || hasDistinctTrackArtwork || isCompilationHint
     val playbackContext = PlaybackContext(
         id = album.url,
         type = if (isAlbum) RecentType.ALBUM else RecentType.REMOTE_PLAYLIST,
@@ -183,7 +260,7 @@ fun AlbumScreen(album: AlbumRef, onBack: () -> Unit) {
     val albumSessionId = "album:${album.url}"
     val isPlayingAlbum = PlayerConnection.isPlaylistSessionPlaying(albumSessionId)
     val isShuffledAlbum = PlayerConnection.isPlaylistSessionActive(albumSessionId) && PlayerConnection.shuffle
-    BackPage(onBack) {
+    BackPage(onBack, listState = listState) {
         item {
             CollectionHeader(
                 title = info.title,

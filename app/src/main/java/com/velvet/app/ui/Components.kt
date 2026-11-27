@@ -47,7 +47,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -126,6 +128,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.palette.graphics.Palette
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.velvet.app.VelvetApp
@@ -161,6 +164,13 @@ fun Artwork(
                 .build()
         }
     }
+    var painterState by remember(request) { mutableStateOf<AsyncImagePainter.State?>(null) }
+    val showSkeleton = request != null && (painterState == null || painterState is AsyncImagePainter.State.Loading)
+    val showErrorPlaceholder = request == null ||
+        painterState is AsyncImagePainter.State.Error ||
+        painterState is AsyncImagePainter.State.Empty
+    val shimmerBrush = if (showSkeleton) rememberVelvetShimmerBrush() else null
+
     Box(
         modifier
             .size(size)
@@ -168,12 +178,17 @@ fun Artwork(
             .background(velvetColors.raised),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(placeholder, null, tint = velvetColors.muted, modifier = Modifier.fillMaxSize(0.4f))
+        if (shimmerBrush != null) {
+            Box(Modifier.fillMaxSize().background(shimmerBrush))
+        } else if (showErrorPlaceholder) {
+            Icon(placeholder, null, tint = velvetColors.muted, modifier = Modifier.fillMaxSize(0.4f))
+        }
         if (request != null) {
             AsyncImage(
                 model = request,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onState = { painterState = it },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -847,7 +862,12 @@ fun artistSubtitle(artist: ArtistRef): String = "Artist"
 
 /** A scrolling page with a back button that stays put while the content scrolls. */
 @Composable
-fun BackPage(onBack: () -> Unit, heading: (@Composable () -> Unit)? = null, content: LazyListScope.() -> Unit) {
+fun BackPage(
+    onBack: () -> Unit,
+    heading: (@Composable () -> Unit)? = null,
+    listState: LazyListState = rememberLazyListState(),
+    content: LazyListScope.() -> Unit,
+) {
     if (heading != null) {
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -858,12 +878,21 @@ fun BackPage(onBack: () -> Unit, heading: (@Composable () -> Unit)? = null, cont
                 PanelIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = onBack)
                 Box(Modifier.weight(1f)) { heading() }
             }
-            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 16.dp), content = content)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(bottom = 16.dp),
+                content = content,
+            )
         }
         return
     }
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
             content()
         }
         PanelIconButton(

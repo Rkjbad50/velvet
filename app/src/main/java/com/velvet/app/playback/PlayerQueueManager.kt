@@ -389,7 +389,7 @@ class QueueManager(
                 return item.copy(
                     song = item.song.copy(
                         thumb = merged,
-                        hasSquareArtwork = item.song.hasSquareArtwork || markSquareArtwork || merged.contains("lh3.googleusercontent.com"),
+                        hasSquareArtwork = item.song.hasSquareArtwork || markSquareArtwork || CoverArtResolver.isSquareHostedThumb(merged),
                     ),
                 )
             }
