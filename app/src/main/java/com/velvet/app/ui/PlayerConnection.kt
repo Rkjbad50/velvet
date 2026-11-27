@@ -1098,13 +1098,11 @@ object PlayerConnection {
 
         if (current?.id == song.id) {
             com.velvet.app.playback.DismissedTrackRegistry.clear()
-            VelvetApp.autoplayPipeline.clearCandidatePoolCache(song.id)
             queueManager.clearUpcoming()
             syncQueueState()
             syncToExoPlayer(isRadio = true)
             requestRunwayRefill(RunwayTrigger.TRACK_CHANGE, seedId = song.id, force = true)
         } else {
-            VelvetApp.autoplayPipeline.clearCandidatePoolCache(song.id)
             play(
                 listOf(song),
                 radio = true,
@@ -1137,7 +1135,6 @@ object PlayerConnection {
             selectedArtistId = seed.artist,
         )
         VelvetApp.recommendationEngineOrNull()?.invalidateCandidateCache(seed.id)
-        VelvetApp.autoplayPipeline.clearCandidatePoolCache(seed.id)
         play(
             listOf(seed),
             radio = true,

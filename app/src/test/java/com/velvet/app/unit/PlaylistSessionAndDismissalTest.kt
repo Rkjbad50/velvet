@@ -1,11 +1,8 @@
 package com.velvet.app.unit
 
 import com.velvet.app.data.Song
-import com.velvet.app.playback.AutoplayConfig
-import com.velvet.app.playback.AutoplayPipeline
 import com.velvet.app.playback.DismissedTrackRegistry
 import com.velvet.app.playback.PlayerQueueManager
-import com.velvet.app.playback.SessionHistory
 import com.velvet.app.playback.ShuffleMode
 import com.velvet.app.playback.SongIdentity
 import com.velvet.app.ui.PlaybackControlSync
@@ -158,26 +155,6 @@ class PlaylistSessionAndDismissalTest {
         val winner = SongIdentity.selectRepresentative(group)
 
         assertEquals("Topic / Original Studio Audio must be selected as winner", "topic_id", winner.id)
-    }
-
-    @Test
-    fun testAutoplayPipeline_hardFiltersDialogueAndDismissedTracks() {
-        val history = SessionHistory()
-        val pipeline = AutoplayPipeline(sources = emptyList(), history = history)
-
-        val seedTitle = "Pehla Nasha"
-        val dialogueTrack = Song(id = "dial1", title = "Pehla Nasha Movie Dialogue Scene", artist = "Uploader", durationSec = 240)
-        val dismissedTrack = Song(id = "dism1", title = "Roop Tera Mastana", artist = "Kishore Kumar - Topic", durationSec = 220)
-
-        // 1. Dialogue track must be hard filtered out
-        assertTrue(pipeline.isHardFiltered(dialogueTrack, seedTitle))
-
-        // 2. Non-dismissed regular track is not hard filtered
-        assertFalse(pipeline.isHardFiltered(dismissedTrack, seedTitle))
-
-        // 3. Once dismissed, it must be hard filtered out
-        DismissedTrackRegistry.recordDismissal(dismissedTrack)
-        assertTrue(pipeline.isHardFiltered(dismissedTrack, seedTitle))
     }
 
     @Test

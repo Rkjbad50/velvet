@@ -5,7 +5,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Thread-safe session-scoped memory of tracks explicitly removed/dismissed by the user.
- * Prevents AutoplayPipeline and background refills from re-inserting dismissed songs
+ * Prevents AutoplayRefillCoordinator and background refills from re-inserting dismissed songs
  * or duplicate recordings of the same dismissed track in the active listening session.
  */
 object DismissedTrackRegistry {

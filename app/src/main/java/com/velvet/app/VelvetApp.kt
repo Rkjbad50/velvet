@@ -63,58 +63,6 @@ class VelvetApp : Application(), ImageLoaderFactory {
             builder = com.velvet.app.recommendation.profile.TasteProfileBuilder(trackFeatureRepository),
         )
     }
-    val autoplayPipeline by lazy {
-        com.velvet.app.playback.AutoplayPipeline(
-            sources = listOf(
-                com.velvet.app.playback.CandidateSource { com.velvet.app.data.StreamResolver.related(it.id) },
-            ),
-            history = sessionHistory,
-            albumTracksProvider = { query ->
-                runCatching {
-                    com.velvet.app.data.YouTube.Search(query, com.velvet.app.data.YouTube.FILTER_SONGS).loadNext()
-                        .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
-                        .map { it.song }
-                        .filter { it.isPureMusic() }
-                }.getOrDefault(emptyList())
-            },
-            artistTracksProvider = { artist ->
-                runCatching {
-                    com.velvet.app.data.YouTube.Search("$artist songs", com.velvet.app.data.YouTube.FILTER_SONGS).loadNext()
-                        .filterIsInstance<com.velvet.app.data.BrowseItem.SongItem>()
-                        .map { it.song }
-                        .filter { it.isPureMusic() }
-                }.getOrDefault(emptyList())
-            },
-            libraryTracksProvider = {
-                val data = library.data.value
-                data.liked + data.playlists.flatMap { it.songs }
-            },
-            recentCompletedProvider = {
-                library.data.value.recent.take(50)
-            },
-            userTasteProvider = {
-                val data = library.data.value
-                val allUserSongs = (data.liked + data.recent.take(30) + data.playlists.flatMap { it.songs })
-                com.velvet.app.playback.UserTasteProfile(
-                    favoriteArtists = (data.artists.map { it.name } + data.liked.map { it.artist })
-                        .map { com.velvet.app.playback.normalizePrimaryArtist(it) }.filter { it.isNotBlank() }.toSet(),
-                    recentArtists = data.recent.take(30)
-                        .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) }.filter { it.isNotBlank() }.toSet(),
-                    playlistArtists = data.playlists.flatMap { it.songs }
-                        .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) }.filter { it.isNotBlank() }.toSet(),
-                    likedTrackKeys = data.liked.map { com.velvet.app.playback.canonicalKey(it.title, it.artist) }.toSet(),
-                    recentTrackKeys = data.recent.take(30).map { com.velvet.app.playback.canonicalKey(it.title, it.artist) }.toSet(),
-                    preferredLanguages = data.musicLanguages,
-                    frequentClusters = allUserSongs.groupingBy { com.velvet.app.playback.detectCluster(it) }.eachCount(),
-                    frequentMoods = allUserSongs.groupingBy { com.velvet.app.playback.detectMood(it) }.eachCount(),
-                )
-            },
-            persistedPlayedGroupIdsProvider = { library.data.value.playedGroupIds },
-            tasteProfileProvider = {
-                com.velvet.app.playback.TasteEngine.getOrComputeProfile(library.data.value.listenEvents)
-            },
-        )
-    }
 
     val libraryIndex by lazy {
         com.velvet.app.recommendation.candidates.LibraryIndex(trackFeatureRepository)
@@ -362,7 +310,6 @@ class VelvetApp : Application(), ImageLoaderFactory {
         val backups: Backups get() = instance.backups
         val http: OkHttpClient get() = instance.http
         val sessionHistory: com.velvet.app.playback.SessionHistory get() = instance.sessionHistory
-        val autoplayPipeline: com.velvet.app.playback.AutoplayPipeline get() = instance.autoplayPipeline
         val recommendationEventRepo: com.velvet.app.recommendation.events.RecommendationEventRepository
             get() = instance.recommendationEventRepo
         val eventRecorder: com.velvet.app.recommendation.events.EventRecorder

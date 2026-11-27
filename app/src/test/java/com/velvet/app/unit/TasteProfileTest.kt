@@ -4,14 +4,9 @@ import com.velvet.app.data.ListenContext
 import com.velvet.app.data.ListenEndReason
 import com.velvet.app.data.ListenEvent
 import com.velvet.app.data.Song
-import com.velvet.app.playback.AutoplayPipeline
-import com.velvet.app.playback.CandidateSource
-import com.velvet.app.playback.SeedProfile
-import com.velvet.app.playback.SessionHistory
 import com.velvet.app.playback.SongIdentity
 import com.velvet.app.playback.TasteEngine
 import com.velvet.app.playback.TasteProfile
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -152,49 +147,5 @@ class TasteProfileTest {
         val profile = TasteEngine.computeProfile(events, nowMillis = now)
         // 4 total completed: g1 (new), g1 (repeat), g2 (new), g3 (new) => 3 new / 4 total = 0.75
         assertEquals(0.75, profile.noveltyPreferenceRatio, 0.01)
-    }
-
-    @Test
-    fun testAutoplayPipelineDedupe_dropsPersistedPlayedGroupIds() = runBlocking {
-        val seed = sampleSong("seed_id", "Aankhon Ki Gustakhiyan", "Kumar Sanu - Topic")
-        val candidate1 = sampleSong("c1", "Dil Ne Yeh Kaha Hai Dil Se", "Udit Narayan - Topic")
-        val candidate2 = sampleSong("c2", "Chand Chupa Badal Mein", "Udit Narayan - Topic")
-
-        val c1Group = SongIdentity.canonicalGroupId(candidate1)
-
-        val source = CandidateSource { listOf(candidate1, candidate2) }
-
-        val pipeline = AutoplayPipeline(
-            sources = listOf(source),
-            history = SessionHistory(),
-            persistedPlayedGroupIdsProvider = { listOf(c1Group) }, // c1 was played previously across sessions
-        )
-
-        val result = pipeline.next(SeedProfile(current = seed), emptyList(), n = 5)
-        assertEquals(1, result.size)
-        assertEquals("c2", result.first().id) // candidate1 was dropped due to persistedPlayedGroupIds
-    }
-
-    @Test
-    fun testAutoplayPipelineDedupe_dropsFatiguedGroupIds() = runBlocking {
-        val seed = sampleSong("seed_id", "Aankhon Ki Gustakhiyan", "Kumar Sanu - Topic")
-        val candidate1 = sampleSong("c1", "Tujhe Dekha To", "Kumar Sanu - Topic")
-        val candidate2 = sampleSong("c2", "Chand Chupa Badal Mein", "Udit Narayan - Topic")
-
-        val c1Group = SongIdentity.canonicalGroupId(candidate1)
-
-        val source = CandidateSource { listOf(candidate1, candidate2) }
-
-        val pipeline = AutoplayPipeline(
-            sources = listOf(source),
-            history = SessionHistory(),
-            tasteProfileProvider = {
-                TasteProfile(fatiguedGroupIds = setOf(c1Group))
-            },
-        )
-
-        val result = pipeline.next(SeedProfile(current = seed), emptyList(), n = 5)
-        assertEquals(1, result.size)
-        assertEquals("c2", result.first().id) // candidate1 was dropped due to fatigue
     }
 }

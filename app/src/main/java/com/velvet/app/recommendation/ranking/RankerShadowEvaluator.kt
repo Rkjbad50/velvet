@@ -1,9 +1,7 @@
 package com.velvet.app.recommendation.ranking
 
-import com.velvet.app.playback.AutoplayPipeline
-import com.velvet.app.playback.CandidateSource
-import com.velvet.app.playback.SeedProfile
-import com.velvet.app.playback.SessionHistory
+import com.velvet.app.data.Song
+import com.velvet.app.playback.SongIdentity
 import com.velvet.app.recommendation.features.TrackFeatureRepository
 import com.velvet.app.recommendation.filtering.DefaultEligibilityPolicy
 import com.velvet.app.recommendation.filtering.DuplicateFilter
@@ -12,7 +10,6 @@ import com.velvet.app.recommendation.model.RankedCandidate
 import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationRequest
 import com.velvet.app.recommendation.profile.UserTasteSnapshot
-import kotlinx.coroutines.runBlocking
 
 data class ShadowComparisonReport(
     val requestId: String,
@@ -26,8 +23,9 @@ data class ShadowComparisonReport(
 )
 
 /**
- * Offline & shadow-mode evaluator running legacy [AutoplayPipeline] and Phase 5 [CandidateRanker]
- * + Strict Original Studio Audio gate side-by-side over identical candidate pools without altering live queues.
+ * Offline & shadow-mode evaluator comparing the pre-Runway heuristic baseline
+ * (`song.isPureMusic()` which trusted uploader badges and leaked OMVs) against
+ * the strict Original Studio Audio gate + [CandidateRanker] without altering live queues.
  */
 class RankerShadowEvaluator(
     private val ranker: CandidateRanker = DefaultCandidateRanker(),
@@ -45,23 +43,8 @@ class RankerShadowEvaluator(
             ?: return ShadowComparisonReport(request.requestId, request.mode, emptyList(), emptyList(), 0, 0, 0.0, emptyList())
 
         val rawSongs = pool.map { it.song }
-        val legacyPipeline = AutoplayPipeline(
-            sources = listOf(CandidateSource { rawSongs }),
-            history = SessionHistory(100),
-            tasteProfileProvider = { profile.toLegacyTasteProfile() },
-        )
-        val legacySongs = runBlocking {
-            legacyPipeline.next(
-                seedProfile = SeedProfile(
-                    current = seed,
-                    recentSongs = request.recentSongs,
-                    isArtistRadio = request.mode == RecommendationMode.ARTIST_RADIO,
-                ),
-                queueSnapshot = request.queueSongs + request.userQueueSongs,
-                n = request.limit,
-            )
-        }
-        val legacyIds = legacySongs.map { it.id }
+        val excludedIds = (request.queueSongs + request.userQueueSongs).map { it.id }.toSet() + seed.id
+        val legacyIds = selectLegacyHeuristicBaseline(seed, rawSongs, excludedIds, request.limit)
 
         val candById = pool.associateBy { it.song.id }
         val legacyLeakCount = legacyIds.count { id ->
@@ -94,4 +77,21 @@ class RankerShadowEvaluator(
             phase5RankedCandidates = ranked,
         )
     }
+
+    private fun selectLegacyHeuristicBaseline(
+        seed: Song,
+        rawSongs: List<Song>,
+        excludedIds: Set<String>,
+        limit: Int,
+    ): List<String> = rawSongs.asSequence()
+        .filter { s ->
+            s.id.isNotBlank() &&
+                s.id !in excludedIds &&
+                !SongIdentity.isStrictMatch(seed, s) &&
+                s.isPureMusic()
+        }
+        .map { it.id }
+        .distinct()
+        .take(limit)
+        .toList()
 }

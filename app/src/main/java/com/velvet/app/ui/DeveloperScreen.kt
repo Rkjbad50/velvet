@@ -544,12 +544,19 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
-        // A6: Recommendation Intelligence & Autoplay Inspector
-        val latestDiag = com.velvet.app.VelvetApp.recommendationEngineOrNull()?.diagnosticsLog?.latest()
-        val inspectionReport = com.velvet.app.playback.AutoplayPipeline.lastInspectionReport
-        DevSectionCard(title = "A6 • Recommendation Engine & Autoplay Inspector") {
-            if (latestDiag != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+        // A6: Recommendation Engine & Autoplay Inspector
+        val diagLog = com.velvet.app.VelvetApp.recommendationEngineOrNull()?.diagnosticsLog
+        val latestDiag = diagLog?.latest()
+        val recentDiags = remember(latestDiag) { diagLog?.recent(10).orEmpty() }
+        DevSectionCard(title = "A6 • Recommendation Engine & Runway Inspector") {
+            if (latestDiag == null) {
+                Text(
+                    text = "No autoplay candidate pool evaluated yet.\nPlay a track with Autoplay active to inspect candidate ranking.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = velvetColors.muted,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "Engine Mode: ${latestDiag.mode.name} (${latestDiag.durationMs}ms${if (latestDiag.usedCache) " • cached" else ""})",
                         style = MaterialTheme.typography.titleSmall,
@@ -576,101 +583,24 @@ fun DeveloperScreen(onBack: () -> Unit) {
                         fontFamily = FontFamily.Monospace,
                         color = velvetColors.muted,
                     )
-                    if (inspectionReport != null) {
-                        HorizontalDivider(color = velvetColors.rule, modifier = Modifier.padding(vertical = 4.dp))
-                    }
-                }
-            }
-            if (inspectionReport == null && latestDiag == null) {
-                Text(
-                    text = "No autoplay candidate pool evaluated yet.\nPlay a track with Autoplay active to inspect candidate ranking.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = velvetColors.muted,
-                )
-            } else if (inspectionReport != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Seed: \"${inspectionReport.seedTitle}\" — ${inspectionReport.seedArtist}",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = velvetColors.accentText,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = "Evaluated: ${inspectionReport.candidates.size} candidates",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = velvetColors.muted,
-                    )
-
                     OutlinedButton(
                         onClick = {
-                            val json = inspectionReport.toJson()
+                            val summary = buildString {
+                                appendLine("mode=${latestDiag.mode.name} durationMs=${latestDiag.durationMs} cached=${latestDiag.usedCache}")
+                                appendLine("raw=${latestDiag.rawCandidateCount} eligible=${latestDiag.eligibleCandidateCount} deduped=${latestDiag.duplicateRemovedCount} returned=${latestDiag.returnedCount}")
+                                appendLine("avgTransition=${"%.3f".format(latestDiag.averageTransitionScore)}")
+                                if (latestDiag.rejectedReasonCounts.isNotEmpty()) {
+                                    appendLine("rejected=${latestDiag.rejectedReasonCounts}")
+                                }
+                            }
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("VELVET Autoplay Inspector", json))
-                            Toast.makeText(context, "Autoplay JSON copied to clipboard", Toast.LENGTH_SHORT).show()
+                            clipboard.setPrimaryClip(ClipData.newPlainText("VELVET Engine Diagnostics", summary))
+                            Toast.makeText(context, "Diagnostics copied to clipboard", Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                     ) {
-                        Text("Copy JSON to Clipboard", color = velvetColors.text, fontSize = 13.sp)
-                    }
-
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(280.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF101214))
-                            .border(1.dp, velvetColors.rule, RoundedCornerShape(8.dp))
-                            .verticalScroll(rememberScrollState())
-                            .padding(8.dp),
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            inspectionReport.candidates.forEach { c ->
-                                Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                    ) {
-                                        Text(
-                                            text = if (c.finalRank > 0) "#${c.finalRank} ${c.song.title}" else c.song.title,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (c.decision == "KEPT") velvetColors.text else Color(0xFFEF5350),
-                                            fontWeight = if (c.decision == "KEPT") FontWeight.Bold else FontWeight.Normal,
-                                            modifier = Modifier.weight(1f),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            text = c.decision,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = if (c.decision == "KEPT") Color(0xFF66BB6A) else Color(0xFFFFA726),
-                                        )
-                                    }
-                                    Text(
-                                        text = "${c.song.artist} • Sources: [${c.sources.joinToString { it.name }}] • Score: ${"%.1f".format(c.finalScore)}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = velvetColors.muted,
-                                    )
-                                    if (c.scoreBreakdown.isNotEmpty()) {
-                                        val bdText = c.scoreBreakdown.entries
-                                            .filter { it.key != "totalScore" && it.value != 0.0 }
-                                            .joinToString(" | ") { "${it.key}: ${"%.1f".format(it.value)}" }
-                                        if (bdText.isNotBlank()) {
-                                            Text(
-                                                text = bdText,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontSize = 10.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = Color(0xFF90CAF9),
-                                            )
-                                        }
-                                    }
-                                    HorizontalDivider(color = velvetColors.rule.copy(alpha = 0.5f), thickness = 0.5.dp, modifier = Modifier.padding(top = 4.dp))
-                                }
-                            }
-                        }
+                        Text("Copy Diagnostics Summary", color = velvetColors.text, fontSize = 13.sp)
                     }
                 }
             }
@@ -678,12 +608,11 @@ fun DeveloperScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
-        // A7: Duplicate Report (Last 50 Dropped)
-        val duplicateList = remember { com.velvet.app.playback.AutoplayPipeline.recentDroppedDuplicates.toList() }
-        DevSectionCard(title = "A7 • Duplicate Report (Last 50 Dropped)") {
-            if (duplicateList.isEmpty()) {
+        // A7: Recent Recommendation Engine Runs
+        DevSectionCard(title = "A7 • Recent Engine Refills (Last 10)") {
+            if (recentDiags.isEmpty()) {
                 Text(
-                    text = "No duplicate uploads dropped yet.\nDuplicate uploads detected across candidate generation will appear here.",
+                    text = "No engine runs recorded in this session yet.",
                     style = MaterialTheme.typography.bodySmall,
                     color = velvetColors.muted,
                 )
@@ -691,7 +620,7 @@ fun DeveloperScreen(onBack: () -> Unit) {
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(240.dp)
+                        .height(220.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFF101214))
                         .border(1.dp, velvetColors.rule, RoundedCornerShape(8.dp))
@@ -699,24 +628,16 @@ fun DeveloperScreen(onBack: () -> Unit) {
                         .padding(8.dp),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        duplicateList.forEach { dup ->
+                        recentDiags.forEach { d ->
                             Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                 Text(
-                                    text = "Dropped: \"${dup.droppedTitle}\"",
+                                    text = "${d.mode.name} • ${d.durationMs}ms${if (d.usedCache) " (cached)" else ""}",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFEF5350),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                    color = velvetColors.text,
+                                    fontWeight = FontWeight.Bold,
                                 )
                                 Text(
-                                    text = "Kept: \"${dup.keptTitle}\"",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF66BB6A),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = "Similarity: ${(dup.similarityScore * 100).toInt()}% • ${dup.droppedArtist}",
+                                    text = "raw=${d.rawCandidateCount} eligible=${d.eligibleCandidateCount} returned=${d.returnedCount} dropped=${d.duplicateRemovedCount}",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontFamily = FontFamily.Monospace,
                                     color = velvetColors.muted,
