@@ -619,12 +619,13 @@ fun GenreScreen(name: String, onBack: () -> Unit) {
                         items = content.trendingTracks.take(10),
                         key = { _, s -> "tr-${s.id}" },
                     ) { idx, song ->
-                        SongRow(
-                            song = song,
-                            trackNumber = idx + 1,
-                            modifier = Modifier.animateItem(placementSpec = VelvetMotion.Springs.ListPlacement),
-                            onClick = { PlayerConnection.play(content.trendingTracks, idx) },
-                        )
+                        Box(Modifier.animateItem(placementSpec = VelvetMotion.Springs.ListPlacement)) {
+                            SongRow(
+                                song = song,
+                                trackNumber = idx + 1,
+                                onClick = { PlayerConnection.play(content.trendingTracks, idx) },
+                            )
+                        }
                     }
                 }
 
@@ -682,11 +683,12 @@ fun GenreScreen(name: String, onBack: () -> Unit) {
                         items = content.rotatingRecommendations,
                         key = { _, s -> "rot-${content.rotationEpoch}-${s.id}" },
                     ) { idx, song ->
-                        SongRow(
-                            song = song,
-                            modifier = Modifier.animateItem(placementSpec = VelvetMotion.Springs.ListPlacement),
-                            onClick = { PlayerConnection.play(content.rotatingRecommendations, idx) },
-                        )
+                        Box(Modifier.animateItem(placementSpec = VelvetMotion.Springs.ListPlacement)) {
+                            SongRow(
+                                song = song,
+                                onClick = { PlayerConnection.play(content.rotatingRecommendations, idx) },
+                            )
+                        }
                     }
                 }
 

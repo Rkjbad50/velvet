@@ -100,7 +100,7 @@ import com.velvet.app.data.SearchLanguageState
 import com.velvet.app.data.Song
 import com.velvet.app.data.YouTube
 import com.velvet.app.data.YouTubeMusicInnertube
-import com.velvet.app.data.totalDuration
+import com.velvet.app.recommendation.model.PlaybackAttribution
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -221,7 +221,7 @@ class SearchViewModel : ViewModel() {
         }
         _genreArtUrls.value = initialMap
 
-        val missing = tiles.filter { "${it.id}|${state.key}" !in tileArtCache }
+        val missing = tiles.filter { !tileArtCache.containsKey("${it.id}|${state.key}") }
         if (missing.isEmpty()) return
 
         genreArtJob?.cancel()
@@ -421,14 +421,12 @@ fun SearchScreen(vm: SearchViewModel) {
     val nav = LocalNav.current
     val focus = LocalFocusManager.current
     val haptic = LocalHapticFeedback.current
-    val bottomPadding = LocalBottomRoom.current
     var languageSheetOpen by remember { mutableStateOf(false) }
 
     Column(
         Modifier
             .fillMaxSize()
-            .statusBarsPadding()
-            .padding(bottom = bottomPadding),
+            .statusBarsPadding(),
     ) {
         // Modern Search Header + Active Language Switcher Pill
         Row(
@@ -555,7 +553,7 @@ fun SearchScreen(vm: SearchViewModel) {
                     preHintQueries = preHintQueries,
                     genreTiles = genreTiles,
                     genreArtUrls = genreArtUrls,
-                    recentSearches = data.recentSearches,
+                    recentSearches = data.searches,
                     onPreHintClick = { picked ->
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         focus.clearFocus()
@@ -1003,7 +1001,7 @@ private fun SearchResults(vm: SearchViewModel) {
                                             requestId = qId ?: "search",
                                             position = songIdx,
                                             song = item.song,
-                                            searchSessionId = sSessId,
+                                            searchSessionId = sSessId ?: qId ?: "search",
                                         ) ?: PlaybackAttribution()
                                         PlayerConnection.play(
                                             songs = songList.ifEmpty { listOf(item.song) },
@@ -1057,21 +1055,22 @@ private fun LazyListScope.topResults(
     if (top.songs.isNotEmpty()) {
         item(key = "top_songs_hdr") { BrowseSection("Songs", action = "See all") { onMore(SearchFilter.Songs) } }
         itemsIndexed(top.songs.take(5), key = { _, s -> "top-s-${s.id}" }) { idx, song ->
-            SongRow(
-                song = song,
-                modifier = Modifier.animateItem(placementSpec = VelvetMotion.Springs.ListPlacement),
-                onClick = {
-                    val attr = VelvetApp.eventRecorderOrNull()?.recordSearchResultClicked(
-                        queryId = queryId ?: "search",
-                        rawQuery = queryText,
-                        requestId = queryId ?: "search",
-                        position = idx,
-                        song = song,
-                        searchSessionId = searchSessionId,
-                    ) ?: PlaybackAttribution()
-                    PlayerConnection.play(top.songs, idx, attribution = attr)
-                },
-            )
+            Box(Modifier.animateItem(placementSpec = VelvetMotion.Springs.ListPlacement)) {
+                SongRow(
+                    song = song,
+                    onClick = {
+                        val attr = VelvetApp.eventRecorderOrNull()?.recordSearchResultClicked(
+                            queryId = queryId ?: "search",
+                            rawQuery = queryText,
+                            requestId = queryId ?: "search",
+                            position = idx,
+                            song = song,
+                            searchSessionId = searchSessionId ?: queryId ?: "search",
+                        ) ?: PlaybackAttribution()
+                        PlayerConnection.play(top.songs, idx, attribution = attr)
+                    },
+                )
+            }
         }
     }
     if (top.artists.isNotEmpty()) {
@@ -1083,7 +1082,7 @@ private fun LazyListScope.topResults(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 items(top.artists.take(10), key = { "art-${it.url}" }) { artist ->
-                    ArtistAvatar(artist = artist) { nav.open(Route.Artist(artist)) }
+                    ArtistCircle(artist = artist) { nav.open(Route.Artist(artist)) }
                 }
             }
         }
