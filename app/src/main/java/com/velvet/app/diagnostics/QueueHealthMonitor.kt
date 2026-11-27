@@ -410,7 +410,7 @@ object QueueHealthMonitor {
             val totalAcc = f.totalFunnel.accepted
             val libPct = if (totalAcc > 0) (libCount * 100) / totalAcc else 0
             appendLine("${idx + 1}. [${tf.format(Date(f.timestampMs))}] mode=${f.mode} decision=${f.decision}(${f.decisionReason}) latency=${f.latencyMs}ms ahead=${f.queueAheadBefore}->${f.queueAheadAfter}")
-            appendLine("   anchor=${f.anchorId} stepped=$steppedText title=${f.anchorTitle} | contPages=${f.continuationPagesFetched} hasNext=${f.continuationHasNext}")
+            appendLine("   anchor=${f.anchorId} stepped=$steppedText contPages=${f.continuationPagesFetched} hasNext=${f.continuationHasNext} | title=${f.anchorTitle}")
             appendLine("   acceptedSources=${f.acceptedSourceIds.sorted().joinToString(",").ifBlank { "(none)" }} | libOrInstant=${f.acceptedFromLibraryOrInstantCatalog} ($libCount/$totalAcc = ${libPct}%)")
             appendLine("   ${f.totalFunnel.formatLine()}")
             if (f.perGeneratorFunnels.isNotEmpty()) {

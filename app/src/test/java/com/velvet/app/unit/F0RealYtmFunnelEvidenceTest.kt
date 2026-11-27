@@ -343,7 +343,7 @@ class F0RealYtmFunnelEvidenceTest {
         val firstSpec = specs.first()
         val (page1, _) = loadFixturePages(firstSpec)
         val sensitiveSeed = firstSpec.seed.copy(
-            title = "Secret Song Authorization: Bearer ya29.SECRET_TOKEN_XYZ https://rr1.googlevideo.com/videoplayback?signature=BADSIG&expire=999&id=abcdefghijk",
+            title = "Secret Song https://rr1.googlevideo.com/videoplayback?signature=BADSIG&expire=999&id=abcdefghijk ; Authorization: Bearer ya29.SECRET_TOKEN_XYZ",
         )
         val engine = DefaultRecommendationEngine(
             candidatePoolBuilder = CandidatePoolBuilder(
