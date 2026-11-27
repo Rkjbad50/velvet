@@ -54,13 +54,13 @@ class F4SoakPrefetchAndStallTest {
         "Mithoon",
         "Atif Aslam",
         "Jubin Nautiyal",
-        "Vishal Dadlani",
+        "Vishal Mishra",
         "Armaan Malik",
         "Mohit Chauhan",
         "Alka Yagnik",
         "Udit Narayan",
         "Amit Trivedi",
-        "A.R. Rahman",
+        "Darshan Raval",
     )
 
     private val firstWords = listOf(
@@ -71,8 +71,8 @@ class F4SoakPrefetchAndStallTest {
     )
 
     private val secondWords = listOf(
-        "Geet", "Raag", "Dhun", "Nagma", "Tarana",
-        "Sargam", "Saaz", "Sur", "Kahaani", "Pal",
+        "Geet", "Pal", "Lamha", "Yaad", "Wafa",
+        "Pyaar", "Kahaani", "Saaz", "Khushi", "Bahaar",
     )
 
     private fun hindiTrack(index: Int, prefix: String = "f4trk"): Song {
@@ -449,8 +449,8 @@ class F4SoakPrefetchAndStallTest {
                 if (seq == 1) {
                     // Initial empty-queue refill stalls for 2_400ms (> 2_000ms threshold)
                     stallClockMs += 2_400L
-                } else if (seq == 2) {
-                    // Return empty -> triggers SafeEmpty & records empty decision
+                } else if (seq in 2..9) {
+                    // Return empty across primary + stepped anchors at step 6 -> triggers SafeEmpty & records empty decision
                     return RecommendationResult(
                         requestId = "soak-empty-$seq",
                         mode = mode,
