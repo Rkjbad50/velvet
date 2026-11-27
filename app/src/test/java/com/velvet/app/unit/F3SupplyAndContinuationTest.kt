@@ -186,12 +186,12 @@ class F3SupplyAndContinuationTest {
             }
         }
 
-        // Initial fetch pulls up to minRawCandidates = 60 across up to 3 continuation pages
+        // Initial fetch pulls up to minRawCandidates = 95 across multiple continuation pages (beyond TOK_1)
         val initial = StreamResolver.relatedWithContinuation(
             videoId = seed.id,
             seedHint = seed,
             loadNextPage = true,
-            minRawCandidates = 60,
+            minRawCandidates = 95,
             maxContinuationPages = 3,
         )
         assertTrue("Initial call should accumulate >= 60 raw candidates via continuations (got ${initial.size})", initial.size >= 60)
@@ -483,7 +483,7 @@ class F3SupplyAndContinuationTest {
             assertEquals("$key must have zero undersized active refills", 0, smallRefillCount)
 
             val funnels = QueueHealthMonitor.recentFunnels(30).reversed()
-            val active = funnels.filter { it.decision == "APPEND" }
+            val active = funnels.filter { it.decision == "APPENDED" }
             assertTrue("$key should record active funnels", active.isNotEmpty())
             val avgFetched = active.map { it.totalFunnel.fetched }.average()
             val avgElig = active.map { it.totalFunnel.afterEligibility }.average()

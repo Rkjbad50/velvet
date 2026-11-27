@@ -462,6 +462,9 @@ class AutoplayRefillCoordinator(
             // F3 Local-first RAM drain: satisfy up to neededCount from warm RollingCandidatePool before slow network fetches
             val initialExclIds = buildQueueAndHistoryExcludedIds(initialSnapshot)
             val initialSeenComps = buildQueueAndHistoryCompositionKeys(initialSnapshot)
+            val tailArtists = (listOfNotNull(initialSnapshot.currentSong) + initialSnapshot.upcomingSongs)
+                .takeLast(2)
+                .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) }
             val preDrainTake = if (mode != RecommendationMode.ARTIST_RADIO && rollingPool.size() > 0) {
                 capture.rollingPoolFetched = maxOf(capture.rollingPoolFetched, rollingPool.size())
                 rollingPool.drainEligible(
@@ -469,6 +472,8 @@ class AutoplayRefillCoordinator(
                     excludedIds = initialExclIds + initialSnapshot.excludedProviderIds,
                     excludedRecIds = initialExclIds,
                     excludedCompositionKeys = initialSeenComps,
+                    avoidBackToBackArtists = true,
+                    initialRecentArtists = tailArtists,
                 ) { song ->
                     !dismissedFilter(song) &&
                         matchesSessionVibe(song, anchor, lockedVibe, initialSnapshot, mode)
@@ -649,6 +654,10 @@ class AutoplayRefillCoordinator(
                     excludedCompositionKeys = alreadySeenComps + acceptedSongs.mapNotNull {
                         RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() }
                     },
+                    avoidBackToBackArtists = mode != RecommendationMode.ARTIST_RADIO,
+                    initialRecentArtists = (listOfNotNull(latest.currentSong) + latest.upcomingSongs + acceptedSongs)
+                        .takeLast(2)
+                        .map { com.velvet.app.playback.normalizePrimaryArtist(it.artist) },
                     predicate = { song ->
                         !dismissedFilter(song) &&
                             matchesSessionVibe(song, anchor, lockedVibe, latest, mode)

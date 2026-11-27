@@ -2,6 +2,7 @@ package com.velvet.app.recommendation.candidates
 
 import com.velvet.app.data.Song
 import com.velvet.app.playback.SongIdentity
+import com.velvet.app.playback.normalizePrimaryArtist
 import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 
 /**
@@ -63,14 +64,31 @@ class RollingCandidatePool(
         excludedIds: Set<String>,
         excludedRecIds: Set<String>,
         excludedCompositionKeys: Set<String>,
+        avoidBackToBackArtists: Boolean = true,
+        initialRecentArtists: List<String> = emptyList(),
         predicate: (Song) -> Boolean = { true },
     ): List<Song> = synchronized(lock) {
         if (maxCount <= 0 || entries.isEmpty()) return@synchronized emptyList()
         val picked = ArrayList<Song>(maxCount)
-        val pickedIds = HashSet<String>()
         val seenRecs = HashSet<String>(excludedRecIds)
         val seenComps = HashSet<String>(excludedCompositionKeys)
         val toRemove = ArrayList<String>()
+        val recentArtists = ArrayDeque<String>()
+        initialRecentArtists.takeLast(2).forEach { if (it.isNotBlank()) recentArtists.addLast(it) }
+        val deferred = ArrayList<Pair<String, Song>>()
+
+        fun recordPicked(id: String, song: Song, recId: String, grpId: String, compKey: String) {
+            picked.add(song)
+            seenRecs.add(recId)
+            seenRecs.add(grpId)
+            if (compKey.isNotBlank()) seenComps.add(compKey)
+            toRemove.add(id)
+            val normArtist = normalizePrimaryArtist(song.artist)
+            if (normArtist.isNotBlank()) {
+                if (recentArtists.size >= 2) recentArtists.removeFirst()
+                recentArtists.addLast(normArtist)
+            }
+        }
 
         for ((id, song) in entries) {
             val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
@@ -86,12 +104,26 @@ class RollingCandidatePool(
                 continue
             }
             if (picked.size < maxCount && predicate(song)) {
-                picked.add(song)
-                pickedIds.add(id)
-                seenRecs.add(recId)
-                seenRecs.add(grpId)
-                if (compKey.isNotBlank()) seenComps.add(compKey)
-                toRemove.add(id)
+                val normArtist = normalizePrimaryArtist(song.artist)
+                if (avoidBackToBackArtists && normArtist.isNotBlank() && normArtist in recentArtists) {
+                    deferred.add(id to song)
+                } else {
+                    recordPicked(id, song, recId, grpId, compKey)
+                }
+            }
+        }
+        // Only fill remaining slots from deferred same-artist items if diversified pass fell short,
+        // leaving unused entries in the pool for subsequent batches
+        if (picked.size < maxCount && deferred.isNotEmpty()) {
+            for ((id, song) in deferred) {
+                if (picked.size >= maxCount) break
+                val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
+                val grpId = SongIdentity.canonicalGroupId(song)
+                val compKey = RecordingIdentityResolver.canonicalCompositionTitleKey(song)
+                if (recId in seenRecs || grpId in seenRecs || (compKey.isNotBlank() && compKey in seenComps)) continue
+                val normArtist = normalizePrimaryArtist(song.artist)
+                if (avoidBackToBackArtists && normArtist.isNotBlank() && normArtist == recentArtists.lastOrNull()) continue
+                recordPicked(id, song, recId, grpId, compKey)
             }
         }
         toRemove.forEach { entries.remove(it) }

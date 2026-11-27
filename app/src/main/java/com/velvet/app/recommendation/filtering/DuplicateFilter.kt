@@ -120,11 +120,16 @@ class DuplicateFilter {
                 .flatMap { it.sourceEvidence }
                 .distinctBy { "${it.sourceId}:${it.rank}" }
             if (request.allowNearDuplicateUnplayedUploads) {
-                // Step 1 gate degradation: preserve up to 1 additional unplayed alternate verified upload of same recording
+                // Step 1 gate degradation: preserve up to 1 additional unplayed alternate verified upload of the SAME recording
+                // (never allow different-artist covers/compositions of the same title).
                 val keptFromCluster = buildList {
                     add(primaryWinner.copy(sourceEvidence = mergedEvidence))
                     orderedCluster
-                        .filter { it.song.id != primaryWinner.song.id }
+                        .filter { cand ->
+                            cand.song.id != primaryWinner.song.id &&
+                                (cand.identity.canonicalRecordingId == primaryWinner.identity.canonicalRecordingId ||
+                                    RecordingIdentityResolver.isSameRecording(primaryWinner.song, cand.song))
+                        }
                         .take(1)
                         .forEach { add(it) }
                 }
