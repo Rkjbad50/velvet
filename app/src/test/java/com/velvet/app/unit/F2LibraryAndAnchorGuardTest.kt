@@ -136,7 +136,7 @@ class F2LibraryAndAnchorGuardTest {
             libraryDataProvider = { LibraryData(liked = allLibrary) },
             clock = { now },
         )
-        val profile = profileRepo.getSnapshot(sessionId = "cur_s", nowMillis = now)
+        val profile = profileRepo.getSnapshot(sessionId = "cur_s")
 
         val req = RecommendationRequest(
             requestId = "f2-check",

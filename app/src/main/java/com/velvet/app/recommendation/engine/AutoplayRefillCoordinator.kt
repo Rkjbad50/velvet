@@ -460,7 +460,7 @@ class AutoplayRefillCoordinator(
                 allowMixedLanguages = initialSnapshot.allowMixedLanguages,
             )
             val profileSnapshot = runCatching {
-                userProfileRepository?.getSnapshot(sessionId = initialSnapshot.radioSessionId, nowMillis = clock())
+                userProfileRepository?.getSnapshot(sessionId = initialSnapshot.radioSessionId)
             }.getOrNull()
 
             // F3 Local-first RAM drain: satisfy up to neededCount from warm RollingCandidatePool before slow network fetches
@@ -938,7 +938,7 @@ class AutoplayRefillCoordinator(
             } ?: return@withLock 0
 
             val profileSnap = runCatching {
-                userProfileRepository?.getSnapshot(sessionId = initialSnapshot.radioSessionId, nowMillis = clock())
+                userProfileRepository?.getSnapshot(sessionId = initialSnapshot.radioSessionId)
             }.getOrNull()
             val poolAdditions = (res.candidates.map { it.song } + res.overflowSongs)
                 .distinctBy { it.id }

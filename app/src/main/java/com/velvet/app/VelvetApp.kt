@@ -169,7 +169,7 @@ class VelvetApp : Application(), ImageLoaderFactory {
             rollingPool = rollingCandidatePool,
             userProfileRepository = userProfileRepository,
             urgentFallbackProvider = { anchor, snap, excludedIds ->
-                val profile = runCatching { userProfileRepository.getSnapshot(snap.radioSessionId) }.getOrNull()
+                val profile = runCatching { userProfileRepository.getSnapshot(sessionId = snap.radioSessionId) }.getOrNull()
                 val seedPool = (
                     StreamResolver.peekRelated(anchor.id).orEmpty() +
                         com.velvet.app.recommendation.candidates.InstantTrackCatalog.snapshot()
