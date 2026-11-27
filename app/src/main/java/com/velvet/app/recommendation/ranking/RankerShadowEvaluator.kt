@@ -1,6 +1,7 @@
 package com.velvet.app.recommendation.ranking
 
 import com.velvet.app.data.Song
+import com.velvet.app.data.isPureMusic
 import com.velvet.app.playback.SongIdentity
 import com.velvet.app.recommendation.features.TrackFeatureRepository
 import com.velvet.app.recommendation.filtering.DefaultEligibilityPolicy
