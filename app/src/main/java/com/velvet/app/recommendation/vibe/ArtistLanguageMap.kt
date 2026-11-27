@@ -91,6 +91,7 @@ object ArtistLanguageMap {
                 "mithoon", "vishal mishra", "ankit tiwari", "neha kakkar", "asees kaur",
                 "sachet parampara", "jasleen royal", "amit trivedi", "badshah",
                 "jagjit singh", "pankaj udhas", "rahat fateh ali khan", "nusrat fateh ali khan",
+                "shafqat amanat ali",
                 "gulshan kumar", "anuradha paudwal", "anup jalota", "lakhbir singh lakkha",
                 "palak muchhal", "suresh wadkar", "shankar mahadevan", "roop kumar rathod",
                 "sadhanasargam", "sadhana sargam", "babul supriyo", "sukhwinder singh",
@@ -181,7 +182,7 @@ object ArtistLanguageMap {
             ),
             "ur" to listOf(
                 "mehdi hassan", "begum akhter", "noor jehan", "ghulam ali",
-                "abida parveen", "farida khanum", "shafqat amanat ali",
+                "abida parveen", "farida khanum",
                 "ali sethi", "kaifi khalil", "asim azhar",
             ),
         )
