@@ -641,7 +641,7 @@ object PlayerConnection {
                     com.velvet.app.playback.updateKnownSongArtwork(exoSong.id, merged)
                     queueManager.updateSongArtwork(
                         songId = exoSong.id,
-                        newThumb = merged,
+                        thumbUrl = merged,
                         albumArtFallback = activeParentAlbumArt,
                         markSquareArtwork = true,
                     )
