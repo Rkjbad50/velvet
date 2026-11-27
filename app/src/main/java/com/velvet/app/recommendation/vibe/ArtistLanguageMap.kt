@@ -50,7 +50,11 @@ object ArtistLanguageMap {
         "bollywood" to "hi",
         "english" to "en",
         "punjabi" to "pa",
+        "panjabi" to "pa",
+        "bhangra" to "pa",
+        "pollywood" to "pa",
         "tamil" to "ta",
+        "tamizh" to "ta",
         "kollywood" to "ta",
         "telugu" to "te",
         "tollywood" to "te",
@@ -60,57 +64,130 @@ object ArtistLanguageMap {
         "sandalwood" to "kn",
         "bengali" to "bn",
         "bangla" to "bn",
+        "marathi" to "mr",
+        "lavani" to "mr",
+        "abhang" to "mr",
+        "gujarati" to "gu",
+        "garba" to "gu",
+        "dandiya" to "gu",
+        "bhojpuri" to "bho",
+        "haryanvi" to "bgc",
+        "haryanavi" to "bgc",
         "sanskrit" to "sa",
+        "urdu" to "ur",
     )
 
     private val curatedArtistLanguages: Map<String, String> = buildMap {
-        val hindi = listOf(
-            "lata mangeshkar", "kishore kumar", "mohammed rafi", "asha bhosle", "mukesh",
-            "r d burman", "s d burman", "kumar sanu", "udit narayan", "alka yagnik",
-            "abhijeet", "sonu nigam", "kavita krishnamurthy", "nadeem shravan", "shaan",
-            "kk", "mohit chauhan", "sunidhi chauhan", "pritam", "himesh reshammiya",
-            "arijit singh", "shreya ghoshal", "atif aslam", "jubin nautiyal", "darshan raval",
-            "armaan malik", "mithoon", "vishal mishra", "jagjit singh", "pankaj udhas",
-            "rahat fateh ali khan", "nusrat fateh ali khan", "gulshan kumar",
-            "anuradha paudwal", "anup jalota", "lakhbir singh lakkha", "palak muchhal",
-            "suresh wadkar", "shankar mahadevan", "roop kumar rathod", "sadhanasargam",
-            "sadhana sargam", "babul supriyo", "vinyl", "sukhwinder singh",
+        val grouped = mapOf(
+            "hi" to listOf(
+                "lata mangeshkar", "kishore kumar", "mohammed rafi", "asha bhosle", "mukesh",
+                "manna dey", "r d burman", "s d burman", "hemant kumar", "geeta dutt",
+                "mahendra kapoor", "talat mahmood",
+                "kumar sanu", "udit narayan", "alka yagnik", "abhijeet", "abhijeet bhattacharya",
+                "sonu nigam", "kavita krishnamurthy", "nadeem shravan", "jatin lalit", "bappi lahiri",
+                "shaan", "kk", "mohit chauhan", "sunidhi chauhan", "pritam",
+                "himesh reshammiya", "vishal shekhar", "shankar ehsaan loy", "arijit singh",
+                "shreya ghoshal", "atif aslam", "jubin nautiyal", "darshan raval", "armaan malik",
+                "mithoon", "vishal mishra", "ankit tiwari", "neha kakkar", "asees kaur",
+                "sachet parampara", "jasleen royal", "amit trivedi", "badshah",
+                "jagjit singh", "pankaj udhas", "rahat fateh ali khan", "nusrat fateh ali khan",
+                "gulshan kumar", "anuradha paudwal", "anup jalota", "lakhbir singh lakkha",
+                "palak muchhal", "suresh wadkar", "shankar mahadevan", "roop kumar rathod",
+                "sadhanasargam", "sadhana sargam", "babul supriyo", "sukhwinder singh",
+            ),
+            "en" to listOf(
+                "the beatles", "beatles", "queen", "elvis presley", "pink floyd",
+                "elton john", "bee gees", "abba", "eagles", "led zeppelin", "fleetwood mac",
+                "michael jackson", "madonna", "whitney houston", "bryan adams",
+                "backstreet boys", "george michael", "nirvana", "celine dion", "mariah carey",
+                "coldplay", "linkin park", "eminem", "rihanna", "britney spears",
+                "maroon 5", "akon", "alicia keys", "beyonce", "katy perry", "green day",
+                "taylor swift", "the weeknd", "dua lipa", "ed sheeran", "billie eilish",
+                "lana del rey", "drake", "justin bieber", "ariana grande", "bruno mars",
+                "shawn mendes", "charlie puth", "imagine dragons", "adele", "post malone",
+                "olivia rodrigo", "sabrina carpenter", "harry styles", "calvin harris",
+                "kendrick lamar", "selena gomez", "camila cabello", "john legend",
+                "sam smith", "bebe rexha", "one direction",
+            ),
+            "pa" to listOf(
+                "surinder kaur", "asa singh mastana", "yamla jatt", "mohd sadiq",
+                "gurdas maan", "kuldeep manak", "hans raj hans", "jazzy b",
+                "harbhajan mann", "amar singh chamkila", "chamkila",
+                "babbu maan", "amrinder gill", "gippy grewal", "garry sandhu",
+                "sukhbir", "honey singh", "yo yo honey singh",
+                "sidhu moosewala", "sidhu moose wala", "karan aujla", "diljit dosanjh",
+                "ap dhillon", "a p dhillon", "shubh", "b praak", "harrdy sandhu",
+                "guru randhawa", "satinder sartaj", "satinder sartaaj", "arjan dhillon",
+                "jass manak", "parmish verma",
+            ),
+            "ta" to listOf(
+                "t m soundararajan", "p susheela", "s janaki",
+                "anirudh ravichander", "anirudh", "ilayaraja", "ilaiyaraaja",
+                "yuvan shankar raja", "harris jayaraj", "santhosh narayanan",
+                "g v prakash", "g v prakash kumar", "s p balasubrahmanyam",
+                "sp balasubrahmanyam", "dhanush", "vijay antony", "hiphop tamizha",
+                "karthik", "ks chithra", "k s chithra", "mano", "unnikrishnan",
+                "harish raghavendra", "sid sriram", "pradeep kumar", "jonita gandhi",
+            ),
+            "te" to listOf(
+                "ghantasala", "m m keeravani", "vandemataram srinivas",
+                "devi sri prasad", "thaman s", "s thaman", "mani sharma",
+                "mickey j meyer", "anup rubens", "anurag kulkarni", "mangli",
+            ),
+            "ml" to listOf(
+                "k j yesudas", "p jayachandran", "g devarajan",
+                "m g sreekumar", "johnson master", "vidyasagar", "raveendran",
+                "vijay yesudas", "deepak dev", "alphonse joseph",
+                "shaan rahman", "sushin shyam", "hesham abdul wahab",
+                "vineeth sreenivasan", "gopi sundar", "sithara krishnakumar",
+            ),
+            "kn" to listOf(
+                "p b sreenivas", "rajkumar", "dr rajkumar", "c ashwath",
+                "hamsalekha", "rajesh krishnan", "mano murthy", "v harikrishna",
+                "raghu dixit", "vijay prakash", "sanjith hegde",
+                "arjun janya", "ravi basrur", "charan raj",
+            ),
+            "bn" to listOf(
+                "hemanta mukherjee", "sandhya mukherjee", "shyamal mitra",
+                "nachiketa", "nachiketa chakraborty", "kabir suman", "lopamudra mitra",
+                "rupam islam", "fossils", "anupam roy", "monali thakur",
+                "iman chakraborty", "somlata acharyya",
+            ),
+            "mr" to listOf(
+                "sudhir phadke", "hridaynath mangeshkar", "arun date", "ravindra sathe",
+                "ajay atul", "avadhoot gupte", "vaishali samant",
+                "bela shende", "adarsh shinde", "arya ambekar",
+            ),
+            "gu" to listOf(
+                "avinash vyas", "praful dave", "purushottam upadhyay",
+                "falguni pathak", "osman mir", "kirtidan gadhvi", "parthiv gohil",
+                "bhoomi trivedi", "aishwarya majmudar", "aditya gadhvi",
+                "jigrra", "jigardan gadhavi", "geeta rabari", "kinjal dave",
+            ),
+            "bho" to listOf(
+                "sharda sinha", "bhikhari thakur", "manoj tiwari", "bharat sharma vyas",
+                "ravi kishan", "dinesh lal yadav", "nirahua", "kalpana patowary",
+                "pawan singh", "khesari lal yadav", "shilpi raj",
+                "arvind akela kallu", "ritesh pandey",
+            ),
+            "bgc" to listOf(
+                "lakhmi chand", "baje bhagat", "rajender singh kharkiya", "pale ram dahiya",
+                "gajender phogat", "raj mawar", "masoom sharma", "dhanda nyoliwala",
+                "sapna choudhary", "renuka panwar", "gulzaar chhaniwala",
+            ),
+            "sa" to listOf(
+                "m s subbulakshmi", "bhimsen joshi", "pandit jasraj",
+                "uma mohan", "madhavi madhukar jha", "kaushiki chakraborty", "agam aggarwal",
+            ),
+            "ur" to listOf(
+                "mehdi hassan", "begum akhter", "noor jehan", "ghulam ali",
+                "abida parveen", "farida khanum", "shafqat amanat ali",
+                "ali sethi", "kaifi khalil", "asim azhar",
+            ),
         )
-        val english = listOf(
-            "taylor swift", "the weeknd", "dua lipa", "ed sheeran", "billie eilish",
-            "coldplay", "lana del rey", "drake", "justin bieber", "ariana grande",
-            "bruno mars", "eminem", "shawn mendes", "charlie puth", "maroon 5",
-            "imagine dragons", "linkin park", "adele", "post malone", "olivia rodrigo",
-            "katy perry", "rihanna", "sabrina carpenter", "harry styles", "calvin harris",
-            "kendrick lamar", "selena gomez", "camila cabello", "john legend", "sam smith",
-            "bebe rexha", "one direction", "backstreet boys", "queen", "beatles",
-        )
-        val punjabi = listOf(
-            "sidhu moosewala", "sidhu moose wala", "karan aujla", "diljit dosanjh",
-            "ap dhillon", "shubh", "b praak", "harrdy sandhu", "guru randhawa",
-            "amrinder gill", "satinder sartaj", "gippy grewal", "jass manak", "parmish verma",
-            "babbu maan", "garry sandhu",
-        )
-        val tamil = listOf(
-            "anirudh ravichander", "anirudh", "ilayaraja", "ilaiyaraaja",
-            "yuvan shankar raja", "harris jayaraj", "santhosh narayanan", "g v prakash",
-            "s p balasubrahmanyam", "dhanush", "vijay antony", "hiphop tamizha",
-            "karthik", "ks chithra",
-        )
-        val telugu = listOf(
-            "devi sri prasad", "thaman s", "s thaman", "mani sharma", "m m keeravani",
-            "mickey j meyer", "anup rubens",
-        )
-        val malayalam = listOf("shaan rahman", "sushin shyam", "heshem abdul wahab", "heshan abdul wahab", "vineeth sreenivasan")
-        val kannada = listOf("vijay prakash", "ravi basrur", "charan raj", "arjun janya")
-
-        hindi.forEach { put(it, "hi") }
-        english.forEach { put(it, "en") }
-        punjabi.forEach { put(it, "pa") }
-        tamil.forEach { put(it, "ta") }
-        telugu.forEach { put(it, "te") }
-        malayalam.forEach { put(it, "ml") }
-        kannada.forEach { put(it, "kn") }
+        for ((iso, artists) in grouped) {
+            artists.forEach { put(it, iso) }
+        }
     }
 
     fun allArtistKeys(artistString: String): List<String> {
@@ -126,9 +203,14 @@ object ArtistLanguageMap {
         val keys = allArtistKeys(artistString)
         for (k in keys) {
             curatedArtistLanguages[k]?.let { return it to 0.82 }
-            curatedArtistLanguages.entries.firstOrNull { (known, _) ->
-                known.length >= 5 && (k.contains(known) || known.contains(k))
-            }?.let { return it.value to 0.78 }
+            if (k.length >= 5) {
+                curatedArtistLanguages.entries
+                    .filter { (known, _) ->
+                        known.length >= 5 && (k.contains(known) || known.contains(k))
+                    }
+                    .maxByOrNull { it.key.length }
+                    ?.let { return it.value to 0.78 }
+            }
         }
         return null
     }

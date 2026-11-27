@@ -36,10 +36,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -104,6 +106,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 private data class SurveyLanguageOption(
     val id: String,
@@ -124,59 +128,372 @@ private val SURVEY_LANGUAGES: List<SurveyLanguageOption> by lazy {
     }
 }
 
-private val ARTISTS_BY_LANGUAGE: Map<String, List<String>> = mapOf(
-    "Hindi" to listOf(
-        "Arijit Singh", "Shreya Ghoshal", "Atif Aslam", "Pritam",
-        "Jubin Nautiyal", "Sonu Nigam", "Vishal-Shekhar", "Sunidhi Chauhan",
-        "Kishore Kumar", "Armaan Malik", "Neha Kakkar", "Ankit Tiwari",
-    ),
-    "Punjabi" to listOf(
-        "Diljit Dosanjh", "Karan Aujla", "AP Dhillon", "Sidhu Moose Wala",
-        "Shubh", "Guru Randhawa", "B Praak", "Harrdy Sandhu",
-    ),
-    "English" to listOf(
-        "The Weeknd", "Taylor Swift", "Billie Eilish", "Coldplay",
-        "Ed Sheeran", "Dua Lipa", "Bruno Mars", "Justin Bieber",
-    ),
-    "Tamil" to listOf(
-        "A.R. Rahman", "Anirudh Ravichander", "Sid Sriram", "Yuvan Shankar Raja",
-        "G.V. Prakash Kumar", "Harris Jayaraj",
-    ),
-    "Telugu" to listOf(
-        "Devi Sri Prasad", "Thaman S", "Sid Sriram", "Anirudh Ravichander",
-        "Anurag Kulkarni", "S.P. Balasubrahmanyam",
-    ),
-    "Malayalam" to listOf(
-        "K.S. Chithra", "Vineeth Sreenivasan", "Hesham Abdul Wahab", "Sushin Shyam",
-        "Vijay Yesudas", "Shreya Ghoshal",
-    ),
-    "Kannada" to listOf(
-        "Vijay Prakash", "Sanjith Hegde", "Arjun Janya", "Raghu Dixit",
-        "Sonu Nigam",
-    ),
-    "Bengali" to listOf(
-        "Arijit Singh", "Anupam Roy", "Shreya Ghoshal", "Monali Thakur",
-        "Rupam Islam", "Fossils",
-    ),
-    "Marathi" to listOf(
-        "Ajay-Atul", "Shreya Ghoshal", "Avadhoot Gupte", "Sonu Nigam",
-    ),
-    "Gujarati" to listOf(
-        "Jigrra", "Aditya Gadhvi", "Kirtidan Gadhvi", "Darshan Raval",
-    ),
-    "Bhojpuri" to listOf(
-        "Pawan Singh", "Khesari Lal Yadav", "Shilpi Raj", "Dinesh Lal Yadav",
-    ),
-    "Haryanvi" to listOf(
-        "Masoom Sharma", "Dhanda Nyoliwala", "Sapna Choudhary", "Renuka Panwar",
-    ),
-    "Sanskrit" to listOf(
-        "Anup Jalota", "Hariharan", "Shankar Mahadevan", "Pandit Jasraj",
-    ),
-    "Urdu" to listOf(
-        "Nusrat Fateh Ali Khan", "Rahat Fateh Ali Khan", "Atif Aslam", "Jagjit Singh",
-    ),
+/**
+ * Musical era filter pills available in the onboarding artist picker.
+ */
+enum class SurveyArtistEra(val label: String, val shortLabel: String) {
+    ALL("All Eras", "All"),
+    CLASSICS_50_70("1950s–70s Classics", "50s–70s"),
+    GOLDEN_80_90("1980s–90s Evergreen", "80s–90s"),
+    ERA_2000S("2000s Icons", "2000s"),
+    MODERN_2010_NOW("2010s–Present", "2010s+"),
+}
+
+/**
+ * Curated artist entry tagged with its primary musical era.
+ */
+data class SurveyArtistEntry(
+    val name: String,
+    val era: SurveyArtistEra,
 )
+
+/**
+ * Curated multi-era artist catalog spanning all languages in [com.velvet.app.data.LanguageLocaleConfig].
+ */
+object SurveyArtistCatalog {
+    private val ERA_DISPLAY_ORDER = listOf(
+        SurveyArtistEra.MODERN_2010_NOW,
+        SurveyArtistEra.GOLDEN_80_90,
+        SurveyArtistEra.ERA_2000S,
+        SurveyArtistEra.CLASSICS_50_70,
+    )
+
+    private val DEFAULT_LANGUAGES = listOf("Hindi", "English", "Punjabi")
+
+    private fun eraArtists(
+        classics5070: List<String>,
+        golden8090: List<String>,
+        era2000s: List<String>,
+        modern2010Now: List<String>,
+    ): List<SurveyArtistEntry> = buildList {
+        classics5070.forEach { add(SurveyArtistEntry(it, SurveyArtistEra.CLASSICS_50_70)) }
+        golden8090.forEach { add(SurveyArtistEntry(it, SurveyArtistEra.GOLDEN_80_90)) }
+        era2000s.forEach { add(SurveyArtistEntry(it, SurveyArtistEra.ERA_2000S)) }
+        modern2010Now.forEach { add(SurveyArtistEntry(it, SurveyArtistEra.MODERN_2010_NOW)) }
+    }
+
+    val artistsByLanguage: Map<String, List<SurveyArtistEntry>> = mapOf(
+        "Hindi" to eraArtists(
+            classics5070 = listOf(
+                "Mohammed Rafi", "Lata Mangeshkar", "Kishore Kumar", "Asha Bhosle",
+                "Mukesh", "Manna Dey", "R.D. Burman", "S.D. Burman",
+                "Hemant Kumar", "Geeta Dutt", "Mahendra Kapoor", "Talat Mahmood",
+            ),
+            golden8090 = listOf(
+                "Kumar Sanu", "Alka Yagnik", "Udit Narayan", "Sonu Nigam",
+                "Kavita Krishnamurthy", "Abhijeet Bhattacharya", "Anuradha Paudwal", "Sadhana Sargam",
+                "Nadeem-Shravan", "Jatin-Lalit", "Bappi Lahiri", "S.P. Balasubrahmanyam",
+                "Jagjit Singh", "Pankaj Udhas",
+            ),
+            era2000s = listOf(
+                "KK", "Shaan", "Mohit Chauhan", "Sunidhi Chauhan",
+                "Atif Aslam", "Pritam", "Himesh Reshammiya", "Vishal-Shekhar",
+                "Rahat Fateh Ali Khan", "Sukhwinder Singh", "Shankar-Ehsaan-Loy",
+                "Roop Kumar Rathod", "Shreya Ghoshal",
+            ),
+            modern2010Now = listOf(
+                "Arijit Singh", "Jubin Nautiyal", "Armaan Malik", "Neha Kakkar",
+                "Ankit Tiwari", "Darshan Raval", "Mithoon", "Vishal Mishra",
+                "Asees Kaur", "Sachet-Parampara", "Jasleen Royal", "Amit Trivedi",
+                "Badshah", "Diljit Dosanjh",
+            ),
+        ),
+        "English" to eraArtists(
+            classics5070 = listOf(
+                "The Beatles", "Queen", "Elvis Presley", "Pink Floyd",
+                "Elton John", "Bee Gees", "ABBA", "Eagles",
+                "Led Zeppelin", "Fleetwood Mac",
+            ),
+            golden8090 = listOf(
+                "Michael Jackson", "Madonna", "Whitney Houston", "Bryan Adams",
+                "Backstreet Boys", "George Michael", "Nirvana", "Celine Dion",
+                "Mariah Carey", "Prince",
+            ),
+            era2000s = listOf(
+                "Coldplay", "Linkin Park", "Eminem", "Rihanna",
+                "Britney Spears", "Maroon 5", "Akon", "Alicia Keys",
+                "Beyonce", "Katy Perry", "Green Day",
+            ),
+            modern2010Now = listOf(
+                "The Weeknd", "Taylor Swift", "Billie Eilish", "Ed Sheeran",
+                "Dua Lipa", "Bruno Mars", "Justin Bieber", "Ariana Grande",
+                "Drake", "Olivia Rodrigo", "Sabrina Carpenter", "Harry Styles",
+                "Post Malone",
+            ),
+        ),
+        "Punjabi" to eraArtists(
+            classics5070 = listOf(
+                "Surinder Kaur", "Asa Singh Mastana", "Yamla Jatt", "Mohd. Sadiq",
+            ),
+            golden8090 = listOf(
+                "Gurdas Maan", "Kuldeep Manak", "Hans Raj Hans", "Jazzy B",
+                "Harbhajan Mann", "Amar Singh Chamkila",
+            ),
+            era2000s = listOf(
+                "Babbu Maan", "Amrinder Gill", "Gippy Grewal", "Garry Sandhu",
+                "Sukhbir", "Yo Yo Honey Singh",
+            ),
+            modern2010Now = listOf(
+                "Diljit Dosanjh", "Karan Aujla", "AP Dhillon", "Sidhu Moose Wala",
+                "Shubh", "Guru Randhawa", "B Praak", "Harrdy Sandhu",
+                "Satinder Sartaaj", "Arjan Dhillon",
+            ),
+        ),
+        "Tamil" to eraArtists(
+            classics5070 = listOf(
+                "T.M. Soundararajan", "P. Susheela", "S. Janaki", "K.J. Yesudas",
+            ),
+            golden8090 = listOf(
+                "Ilaiyaraaja", "A.R. Rahman", "S.P. Balasubrahmanyam", "K.S. Chithra",
+                "Mano", "Unnikrishnan",
+            ),
+            era2000s = listOf(
+                "Harris Jayaraj", "Yuvan Shankar Raja", "Karthik", "Vijay Antony",
+                "G.V. Prakash Kumar", "Harish Raghavendra",
+            ),
+            modern2010Now = listOf(
+                "Anirudh Ravichander", "Sid Sriram", "Santhosh Narayanan", "Pradeep Kumar",
+                "Jonita Gandhi", "Hiphop Tamizha", "Shreya Ghoshal",
+            ),
+        ),
+        "Telugu" to eraArtists(
+            classics5070 = listOf(
+                "Ghantasala", "P. Susheela", "S. Janaki", "S.P. Balasubrahmanyam",
+            ),
+            golden8090 = listOf(
+                "Ilaiyaraaja", "M.M. Keeravani", "K.S. Chithra", "Mano",
+                "Vandemataram Srinivas",
+            ),
+            era2000s = listOf(
+                "Devi Sri Prasad", "Mani Sharma", "KK", "Mickey J Meyer",
+                "Karthik", "Udit Narayan",
+            ),
+            modern2010Now = listOf(
+                "Thaman S", "Sid Sriram", "Anirudh Ravichander", "Anurag Kulkarni",
+                "Armaan Malik", "Shreya Ghoshal", "Mangli",
+            ),
+        ),
+        "Malayalam" to eraArtists(
+            classics5070 = listOf(
+                "K.J. Yesudas", "P. Jayachandran", "S. Janaki", "G. Devarajan",
+            ),
+            golden8090 = listOf(
+                "K.S. Chithra", "M.G. Sreekumar", "Johnson Master", "Vidyasagar",
+                "Raveendran",
+            ),
+            era2000s = listOf(
+                "Vijay Yesudas", "Deepak Dev", "Alphonse Joseph", "Shreya Ghoshal",
+                "Karthik",
+            ),
+            modern2010Now = listOf(
+                "Vineeth Sreenivasan", "Hesham Abdul Wahab", "Sushin Shyam",
+                "Shaan Rahman", "Gopi Sundar", "Sithara Krishnakumar",
+            ),
+        ),
+        "Kannada" to eraArtists(
+            classics5070 = listOf(
+                "P.B. Sreenivas", "Rajkumar", "S. Janaki",
+            ),
+            golden8090 = listOf(
+                "C. Ashwath", "S.P. Balasubrahmanyam", "Hamsalekha", "Rajesh Krishnan",
+            ),
+            era2000s = listOf(
+                "Sonu Nigam", "Mano Murthy", "V. Harikrishna", "Raghu Dixit",
+            ),
+            modern2010Now = listOf(
+                "Vijay Prakash", "Sanjith Hegde", "Arjun Janya", "Ravi Basrur",
+                "Charan Raj", "Armaan Malik",
+            ),
+        ),
+        "Bengali" to eraArtists(
+            classics5070 = listOf(
+                "Hemanta Mukherjee", "Manna Dey", "Kishore Kumar", "Sandhya Mukherjee",
+                "Shyamal Mitra",
+            ),
+            golden8090 = listOf(
+                "Asha Bhosle", "Kumar Sanu", "Nachiketa Chakraborty", "Kabir Suman",
+                "Lopamudra Mitra",
+            ),
+            era2000s = listOf(
+                "Shaan", "Rupam Islam", "Fossils", "Babul Supriyo",
+                "Shreya Ghoshal",
+            ),
+            modern2010Now = listOf(
+                "Arijit Singh", "Anupam Roy", "Monali Thakur", "Iman Chakraborty",
+                "Somlata Acharyya",
+            ),
+        ),
+        "Marathi" to eraArtists(
+            classics5070 = listOf(
+                "Lata Mangeshkar", "Asha Bhosle", "Sudhir Phadke", "Hridaynath Mangeshkar",
+            ),
+            golden8090 = listOf(
+                "Suresh Wadkar", "Anuradha Paudwal", "Arun Date", "Ravindra Sathe",
+            ),
+            era2000s = listOf(
+                "Ajay-Atul", "Avadhoot Gupte", "Vaishali Samant", "Sonu Nigam",
+            ),
+            modern2010Now = listOf(
+                "Shreya Ghoshal", "Bela Shende", "Adarsh Shinde", "Shankar Mahadevan",
+                "Arya Ambekar",
+            ),
+        ),
+        "Gujarati" to eraArtists(
+            classics5070 = listOf(
+                "Avinash Vyas", "Asha Bhosle", "Mahendra Kapoor", "Praful Dave",
+            ),
+            golden8090 = listOf(
+                "Purushottam Upadhyay", "Alka Yagnik", "Falguni Pathak", "Osman Mir",
+            ),
+            era2000s = listOf(
+                "Kirtidan Gadhvi", "Parthiv Gohil", "Bhoomi Trivedi", "Aishwarya Majmudar",
+            ),
+            modern2010Now = listOf(
+                "Aditya Gadhvi", "Jigrra", "Darshan Raval", "Geeta Rabari",
+                "Kinjal Dave",
+            ),
+        ),
+        "Bhojpuri" to eraArtists(
+            classics5070 = listOf(
+                "Sharda Sinha", "Bhikhari Thakur",
+            ),
+            golden8090 = listOf(
+                "Udit Narayan", "Manoj Tiwari", "Bharat Sharma Vyas",
+            ),
+            era2000s = listOf(
+                "Ravi Kishan", "Dinesh Lal Yadav", "Kalpana Patowary",
+            ),
+            modern2010Now = listOf(
+                "Pawan Singh", "Khesari Lal Yadav", "Shilpi Raj", "Arvind Akela Kallu",
+                "Ritesh Pandey",
+            ),
+        ),
+        "Haryanvi" to eraArtists(
+            classics5070 = listOf(
+                "Lakhmi Chand", "Baje Bhagat",
+            ),
+            golden8090 = listOf(
+                "Rajender Singh Kharkiya", "Pale Ram Dahiya",
+            ),
+            era2000s = listOf(
+                "Gajender Phogat", "Raj Mawar",
+            ),
+            modern2010Now = listOf(
+                "Masoom Sharma", "Dhanda Nyoliwala", "Sapna Choudhary",
+                "Renuka Panwar", "Gulzaar Chhaniwala",
+            ),
+        ),
+        "Sanskrit" to eraArtists(
+            classics5070 = listOf(
+                "M.S. Subbulakshmi", "Bhimsen Joshi", "Lata Mangeshkar",
+            ),
+            golden8090 = listOf(
+                "Pandit Jasraj", "Anup Jalota", "Jagjit Singh", "Gulshan Kumar",
+            ),
+            era2000s = listOf(
+                "Shankar Mahadevan", "Uma Mohan", "Hariharan", "Suresh Wadkar",
+            ),
+            modern2010Now = listOf(
+                "Madhavi Madhukar Jha", "Kaushiki Chakraborty", "Anuradha Paudwal",
+                "Agam Aggarwal",
+            ),
+        ),
+        "Urdu" to eraArtists(
+            classics5070 = listOf(
+                "Mehdi Hassan", "Begum Akhter", "Noor Jehan", "Talat Mahmood",
+            ),
+            golden8090 = listOf(
+                "Nusrat Fateh Ali Khan", "Jagjit Singh", "Ghulam Ali",
+                "Abida Parveen", "Farida Khanum", "Pankaj Udhas",
+            ),
+            era2000s = listOf(
+                "Rahat Fateh Ali Khan", "Atif Aslam", "Shafqat Amanat Ali",
+            ),
+            modern2010Now = listOf(
+                "Ali Sethi", "Kaifi Khalil", "Arijit Singh", "Asim Azhar",
+            ),
+        ),
+    )
+
+    private val languageByLowerKey: Map<String, String> by lazy {
+        artistsByLanguage.keys.associateBy { it.lowercase(Locale.ROOT) }
+    }
+
+    /**
+     * Returns curated artist entries for [selectedLanguages] filtered by [era].
+     * Uses only [selectedLanguages] when non-empty; defaults to Hindi, English, and Punjabi only when empty.
+     * For [SurveyArtistEra.ALL], round-robins across eras so top rows showcase all musical eras.
+     */
+    fun curatedEntriesFor(
+        selectedLanguages: List<String>,
+        era: SurveyArtistEra = SurveyArtistEra.ALL,
+    ): List<SurveyArtistEntry> {
+        val activeLangs = (if (selectedLanguages.isNotEmpty()) selectedLanguages else DEFAULT_LANGUAGES)
+            .distinctBy { it.trim().lowercase(Locale.ROOT) }
+        val perLanguageBuckets = activeLangs.mapNotNull { raw ->
+            val key = languageByLowerKey[raw.trim().lowercase(Locale.ROOT)] ?: return@mapNotNull null
+            val entries = artistsByLanguage[key].orEmpty()
+            if (era == SurveyArtistEra.ALL) {
+                interleaveEras(entries)
+            } else {
+                entries.filter { it.era == era }
+            }
+        }
+        return roundRobinUnique(perLanguageBuckets)
+    }
+
+    /**
+     * Merges instant local substring matches from [curated] with [remoteResults] when query length >= 2,
+     * deduplicating case-insensitively while upgrading missing thumbnails from remote hits.
+     */
+    fun filterArtistsForQuery(
+        curated: List<ArtistRef>,
+        remoteResults: List<ArtistRef>,
+        rawQuery: String,
+    ): List<ArtistRef> {
+        val q = rawQuery.trim()
+        if (q.length < 2) return curated
+        val localMatches = curated.filter { it.name.contains(q, ignoreCase = true) }
+        val byKey = LinkedHashMap<String, ArtistRef>()
+        for (ref in localMatches + remoteResults) {
+            val key = ref.name.trim().lowercase(Locale.ROOT)
+            if (key.isEmpty()) continue
+            val existing = byKey[key]
+            if (existing == null) {
+                byKey[key] = ref
+            } else if (existing.thumb.isNullOrBlank() && !ref.thumb.isNullOrBlank()) {
+                byKey[key] = ref.copy(
+                    name = existing.name,
+                    url = ref.url.ifBlank { existing.url },
+                )
+            }
+        }
+        return byKey.values.toList()
+    }
+
+    private fun interleaveEras(entries: List<SurveyArtistEntry>): List<SurveyArtistEntry> {
+        val buckets = ERA_DISPLAY_ORDER.map { eraKey -> entries.filter { it.era == eraKey } }
+        return roundRobinUnique(buckets)
+    }
+
+    private fun roundRobinUnique(lists: List<List<SurveyArtistEntry>>): List<SurveyArtistEntry> {
+        if (lists.isEmpty()) return emptyList()
+        val seen = HashSet<String>()
+        val out = ArrayList<SurveyArtistEntry>()
+        val maxLen = lists.maxOfOrNull { it.size } ?: 0
+        for (idx in 0 until maxLen) {
+            for (bucket in lists) {
+                if (idx >= bucket.size) continue
+                val entry = bucket[idx]
+                val key = entry.name.trim().lowercase(Locale.ROOT)
+                if (key.isNotEmpty() && seen.add(key)) {
+                    out.add(entry)
+                }
+            }
+        }
+        return out
+    }
+}
 
 private val SURVEY_GENRES = listOf(
     SurveyGenreOption("Bollywood", "Modern & classic Hindi cinema", setOf("Hindi"), Color(0xFFFF6B6B)),
@@ -196,7 +513,15 @@ private val SURVEY_GENRES = listOf(
     SurveyGenreOption("Rock", "Alt-rock, guitars & anthems", setOf("English", "Hindi", "Bengali"), Color(0xFFEF4444)),
 )
 
-private val resolvedArtistCache = mutableMapOf<String, ArtistRef>()
+private val resolvedArtistCache = ConcurrentHashMap<String, ArtistRef>()
+
+private fun filterVerifiedArtistMatches(
+    expectedName: String,
+    pool: List<ArtistRef>,
+): List<ArtistRef> = pool.filter { ref ->
+    !ref.thumb.isNullOrBlank() &&
+        YouTubeMusicInnertube.artistNamesMatch(expectedName, ref.name)
+}
 
 /**
  * First-time (and re-runnable) 3-Step Personalization Survey:
@@ -242,6 +567,7 @@ fun OnboardingSurveyScreen(
 
     val avatarMap = remember { mutableStateMapOf<String, ArtistRef>().apply { putAll(resolvedArtistCache) } }
     var artistQuery by remember { mutableStateOf("") }
+    var selectedEra by remember { mutableStateOf(SurveyArtistEra.ALL) }
     var artistSearchResults by remember { mutableStateOf<List<ArtistRef>>(emptyList()) }
     var isSearchingArtists by remember { mutableStateOf(false) }
 
@@ -249,17 +575,13 @@ fun OnboardingSurveyScreen(
         step = (step - 1).coerceAtLeast(0)
     }
 
-    val curatedArtists = remember(selectedLanguages.toList()) {
-        val activeLangs = selectedLanguages.ifEmpty { listOf("Hindi", "English", "Punjabi") }
-        val names = buildList {
-            activeLangs.forEach { lang ->
-                addAll(ARTISTS_BY_LANGUAGE[lang].orEmpty())
-            }
-            addAll(ARTISTS_BY_LANGUAGE["Hindi"].orEmpty())
-            addAll(ARTISTS_BY_LANGUAGE["English"].orEmpty())
-        }.distinct()
-        names.map { name ->
-            avatarMap[name.lowercase()] ?: ArtistRef(url = "", name = name, thumb = null)
+    val curatedEntries = remember(selectedLanguages.toList(), selectedEra) {
+        SurveyArtistCatalog.curatedEntriesFor(selectedLanguages.toList(), selectedEra)
+    }
+    val curatedArtists = remember(curatedEntries) {
+        curatedEntries.map { entry ->
+            val key = entry.name.lowercase(Locale.ROOT)
+            avatarMap[key] ?: resolvedArtistCache[key] ?: ArtistRef(url = "", name = entry.name, thumb = null)
         }
     }
 
@@ -284,12 +606,12 @@ fun OnboardingSurveyScreen(
                     YouTubeMusicInnertube.searchArtists(q, limit = 15)
                 } else emptyList()
                 (ytResults + innerResults)
-                    .distinctBy { it.name.trim().lowercase() }
+                    .distinctBy { it.name.trim().lowercase(Locale.ROOT) }
                     .sortedByDescending { YouTubeMusicInnertube.artistMatchScore(q, it.name) }
             }.getOrDefault(emptyList())
         }
         found.forEach { ref ->
-            val k = ref.name.lowercase()
+            val k = ref.name.lowercase(Locale.ROOT)
             if (!ref.thumb.isNullOrBlank()) {
                 resolvedArtistCache[k] = ref
                 avatarMap[k] = ref
@@ -299,30 +621,32 @@ fun OnboardingSurveyScreen(
         isSearchingArtists = false
     }
 
-    // Fetch exact artist avatars for starter pool on Step 2 (verify name match strictly before attaching photo)
-    LaunchedEffect(step, curatedArtists.size) {
+    // Fetch exact artist avatars for Step 2 (only skip InnerTube when NewPipe already has a verified thumb match)
+    LaunchedEffect(step, curatedArtists) {
         if (step != 1) return@LaunchedEffect
-        val missing = curatedArtists.filter { avatarMap[it.name.lowercase()]?.thumb.isNullOrBlank() }
+        val missing = curatedArtists.filter { avatarMap[it.name.lowercase(Locale.ROOT)]?.thumb.isNullOrBlank() }
         if (missing.isEmpty()) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             missing.chunked(4).forEach { batch ->
                 batch.map { candidate ->
                     async {
                         val picked = runCatching {
-                            val npMatches = runCatching {
+                            val npRaw = runCatching {
                                 YouTube.Search(candidate.name, YouTube.FILTER_ARTISTS).loadNext()
                                     .filterIsInstance<BrowseItem.ArtistItem>()
                                     .map { it.artist }
                             }.getOrDefault(emptyList())
-                            val pool = npMatches.ifEmpty {
-                                YouTubeMusicInnertube.searchArtists(candidate.name, limit = 5)
+                            val npMatches = filterVerifiedArtistMatches(candidate.name, npRaw)
+                            val verifiedPool = if (npMatches.isNotEmpty()) {
+                                npMatches
+                            } else {
+                                val innerRaw = runCatching {
+                                    YouTubeMusicInnertube.searchArtists(candidate.name, limit = 6)
+                                }.getOrDefault(emptyList())
+                                val innerMatches = filterVerifiedArtistMatches(candidate.name, innerRaw)
+                                npMatches + innerMatches
                             }
-                            pool
-                                .filter { ref ->
-                                    !ref.thumb.isNullOrBlank() &&
-                                        YouTubeMusicInnertube.artistNamesMatch(candidate.name, ref.name)
-                                }
-                                .maxByOrNull { YouTubeMusicInnertube.artistMatchScore(candidate.name, it.name) }
+                            verifiedPool.maxByOrNull { YouTubeMusicInnertube.artistMatchScore(candidate.name, it.name) }
                         }.getOrNull()
 
                         picked?.let { matched ->
@@ -331,7 +655,7 @@ fun OnboardingSurveyScreen(
                                 name = candidate.name,
                                 thumb = matched.thumb,
                             )
-                            val key = candidate.name.lowercase()
+                            val key = candidate.name.lowercase(Locale.ROOT)
                             resolvedArtistCache[key] = enriched
                             withContext(Dispatchers.Main) {
                                 avatarMap[key] = enriched
@@ -464,27 +788,34 @@ fun OnboardingSurveyScreen(
                                 else selectedLanguages.add(lang)
                             },
                         )
-                        1 -> ArtistStepPage(
-                            query = artistQuery,
-                            onQueryChange = { artistQuery = it },
-                            isSearching = isSearchingArtists,
-                            artists = if (artistQuery.trim().length >= 2 && artistSearchResults.isNotEmpty()) {
-                                artistSearchResults
-                            } else {
-                                curatedArtists
-                            },
-                            selectedArtists = selectedArtists,
-                            avatarLookup = avatarMap,
-                            onToggleArtist = { ref ->
-                                val idx = selectedArtists.indexOfFirst { it.name.equals(ref.name, ignoreCase = true) }
-                                if (idx >= 0) {
-                                    selectedArtists.removeAt(idx)
-                                } else {
-                                    val cached = avatarMap[ref.name.lowercase()]
-                                    selectedArtists.add(if (ref.thumb.isNullOrBlank() && cached != null) cached else ref)
-                                }
-                            },
-                        )
+                        1 -> {
+                            val visibleArtists = remember(curatedArtists, artistSearchResults, artistQuery) {
+                                SurveyArtistCatalog.filterArtistsForQuery(
+                                    curated = curatedArtists,
+                                    remoteResults = artistSearchResults,
+                                    rawQuery = artistQuery,
+                                )
+                            }
+                            ArtistStepPage(
+                                query = artistQuery,
+                                onQueryChange = { artistQuery = it },
+                                selectedEra = selectedEra,
+                                onSelectEra = { selectedEra = it },
+                                isSearching = isSearchingArtists,
+                                artists = visibleArtists,
+                                selectedArtists = selectedArtists,
+                                avatarLookup = avatarMap,
+                                onToggleArtist = { ref ->
+                                    val idx = selectedArtists.indexOfFirst { it.name.equals(ref.name, ignoreCase = true) }
+                                    if (idx >= 0) {
+                                        selectedArtists.removeAt(idx)
+                                    } else {
+                                        val cached = avatarMap[ref.name.lowercase(Locale.ROOT)]
+                                        selectedArtists.add(if (ref.thumb.isNullOrBlank() && cached != null) cached else ref)
+                                    }
+                                },
+                            )
+                        }
                         else -> GenreStepPage(
                             selectedLanguages = selectedLanguages,
                             selectedGenres = selectedGenres,
@@ -748,6 +1079,8 @@ private fun LanguageStepPage(
 private fun ArtistStepPage(
     query: String,
     onQueryChange: (String) -> Unit,
+    selectedEra: SurveyArtistEra,
+    onSelectEra: (SurveyArtistEra) -> Unit,
     isSearching: Boolean,
     artists: List<ArtistRef>,
     selectedArtists: List<ArtistRef>,
@@ -769,7 +1102,7 @@ private fun ArtistStepPage(
                         color = velvetColors.text,
                     )
                     Text(
-                        "Search or tap artists to tune your recommendations & radio.",
+                        "Search or tap artists across eras to tune your recommendations & radio.",
                         style = MaterialTheme.typography.bodySmall,
                         color = velvetColors.muted,
                     )
@@ -873,43 +1206,83 @@ private fun ArtistStepPage(
                     }
                 }
             }
+        }
 
-            if (selectedArtists.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                Row(
+        Spacer(Modifier.height(10.dp))
+
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(SurveyArtistEra.entries, key = { it.name }) { era ->
+                val isEraSelected = era == selectedEra
+                val pillBg by animateColorAsState(
+                    targetValue = if (isEraSelected) velvetColors.accent.copy(alpha = 0.20f) else velvetColors.surface,
+                    animationSpec = tween(160),
+                    label = "eraPillBg",
+                )
+                val pillBorder by animateColorAsState(
+                    targetValue = if (isEraSelected) velvetColors.accent else velvetColors.glassBorder,
+                    animationSpec = tween(160),
+                    label = "eraPillBorder",
+                )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = pillBg,
+                    border = BorderStroke(1.dp, pillBorder),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        .clip(RoundedCornerShape(50))
+                        .clickable { onSelectEra(era) },
                 ) {
-                    selectedArtists.forEach { picked ->
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = velvetColors.accent.copy(alpha = 0.16f),
-                            border = BorderStroke(1.dp, velvetColors.accent.copy(alpha = 0.55f)),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .clickable { onToggleArtist(picked) },
+                    Text(
+                        text = if (era == SurveyArtistEra.ALL) era.label else era.shortLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isEraSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isEraSelected) velvetColors.accentText else velvetColors.muted,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                    )
+                }
+            }
+        }
+
+        if (selectedArtists.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                selectedArtists.forEach { picked ->
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = velvetColors.accent.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, velvetColors.accent.copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable { onToggleArtist(picked) },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(
-                                modifier = Modifier.padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    picked.name,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = velvetColors.text,
-                                    maxLines = 1,
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Remove",
-                                    tint = velvetColors.accentText,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                            }
+                            Text(
+                                picked.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = velvetColors.text,
+                                maxLines = 1,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Remove",
+                                tint = velvetColors.accentText,
+                                modifier = Modifier.size(14.dp),
+                            )
                         }
                     }
                 }
@@ -919,96 +1292,110 @@ private fun ArtistStepPage(
         Spacer(Modifier.height(8.dp))
 
         val context = LocalContext.current
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(artists, key = { "${it.name}|${it.url}" }) { rawArtist ->
-                val artist = avatarLookup[rawArtist.name.lowercase()]?.let { cached ->
-                    if (rawArtist.thumb.isNullOrBlank()) cached else rawArtist
-                } ?: rawArtist
-                val isSelected = selectedArtists.any { it.name.equals(artist.name, ignoreCase = true) }
+        if (artists.isEmpty() && query.trim().length >= 2) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (isSearching) "Searching artists..." else "No matching artists found",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = velvetColors.muted,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(artists, key = { it.name.trim().lowercase(Locale.ROOT) }) { rawArtist ->
+                    val artist = avatarLookup[rawArtist.name.lowercase(Locale.ROOT)]?.let { cached ->
+                        if (rawArtist.thumb.isNullOrBlank()) cached else rawArtist
+                    } ?: rawArtist
+                    val isSelected = selectedArtists.any { it.name.equals(artist.name, ignoreCase = true) }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { onToggleArtist(artist) }
-                        .padding(vertical = 6.dp, horizontal = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Box(contentAlignment = Alignment.TopEnd) {
-                        val avatarSize = 86.dp
-                        val px = with(LocalDensity.current) { avatarSize.roundToPx() }
-                        Box(
-                            modifier = Modifier
-                                .size(avatarSize)
-                                .clip(CircleShape)
-                                .background(velvetColors.raised)
-                                .border(
-                                    width = if (isSelected) 3.dp else 1.dp,
-                                    color = if (isSelected) velvetColors.accent else velvetColors.glassBorder,
-                                    shape = CircleShape,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                artist.name.take(2).uppercase(),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = velvetColors.muted,
-                            )
-                            val thumbUrl = artist.thumb
-                            if (!thumbUrl.isNullOrBlank()) {
-                                key("${artist.name}|$thumbUrl") {
-                                    AsyncImage(
-                                        model = remember(thumbUrl, px) {
-                                            ImageRequest.Builder(context)
-                                                .data(thumbSized(thumbUrl, px))
-                                                .crossfade(true)
-                                                .build()
-                                        },
-                                        contentDescription = artist.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { onToggleArtist(artist) }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(contentAlignment = Alignment.TopEnd) {
+                            val avatarSize = 86.dp
+                            val px = with(LocalDensity.current) { avatarSize.roundToPx() }
+                            Box(
+                                modifier = Modifier
+                                    .size(avatarSize)
+                                    .clip(CircleShape)
+                                    .background(velvetColors.raised)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) velvetColors.accent else velvetColors.glassBorder,
+                                        shape = CircleShape,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    artist.name.take(2).uppercase(Locale.ROOT),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = velvetColors.muted,
+                                )
+                                val thumbUrl = artist.thumb
+                                if (!thumbUrl.isNullOrBlank()) {
+                                    key("${artist.name}|$thumbUrl") {
+                                        AsyncImage(
+                                            model = remember(thumbUrl, px) {
+                                                ImageRequest.Builder(context)
+                                                    .data(thumbSized(thumbUrl, px))
+                                                    .crossfade(true)
+                                                    .build()
+                                            },
+                                            contentDescription = artist.name,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isSelected) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(velvetColors.accent)
+                                        .border(2.dp, velvetColors.background, CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp),
                                     )
                                 }
                             }
                         }
 
-                        if (isSelected) {
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clip(CircleShape)
-                                    .background(velvetColors.accent)
-                                    .border(2.dp, velvetColors.background, CircleShape),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                            }
-                        }
+                        Spacer(Modifier.height(7.dp))
+                        Text(
+                            artist.name,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) velvetColors.accentText else velvetColors.text,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 16.sp,
+                        )
                     }
-
-                    Spacer(Modifier.height(7.dp))
-                    Text(
-                        artist.name,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isSelected) velvetColors.accentText else velvetColors.text,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 16.sp,
-                    )
                 }
             }
         }
