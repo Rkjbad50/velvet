@@ -216,7 +216,7 @@ class PlaybackService : MediaSessionService() {
         announce(announcedSessionId, open = false)
         if (sessionId != C.AUDIO_SESSION_ID_UNSET) {
             announce(sessionId, open = true)
-            AudioFx.attach(sessionId)
+            AudioFx.attach(sessionId, VelvetApp.library.data.value.eq)
         }
         announcedSessionId = sessionId
     }

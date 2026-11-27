@@ -35,11 +35,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -184,6 +185,17 @@ private val tabs = listOf(
     Tab("Library", AppIcons.Library),
 )
 
+internal fun resolveRootContentBottomPadding(
+    dockHeight: Dp,
+    imeBottomPx: Int,
+    navBottomPx: Int,
+    densityPxPerDp: Float,
+): Dp {
+    val safeDensity = densityPxPerDp.coerceAtLeast(1f)
+    val imeAboveNavDp = (((imeBottomPx - navBottomPx).coerceAtLeast(0)) / safeDensity).dp
+    return nonNegativeDpPadding(maxOf(dockHeight, imeAboveNavDp))
+}
+
 @Composable
 private fun AppRoot() {
     // survives rotation and the app being recreated
@@ -193,16 +205,16 @@ private fun AppRoot() {
     val searchVm: SearchViewModel = viewModel(key = "search")
     val context = LocalContext.current
     val hasPlayer = PlayerConnection.current != null
-    // Reserve the actual dock height so large navigation labels never overlap the screen.
+    // Reserve the actual dock height or active IME height monotonically without spring bounce.
     var dockHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
-    val isImeVisible = imeBottom > 0
-    val targetBottomRoom = if (isImeVisible) 0.dp else dockHeight
-    val bottomRoom by animateDpAsState(
-        targetValue = targetBottomRoom,
-        animationSpec = VelvetMotion.Springs.DpStandard,
-        label = "bottomRoom",
+    val navBottom = WindowInsets.navigationBars.getBottom(density)
+    val bottomRoom = resolveRootContentBottomPadding(
+        dockHeight = dockHeight,
+        imeBottomPx = imeBottom,
+        navBottomPx = navBottom,
+        densityPxPerDp = density.density,
     )
 
     // tell the user once if their library file had to be recovered
@@ -310,7 +322,6 @@ private fun AppRoot() {
                     }
                     .statusBarsPadding()
                     .navigationBarsPadding()
-                    .imePadding()
                     .padding(bottom = nonNegativeDpPadding(bottomRoom)),
             ) {
                 PlayerConnection.brokenStreamingBanner?.let { bannerText ->

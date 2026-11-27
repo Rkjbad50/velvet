@@ -28,35 +28,52 @@ object AudioFx {
     private var loudness: LoudnessEnhancer? = null
     private var current = EqSettings()
 
+    /** Target DSP parameters resolved cleanly for any [EqSettings] state. */
+    data class TargetAudioProfile(
+        val active: Boolean,
+        val bandLevels: List<Int>,
+        val bassStrength: Int,
+        val virtualizerStrength: Int,
+        val loudnessGainMb: Int,
+    )
+
     const val PRESET_ULTRA = "ULT Bass"
     val presets = listOf("Flat", "Bass boost", "Vocal", "Treble", "Rock", "Pop", "Acoustic")
 
     @Synchronized
-    fun attach(sessionId: Int) {
+    fun attach(sessionId: Int, initialSettings: EqSettings = current) {
         release()
+        current = initialSettings
         if (sessionId <= 0) return
         // creating an effect and asking what it supports can both throw on some phones;
-        // a failure costs that effect, never playback
-        eq = runCatching { Equalizer(0, sessionId) }.getOrNull()
-        bass = runCatching { BassBoost(0, sessionId) }.getOrNull()
-        virtualizer = runCatching { Virtualizer(0, sessionId) }.getOrNull()
-        loudness = runCatching { LoudnessEnhancer(sessionId) }.getOrNull()
-        _bands.value = eq?.let { e ->
-            runCatching {
-                val range = e.bandLevelRange
-                BandInfo(
-                    centersHz = (0 until e.numberOfBands).map { e.getCenterFreq(it.toShort()) / 1000 },
-                    minMb = range[0].toInt(),
-                    maxMb = range[1].toInt(),
-                )
-            }.onFailure { error ->
-                Log.w(TAG, "Equalizer unusable on this device", error)
-                runCatching { e.release() }
-                eq = null
-            }.getOrNull()
+        // request priority 1 (falling back to 0) so external session listeners don't steal control
+        eq = runCatching { Equalizer(1, sessionId) }.getOrElse {
+            runCatching { Equalizer(0, sessionId) }.getOrNull()
         }
+        bass = runCatching { BassBoost(1, sessionId) }.getOrElse {
+            runCatching { BassBoost(0, sessionId) }.getOrNull()
+        }
+        virtualizer = runCatching { Virtualizer(1, sessionId) }.getOrElse {
+            runCatching { Virtualizer(0, sessionId) }.getOrNull()
+        }
+        loudness = runCatching { LoudnessEnhancer(sessionId) }.getOrNull()
+        _bands.value = eq?.let(::extractBandInfo)
         apply(current)
     }
+
+    private fun extractBandInfo(e: Equalizer): BandInfo? =
+        runCatching {
+            val range = e.bandLevelRange
+            BandInfo(
+                centersHz = (0 until e.numberOfBands).map { e.getCenterFreq(it.toShort()) / 1000 },
+                minMb = range[0].toInt(),
+                maxMb = range[1].toInt(),
+            )
+        }.onFailure { error ->
+            Log.w(TAG, "Equalizer unusable on this device", error)
+            runCatching { e.release() }
+            eq = null
+        }.getOrNull()
 
     @Synchronized
     fun release() {
@@ -68,45 +85,169 @@ object AudioFx {
         _bands.value = null
     }
 
+    /**
+     * Resolves the single authoritative audio effect target profile for [settings].
+     * When [EqSettings.ultra] is active, ULT Bass always takes strict precedence over any manual
+     * preset, sliders, or effect values so switching modes never blends two profiles.
+     */
+    fun resolveTargetProfile(settings: EqSettings, info: BandInfo?): TargetAudioProfile {
+        val active = settings.enabled || settings.ultra
+        if (settings.ultra) {
+            return TargetAudioProfile(
+                active = true,
+                bandLevels = if (info != null) curve(PRESET_ULTRA, info) else emptyList(),
+                bassStrength = ULTRA_BASS,
+                virtualizerStrength = ULTRA_VIRTUALIZER,
+                loudnessGainMb = ULTRA_LOUDNESS,
+            )
+        }
+        return TargetAudioProfile(
+            active = active,
+            bandLevels = settings.bands,
+            bassStrength = settings.bass,
+            virtualizerStrength = settings.virtualizer,
+            loudnessGainMb = settings.loudness,
+        )
+    }
+
     @Synchronized
     fun apply(settings: EqSettings) {
         current = settings
-        val on = settings.enabled || settings.ultra
-        val info = _bands.value
+        val info = _bands.value ?: eq?.let(::extractBandInfo)?.also { _bands.value = it }
+        val profile = resolveTargetProfile(settings, info)
+        val enableBass = profile.active && profile.bassStrength > 0
+        val enableVirt = profile.active && profile.virtualizerStrength > 0
+        val enableLoud = profile.active && profile.loudnessGainMb > 0
+
+        var newlyEnabled = false
+
+        // Phase 1: Enable active effects BEFORE setting levels/strengths so OEM HAL/EffectBundle
+        // initialization (which resets or ignores pre-enable writes on 1st activation) settles first.
+        if (profile.active) {
+            runCatching {
+                eq?.let { e ->
+                    if (!e.enabled) {
+                        e.enabled = true
+                        newlyEnabled = true
+                    }
+                }
+            }
+            if (enableBass) {
+                runCatching {
+                    bass?.let { b ->
+                        if (!b.enabled) {
+                            b.enabled = true
+                            newlyEnabled = true
+                        }
+                    }
+                }
+            }
+            if (enableVirt) {
+                runCatching {
+                    virtualizer?.let { v ->
+                        if (!v.enabled) {
+                            v.enabled = true
+                            newlyEnabled = true
+                        }
+                    }
+                }
+            }
+            if (enableLoud) {
+                runCatching {
+                    loudness?.let { l ->
+                        if (!l.enabled) {
+                            l.enabled = true
+                            newlyEnabled = true
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: Write all target parameters while active effects are enabled.
+        val eqMismatched = writeParameters(profile, info, enableBass, enableVirt, enableLoud)
+
+        // Phase 3: Re-assert parameters if any effect transitioned disabled -> enabled on this call
+        // or if the HAL clamped/dropped any band on initial EffectBundle enable.
+        if (profile.active && (newlyEnabled || eqMismatched)) {
+            writeParameters(profile, info, enableBass, enableVirt, enableLoud)
+        }
+
+        // Phase 4: Cleanly disable inactive effects after writing neutral values.
+        if (!profile.active) {
+            runCatching { eq?.let { e -> if (e.enabled) e.enabled = false } }
+        }
+        if (!enableBass) {
+            runCatching { bass?.let { b -> if (b.enabled) b.enabled = false } }
+        }
+        if (!enableVirt) {
+            runCatching { virtualizer?.let { v -> if (v.enabled) v.enabled = false } }
+        }
+        if (!enableLoud) {
+            runCatching { loudness?.let { l -> if (l.enabled) l.enabled = false } }
+        }
+    }
+
+    private fun writeParameters(
+        profile: TargetAudioProfile,
+        info: BandInfo?,
+        enableBass: Boolean,
+        enableVirt: Boolean,
+        enableLoud: Boolean,
+    ): Boolean {
+        var bandMismatch = false
+        val minMb = info?.minMb ?: -1500
+        val maxMb = info?.maxMb ?: 1500
         runCatching {
             eq?.let { e ->
-                val levels = when {
-                    settings.ultra && info != null -> curve(PRESET_ULTRA, info)
-                    else -> settings.bands
+                if (profile.active) {
+                    if (!e.enabled) e.enabled = true
+                    for (i in 0 until e.numberOfBands) {
+                        val level = profile.bandLevels.getOrElse(i) { 0 }.coerceIn(minMb, maxMb).toShort()
+                        e.setBandLevel(i.toShort(), level)
+                        if (e.getBandLevel(i.toShort()) != level) {
+                            bandMismatch = true
+                        }
+                    }
+                } else {
+                    for (i in 0 until e.numberOfBands) {
+                        e.setBandLevel(i.toShort(), 0.toShort())
+                    }
                 }
-                for (i in 0 until e.numberOfBands) {
-                    val level = levels.getOrElse(i) { 0 }.coerceIn(info?.minMb ?: -1500, info?.maxMb ?: 1500)
-                    e.setBandLevel(i.toShort(), level.toShort())
+            }
+        }
+        runCatching {
+            bass?.let { b ->
+                val target = if (enableBass) profile.bassStrength.coerceIn(0, 1000).toShort() else 0.toShort()
+                if (enableBass && !b.enabled) b.enabled = true
+                if (b.strengthSupported) {
+                    b.setStrength(target)
+                    if (enableBass && b.roundedStrength != target) {
+                        b.setStrength(target)
+                    }
                 }
-                e.enabled = on
-            }
-        }
-        val bassStrength = if (settings.ultra) ULTRA_BASS else settings.bass
-        val virtStrength = if (settings.ultra) ULTRA_VIRTUALIZER else settings.virtualizer
-        val gainMb = if (settings.ultra) ULTRA_LOUDNESS else settings.loudness
-        runCatching {
-            bass?.let {
-                if (it.strengthSupported) it.setStrength(bassStrength.coerceIn(0, 1000).toShort())
-                it.enabled = on && bassStrength > 0
             }
         }
         runCatching {
-            virtualizer?.let {
-                if (it.strengthSupported) it.setStrength(virtStrength.coerceIn(0, 1000).toShort())
-                it.enabled = on && virtStrength > 0
+            virtualizer?.let { v ->
+                val target = if (enableVirt) profile.virtualizerStrength.coerceIn(0, 1000).toShort() else 0.toShort()
+                if (enableVirt && !v.enabled) v.enabled = true
+                if (v.strengthSupported) {
+                    v.setStrength(target)
+                    if (enableVirt && v.roundedStrength != target) {
+                        v.setStrength(target)
+                    }
+                }
             }
         }
         runCatching {
-            loudness?.let {
-                it.setTargetGain(gainMb.coerceIn(0, 2000))
-                it.enabled = on && gainMb > 0
+            loudness?.let { l ->
+                val target = if (enableLoud) profile.loudnessGainMb.coerceIn(0, 2000) else 0
+                if (enableLoud && !l.enabled) l.enabled = true
+                l.setTargetGain(target)
             }
         }
+        return bandMismatch
     }
 
     /**

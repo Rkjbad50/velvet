@@ -3,6 +3,8 @@ package com.velvet.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,10 +77,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -583,16 +587,21 @@ fun SearchScreen(vm: SearchViewModel) {
                 )
             },
             leadingIcon = {
-                if (isSearchActive) {
-                    IconButton(onClick = { exitSearch() }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = velvetColors.text,
-                        )
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    if (isSearchActive) {
+                        IconButton(
+                            onClick = { exitSearch() },
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = velvetColors.text,
+                            )
+                        }
+                    } else {
+                        Icon(Icons.Default.Search, null, tint = velvetColors.muted)
                     }
-                } else {
-                    Icon(Icons.Default.Search, null, tint = velvetColors.muted)
                 }
             },
             trailingIcon = {
@@ -629,6 +638,7 @@ fun SearchScreen(vm: SearchViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 6.dp)
+                .zIndex(1f)
                 .focusRequester(searchFocusRequester)
                 .onFocusChanged { state ->
                     if (state.isFocused) isSearchFocused = true
@@ -652,10 +662,14 @@ fun SearchScreen(vm: SearchViewModel) {
         AnimatedContent(
             targetState = viewMode,
             transitionSpec = {
-                fadeIn(VelvetMotion.fastTween()) togetherWith fadeOut(VelvetMotion.fastTween(130))
+                (fadeIn(VelvetMotion.fastTween()) togetherWith fadeOut(VelvetMotion.fastTween(110)))
+                    .using(SizeTransform(clip = true) { _, _ -> snap() })
             },
             label = "searchBodyTransition",
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clipToBounds(),
         ) { mode ->
             when (mode) {
                 SearchBodyMode.RESULTS -> SearchResults(vm)
@@ -812,7 +826,9 @@ private fun FocusedRecentsView(
     onQuickPickClick: (String) -> Unit,
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .clipToBounds(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
