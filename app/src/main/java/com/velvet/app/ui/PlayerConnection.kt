@@ -58,7 +58,7 @@ import java.util.UUID
 
 /** The UI's handle on PlaybackService, mirrored into Compose state. */
 object PlayerConnection {
-    val queueManager = QueueManager()
+    val queueManager = QueueManager(syncWithDismissedRegistry = true)
 
     var controller by mutableStateOf<MediaController?>(null)
         private set
@@ -667,6 +667,7 @@ object PlayerConnection {
     private fun buildPersistedStateOrNull(): PersistedPlaybackState? {
         val cur = current ?: queueManager.current ?: return null
         val pos = controller?.currentPosition ?: savedInitialPositionMs
+        val qState = queueManager.state
         return PersistedPlaybackState(
             song = cur,
             positionMs = pos.coerceAtLeast(0L),
@@ -681,6 +682,9 @@ object PlayerConnection {
             radioSeedSong = radioSeedSong,
             shuffleMode = queueManager.shuffleMode,
             repeatMode = queueManager.repeatMode,
+            removedSongIds = qState.removedSongIds,
+            removedGroupIds = qState.removedGroupIds,
+            removedRecordingIds = qState.removedRecordingIds,
         )
     }
 
@@ -718,6 +722,11 @@ object PlayerConnection {
                 ShuffleMode.OFF
             }
             val effectiveSaved = saved.copy(shuffleMode = resolvedSavedShuffle)
+            DismissedTrackRegistry.restore(
+                videoIds = effectiveSaved.removedSongIds,
+                groupIds = effectiveSaved.removedGroupIds,
+                recordingIds = effectiveSaved.removedRecordingIds,
+            )
             queueManager.restore(effectiveSaved, allowSmartShuffle = isUserPlaylistActive)
             syncQueueState(resetPositionOnTrackChange = false)
 
@@ -1040,15 +1049,17 @@ object PlayerConnection {
         val outgoingPos = controller?.currentPosition ?: savedInitialPositionMs
         val outgoingDur = durationMs
         val itemToDismiss = queueManager.upNext.find { it.qid == qid } ?: queueManager.userQueue.find { it.qid == qid }
-        if (itemToDismiss != null) {
-            com.velvet.app.playback.DismissedTrackRegistry.recordDismissal(itemToDismiss)
-            VelvetApp.eventRecorderOrNull()?.recordQueueRemoved(
-                song = itemToDismiss.song,
-                wasModelRecommended = itemToDismiss.isSmartRecommended,
-            )
-        }
         val removed = queueManager.removeItem(qid)
         if (removed) {
+            if (itemToDismiss != null) {
+                if (!DismissedTrackRegistry.isDismissed(itemToDismiss.song)) {
+                    DismissedTrackRegistry.recordDismissal(itemToDismiss)
+                }
+                VelvetApp.eventRecorderOrNull()?.recordQueueRemoved(
+                    song = itemToDismiss.song,
+                    wasModelRecommended = itemToDismiss.isSmartRecommended,
+                )
+            }
             if (removingCurrent && outgoing != null) {
                 VelvetApp.eventRecorderOrNull()?.onExplicitTrackAdvance(
                     outgoingSong = outgoing,
@@ -1160,7 +1171,7 @@ object PlayerConnection {
 
         if (current?.id == song.id) {
             com.velvet.app.playback.DismissedTrackRegistry.clear()
-            queueManager.clearUpcoming()
+            queueManager.clearUpcoming(clearRemoved = true)
             syncQueueState()
             syncToExoPlayer(isRadio = true)
             requestRunwayRefill(RunwayTrigger.TRACK_CHANGE, seedId = song.id, force = true)
@@ -1224,7 +1235,8 @@ object PlayerConnection {
     }
 
     fun clearUpcoming() {
-        queueManager.clearUpcoming()
+        DismissedTrackRegistry.clear()
+        queueManager.clearUpcoming(clearRemoved = true)
         syncQueueState()
         syncToExoPlayer()
         requestRunwayRefill(RunwayTrigger.QUEUE_MUTATION)

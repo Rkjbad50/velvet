@@ -32,6 +32,9 @@ data class PersistedPlaybackState(
     val shuffleMode: ShuffleMode = ShuffleMode.OFF,
     val repeatMode: RepeatMode = RepeatMode.OFF,
     val savedAt: Long = System.currentTimeMillis(),
+    val removedSongIds: Set<String> = emptySet(),
+    val removedGroupIds: Set<String> = emptySet(),
+    val removedRecordingIds: Set<String> = emptySet(),
 )
 
 /**

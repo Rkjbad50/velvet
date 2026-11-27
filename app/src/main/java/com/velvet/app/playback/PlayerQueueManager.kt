@@ -3,6 +3,7 @@ package com.velvet.app.playback
 import com.velvet.app.data.Song
 import com.velvet.app.data.isDuplicateOf
 import com.velvet.app.data.isSameTrackAs
+import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 import java.util.Random
 import java.util.UUID
 
@@ -47,6 +48,9 @@ data class QueueState(
     val shuffleMode: ShuffleMode = ShuffleMode.OFF,
     val repeatMode: RepeatMode = RepeatMode.OFF,
     val autoplayOn: Boolean = true,
+    val removedSongIds: Set<String> = emptySet(),
+    val removedGroupIds: Set<String> = emptySet(),
+    val removedRecordingIds: Set<String> = emptySet(),
 ) {
     /**
      * Visible Queue for UI:
@@ -58,6 +62,19 @@ data class QueueState(
 
     val shuffle: Boolean get() = shuffleMode != ShuffleMode.OFF
     val isSmartShuffle: Boolean get() = shuffleMode == ShuffleMode.SMART
+
+    /** Returns true if [song] (or its canonical composition/recording) was removed in this session. */
+    fun isRemoved(song: Song): Boolean {
+        if (removedSongIds.isEmpty() && removedGroupIds.isEmpty() && removedRecordingIds.isEmpty()) {
+            return false
+        }
+        if (song.id.isNotBlank() && song.id in removedSongIds) return true
+        val gid = SongIdentity.canonicalGroupId(song)
+        if (gid.isNotBlank() && gid in removedGroupIds) return true
+        val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
+        if (recId.isNotBlank() && recId in removedRecordingIds) return true
+        return false
+    }
 }
 
 /**
@@ -65,7 +82,10 @@ data class QueueState(
  * Exposes pure functions returning a new [QueueState], making it 100% unit-testable
  * without Android framework dependencies.
  */
-class QueueManager(initialState: QueueState = QueueState()) {
+class QueueManager(
+    initialState: QueueState = QueueState(),
+    private val syncWithDismissedRegistry: Boolean = false,
+) {
     @Volatile
     var state: QueueState = initialState
         private set
@@ -73,6 +93,16 @@ class QueueManager(initialState: QueueState = QueueState()) {
     @Volatile
     var queueVersion: Long = 0L
         private set
+
+    private val dismissedObserver: ((Song) -> Unit)? = if (syncWithDismissedRegistry) {
+        { song -> markRemoved(song) }
+    } else {
+        null
+    }
+
+    init {
+        dismissedObserver?.let { DismissedTrackRegistry.addObserver(it) }
+    }
 
     /** Update current state via a pure transformation function. */
     fun update(transform: (QueueState) -> QueueState): QueueState {
@@ -86,6 +116,7 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
     // Instance convenience delegates
     fun start(songs: List<Song>, startIndex: Int = 0, shuffled: Boolean = false, rng: Random = Random()) {
+        if (syncWithDismissedRegistry) DismissedTrackRegistry.clear()
         update { Companion.start(it, songs, startIndex, shuffled, rng = rng) }
     }
 
@@ -157,12 +188,27 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
     fun removeItem(qid: String): Boolean {
         var removed = false
+        var removedUpcomingSong: Song? = null
         update {
+            if (qid != "current" && qid != it.current?.qid) {
+                removedUpcomingSong = (
+                    it.userQueue.find { item -> item.qid == qid }
+                        ?: it.upNext.find { item -> item.qid == qid }
+                    )?.song
+            }
             val (newState, success) = Companion.removeWithResult(it, qid)
             removed = success
             newState
         }
+        val songToRecord = removedUpcomingSong
+        if (removed && syncWithDismissedRegistry && songToRecord != null && !DismissedTrackRegistry.isDismissed(songToRecord)) {
+            DismissedTrackRegistry.recordDismissal(songToRecord)
+        }
         return removed
+    }
+
+    fun markRemoved(song: Song) {
+        update { Companion.markRemoved(it, song) }
     }
 
     fun remove(qid: String): Boolean = removeItem(qid)
@@ -270,11 +316,18 @@ class QueueManager(initialState: QueueState = QueueState()) {
         return targetSong
     }
 
-    fun clearUpcoming() {
-        update { Companion.clearUpcoming(it) }
+    fun clearUpcoming(clearRemoved: Boolean = false) {
+        if (clearRemoved && syncWithDismissedRegistry) DismissedTrackRegistry.clear()
+        update { Companion.clearUpcoming(it, clearRemoved = clearRemoved) }
+    }
+
+    fun clearRemoved() {
+        if (syncWithDismissedRegistry) DismissedTrackRegistry.clear()
+        update { Companion.clearRemoved(it) }
     }
 
     fun clear() {
+        if (syncWithDismissedRegistry) DismissedTrackRegistry.clear()
         update { Companion.clear(it) }
     }
 
@@ -422,24 +475,28 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
             // 3. Queue is exhausted
             if (state.repeatMode == RepeatMode.ALL && state.sourceList.isNotEmpty()) {
-                val items = state.sourceList.map { QueueItem(it.song) }
-                return if (state.shuffleMode != ShuffleMode.OFF) {
-                    val shuffled = fisherYatesShuffle(items, rng)
-                    val next = shuffled.first()
-                    state.copy(
-                        history = emptyList(),
-                        current = next,
-                        userQueue = emptyList(),
-                        upNext = shuffled.drop(1),
-                    )
-                } else {
-                    val next = items.first()
-                    state.copy(
-                        history = emptyList(),
-                        current = next,
-                        userQueue = emptyList(),
-                        upNext = items.drop(1),
-                    )
+                val items = state.sourceList
+                    .filterNot { state.isRemoved(it.song) }
+                    .map { QueueItem(it.song) }
+                if (items.isNotEmpty()) {
+                    return if (state.shuffleMode != ShuffleMode.OFF) {
+                        val shuffled = fisherYatesShuffle(items, rng)
+                        val next = shuffled.first()
+                        state.copy(
+                            history = emptyList(),
+                            current = next,
+                            userQueue = emptyList(),
+                            upNext = shuffled.drop(1),
+                        )
+                    } else {
+                        val next = items.first()
+                        state.copy(
+                            history = emptyList(),
+                            current = next,
+                            userQueue = emptyList(),
+                            upNext = items.drop(1),
+                        )
+                    }
                 }
             }
 
@@ -542,18 +599,38 @@ class QueueManager(initialState: QueueState = QueueState()) {
          */
         fun remove(state: QueueState, qid: String): QueueState = removeWithResult(state, qid).first
 
+        private fun withRemovedIdentifiers(state: QueueState, song: Song): QueueState {
+            val nextSongIds = if (song.id.isNotBlank()) state.removedSongIds + song.id else state.removedSongIds
+            val gid = SongIdentity.canonicalGroupId(song)
+            val nextGroupIds = if (gid.isNotBlank()) state.removedGroupIds + gid else state.removedGroupIds
+            val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
+            val nextRecIds = if (recId.isNotBlank()) state.removedRecordingIds + recId else state.removedRecordingIds
+            return state.copy(
+                removedSongIds = nextSongIds,
+                removedGroupIds = nextGroupIds,
+                removedRecordingIds = nextRecIds,
+            )
+        }
+
+        fun markRemoved(state: QueueState, song: Song): QueueState {
+            val withIds = withRemovedIdentifiers(state, song)
+            return withIds.copy(
+                sourceList = withIds.sourceList.filterNot { withIds.isRemoved(it.song) },
+                upNext = withIds.upNext.filterNot { withIds.isRemoved(it.song) },
+            )
+        }
+
         fun removeWithResult(state: QueueState, qid: String): Pair<QueueState, Boolean> {
             if (qid == "current" || qid == state.current?.qid) {
                 return Pair(advance(state), true)
             }
-            val inUserQueue = state.userQueue.any { it.qid == qid }
-            val inUpNext = state.upNext.any { it.qid == qid }
-            if (!inUserQueue && !inUpNext) {
-                return Pair(state, false)
-            }
-            val newState = state.copy(
-                userQueue = state.userQueue.filter { it.qid != qid },
-                upNext = state.upNext.filter { it.qid != qid },
+            val targetItem = state.userQueue.find { it.qid == qid } ?: state.upNext.find { it.qid == qid }
+                ?: return Pair(state, false)
+            val withIds = withRemovedIdentifiers(state, targetItem.song)
+            val newState = withIds.copy(
+                sourceList = withIds.sourceList.filterNot { withIds.isRemoved(it.song) },
+                userQueue = withIds.userQueue.filter { it.qid != qid },
+                upNext = withIds.upNext.filter { it.qid != qid && !withIds.isRemoved(it.song) },
             )
             return Pair(newState, true)
         }
@@ -638,17 +715,18 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
             // Backfill any items currently in upNext that are missing from sourceList (e.g. standalone/autoplay sessions)
             val knownSourceIds = state.sourceList.map { it.song.id }.toSet()
-            val missingFromSource = state.upNext.filter { it.song.id !in knownSourceIds }
-            val completeSourceList = if (missingFromSource.isNotEmpty()) {
+            val missingFromSource = state.upNext.filter { it.song.id !in knownSourceIds && !state.isRemoved(it.song) }
+            val completeSourceList = (if (missingFromSource.isNotEmpty()) {
                 state.sourceList + missingFromSource
             } else {
                 state.sourceList
-            }
+            }).filterNot { state.isRemoved(it.song) }
 
             val rawPool = completeSourceList.filter {
                 it.song.id != currentItem.song.id &&
                     it.song.id !in historySongIds &&
-                    it.song.id !in userQueueSongIds
+                    it.song.id !in userQueueSongIds &&
+                    !state.isRemoved(it.song)
             }
 
             // Fallback: If rawPool is empty but upNext has items, use upNext items to avoid queue wipeout
@@ -656,7 +734,8 @@ class QueueManager(initialState: QueueState = QueueState()) {
                 state.upNext.filter {
                     it.song.id != currentItem.song.id &&
                         it.song.id !in historySongIds &&
-                        it.song.id !in userQueueSongIds
+                        it.song.id !in userQueueSongIds &&
+                        !state.isRemoved(it.song)
                 }
             } else {
                 rawPool
@@ -721,29 +800,33 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
             // Backfill any items currently in upNext that are missing from sourceList
             val knownSourceIds = state.sourceList.map { it.song.id }.toSet()
-            val missingFromSource = state.upNext.filter { it.song.id !in knownSourceIds }
-            val completeSourceList = if (missingFromSource.isNotEmpty()) {
+            val missingFromSource = state.upNext.filter { it.song.id !in knownSourceIds && !state.isRemoved(it.song) }
+            val completeSourceList = (if (missingFromSource.isNotEmpty()) {
                 state.sourceList + missingFromSource
             } else {
                 state.sourceList
-            }
+            }).filterNot { state.isRemoved(it.song) }
 
             val currentPos = completeSourceList.indexOfFirst { it.song.id == currentItem.song.id }
             val remaining = if (currentPos >= 0) {
                 completeSourceList.drop(currentPos + 1).filter {
-                    it.song.id !in userQueueSongIds && it.song.id !in historySongIds
+                    it.song.id !in userQueueSongIds &&
+                        it.song.id !in historySongIds &&
+                        !state.isRemoved(it.song)
                 }
             } else {
                 completeSourceList.filter {
                     it.song.id != currentItem.song.id &&
                         it.song.id !in userQueueSongIds &&
-                        it.song.id !in historySongIds
+                        it.song.id !in historySongIds &&
+                        !state.isRemoved(it.song)
                 }
             }
 
             // Defensive safeguard: never drop existing upNext into an empty list if sourceList was deficient
-            val finalUpNext = if (remaining.isEmpty() && state.upNext.isNotEmpty()) {
-                state.upNext
+            val fallbackUpNext = state.upNext.filterNot { state.isRemoved(it.song) }
+            val finalUpNext = if (remaining.isEmpty() && fallbackUpNext.isNotEmpty()) {
+                fallbackUpNext
             } else {
                 remaining.map { QueueItem(it.song) }
             }
@@ -812,17 +895,17 @@ class QueueManager(initialState: QueueState = QueueState()) {
             for (s in songs) {
                 val exists = allExisting.any { it.isSameTrackAs(s) }
                 val alreadyAdded = fresh.any { it.isSameTrackAs(s) }
-                if (!exists && !alreadyAdded) {
+                if (!exists && !alreadyAdded && !state.isRemoved(s)) {
                     fresh.add(s)
                 }
             }
             if (fresh.isEmpty()) return state
 
             val newItems = fresh.map { QueueItem(it, isSmartRecommended = false) }
-            val updatedSourceList = state.sourceList + newItems
+            val updatedSourceList = state.sourceList.filterNot { state.isRemoved(it.song) } + newItems
             return state.copy(
                 sourceList = updatedSourceList,
-                upNext = state.upNext + newItems,
+                upNext = state.upNext.filterNot { state.isRemoved(it.song) } + newItems,
             )
         }
 
@@ -851,13 +934,13 @@ class QueueManager(initialState: QueueState = QueueState()) {
             for (candidate in recommendations) {
                 val existsInPlaylistOrQueue = existingSongs.any { it.isSameTrackAs(candidate) }
                 val alreadyInFresh = fresh.any { it.isSameTrackAs(candidate) }
-                if (!existsInPlaylistOrQueue && !alreadyInFresh) {
+                if (!existsInPlaylistOrQueue && !alreadyInFresh && !state.isRemoved(candidate)) {
                     fresh.add(candidate)
                 }
             }
             if (fresh.isEmpty()) return state
 
-            val baseItems = state.upNext.filter { !it.isSmartRecommended }
+            val baseItems = state.upNext.filter { !it.isSmartRecommended && !state.isRemoved(it.song) }
             if (baseItems.isEmpty()) {
                 val injected = fresh.take(3).map { QueueItem(it, isSmartRecommended = true) }
                 return state.copy(upNext = injected)
@@ -931,9 +1014,18 @@ class QueueManager(initialState: QueueState = QueueState()) {
             return state
         }
 
-        fun clearUpcoming(state: QueueState): QueueState = state.copy(
+        fun clearUpcoming(state: QueueState, clearRemoved: Boolean = false): QueueState = state.copy(
             userQueue = emptyList(),
             upNext = emptyList(),
+            removedSongIds = if (clearRemoved) emptySet() else state.removedSongIds,
+            removedGroupIds = if (clearRemoved) emptySet() else state.removedGroupIds,
+            removedRecordingIds = if (clearRemoved) emptySet() else state.removedRecordingIds,
+        )
+
+        fun clearRemoved(state: QueueState): QueueState = state.copy(
+            removedSongIds = emptySet(),
+            removedGroupIds = emptySet(),
+            removedRecordingIds = emptySet(),
         )
 
         fun clear(state: QueueState): QueueState = QueueState(
@@ -942,16 +1034,27 @@ class QueueManager(initialState: QueueState = QueueState()) {
 
         /**
          * Restores the exact track, position-associated runway [upNext], [userQueue], [history],
-         * original [sourceList] context, shuffle mode, and repeat mode from a persisted checkpoint.
+         * original [sourceList] context, shuffle mode, repeat mode, and removed track sets
+         * from a persisted checkpoint.
          */
         fun restore(
             state: QueueState,
             saved: PersistedPlaybackState,
             allowSmartShuffle: Boolean = false,
         ): QueueState {
-            val sourceSongs = saved.sourceList.ifEmpty {
+            val removedFilterState = QueueState(
+                removedSongIds = saved.removedSongIds,
+                removedGroupIds = saved.removedGroupIds,
+                removedRecordingIds = saved.removedRecordingIds,
+            )
+            val rawSourceSongs = saved.sourceList.ifEmpty {
                 (saved.history + listOf(saved.song) + saved.upNext).distinctBy { it.id }
             }
+            val sourceSongs = rawSourceSongs.filterNot {
+                it.id != saved.song.id && removedFilterState.isRemoved(it)
+            }
+            val upNextSongs = saved.upNext.filterNot { removedFilterState.isRemoved(it) }
+            val userQueueSongs = saved.userQueue.filterNot { removedFilterState.isRemoved(it) }
             val effectiveShuffle = if (saved.shuffleMode == ShuffleMode.SMART && !allowSmartShuffle) {
                 ShuffleMode.STANDARD
             } else {
@@ -961,11 +1064,14 @@ class QueueManager(initialState: QueueState = QueueState()) {
                 sourceList = sourceSongs.map { QueueItem(it) },
                 history = saved.history.map { QueueItem(it) },
                 current = QueueItem(saved.song),
-                userQueue = saved.userQueue.map { QueueItem(it) },
-                upNext = saved.upNext.map { QueueItem(it) },
+                userQueue = userQueueSongs.map { QueueItem(it) },
+                upNext = upNextSongs.map { QueueItem(it) },
                 shuffleMode = effectiveShuffle,
                 repeatMode = saved.repeatMode,
                 autoplayOn = state.autoplayOn,
+                removedSongIds = saved.removedSongIds,
+                removedGroupIds = saved.removedGroupIds,
+                removedRecordingIds = saved.removedRecordingIds,
             )
         }
 

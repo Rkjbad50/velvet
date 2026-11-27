@@ -184,6 +184,7 @@ class PlaybackService : MediaSessionService() {
     private fun buildCurrentPersistedStateOrNull(): PersistedPlaybackState? {
         if (!::exo.isInitialized) return null
         val currentSong = exo.currentMediaItem?.toSong() ?: return null
+        val qState = PlayerConnection.queueManager.state
         return PersistedPlaybackState(
             song = currentSong,
             positionMs = exo.currentPosition.coerceAtLeast(0L),
@@ -198,6 +199,9 @@ class PlaybackService : MediaSessionService() {
             radioSeedSong = PlayerConnection.radioSeedSong,
             shuffleMode = PlayerConnection.queueManager.shuffleMode,
             repeatMode = PlayerConnection.queueManager.repeatMode,
+            removedSongIds = qState.removedSongIds,
+            removedGroupIds = qState.removedGroupIds,
+            removedRecordingIds = qState.removedRecordingIds,
         )
     }
 
