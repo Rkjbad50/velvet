@@ -16,12 +16,16 @@ data class RadioSessionState(
     val recentPositiveTracks: List<Song> = emptyList(),
     val playedRecordingIds: Set<String> = emptySet(),
     val skippedRecordingIds: Set<String> = emptySet(),
+    val skippedArtistCounts: Map<String, Int> = emptyMap(),
+    val skippedGenreCounts: Map<String, Int> = emptyMap(),
     val selectedArtistId: String? = null,
     val startedAtMillis: Long,
     val updatedAtMillis: Long,
 )
 
 class RadioSessionManager(
+    private val featureRepository: com.velvet.app.recommendation.features.TrackFeatureRepository =
+        com.velvet.app.recommendation.features.TrackFeatureRepository(),
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private var currentSession: RadioSessionState? = null
@@ -64,7 +68,8 @@ class RadioSessionManager(
         val recId = RecordingIdentityResolver.resolve(track).canonicalRecordingId
         val anchorRecId = RecordingIdentityResolver.resolve(session.initialAnchorSong).canonicalRecordingId
         val nextPlayed = session.playedRecordingIds + recId
-        if (recId == anchorRecId || recId in session.skippedRecordingIds) {
+        // C6: Keep Artist Radio anchor strictly locked (never drift onto collaborators/neighbours)
+        if (session.mode == RecommendationMode.ARTIST_RADIO || recId == anchorRecId || recId in session.skippedRecordingIds) {
             currentSession = session.copy(playedRecordingIds = nextPlayed, updatedAtMillis = clock())
             return
         }
@@ -83,14 +88,31 @@ class RadioSessionManager(
     fun onTrackSkippedEarly(track: Song) {
         val session = currentSession ?: return
         val recId = RecordingIdentityResolver.resolve(track).canonicalRecordingId
+        val feat = featureRepository.getCachedOrExtract(track)
+        val nextArtistCounts = session.skippedArtistCounts.toMutableMap()
+        ArtistStationPolicy.extractAllArtistKeys(track, feat).forEach { ak ->
+            nextArtistCounts[ak] = (nextArtistCounts[ak] ?: 0) + 1
+        }
+        val nextGenreCounts = session.skippedGenreCounts.toMutableMap()
+        feat.genreIds.filterValues { it >= 0.45 }.keys.forEach { g ->
+            nextGenreCounts[g] = (nextGenreCounts[g] ?: 0) + 1
+        }
         currentSession = session.copy(
             skippedRecordingIds = session.skippedRecordingIds + recId,
+            skippedArtistCounts = nextArtistCounts,
+            skippedGenreCounts = nextGenreCounts,
             recentPositiveTracks = session.recentPositiveTracks.filterNot {
                 RecordingIdentityResolver.resolve(it).canonicalRecordingId == recId
             },
             updatedAtMillis = clock(),
         )
     }
+
+    @Synchronized
+    fun sessionSkippedArtistCounts(): Map<String, Int> = currentSession?.skippedArtistCounts.orEmpty()
+
+    @Synchronized
+    fun sessionSkippedGenreCounts(): Map<String, Int> = currentSession?.skippedGenreCounts.orEmpty()
 
     /**
      * Ordered seeds: [0] = initialAnchor (45%), [1] = most recent positive (25%),
@@ -99,6 +121,9 @@ class RadioSessionManager(
     @Synchronized
     fun evolvedSeedSongs(fallbackSeed: Song): List<Song> {
         val session = currentSession ?: return listOf(fallbackSeed)
+        if (session.mode == RecommendationMode.ARTIST_RADIO) {
+            return listOf(session.initialAnchorSong)
+        }
         return buildList {
             add(session.initialAnchorSong)
             addAll(session.recentPositiveTracks.reversed().take(3))

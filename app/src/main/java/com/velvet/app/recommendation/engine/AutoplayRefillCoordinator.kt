@@ -62,6 +62,9 @@ data class QueueRefillSnapshot(
     val allowMixedLanguages: Boolean = false,
     val artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> = emptyMap(),
     val fallbackAnchorPool: List<Song> = emptyList(),
+    val randomSeed: Long? = null,
+    val sessionSkippedArtistCounts: Map<String, Int> = emptyMap(),
+    val sessionSkippedGenreCounts: Map<String, Int> = emptyMap(),
 )
 
 sealed class RefillDecision {
@@ -321,6 +324,9 @@ class AutoplayRefillCoordinator(
                         allowMixedLanguages = initialSnapshot.allowMixedLanguages,
                         artistLanguageMap = initialSnapshot.artistLanguageMap,
                         sessionVibeOverride = lockedVibe,
+                        randomSeed = initialSnapshot.randomSeed,
+                        sessionSkippedArtistCounts = initialSnapshot.sessionSkippedArtistCounts,
+                        sessionSkippedGenreCounts = initialSnapshot.sessionSkippedGenreCounts,
                     )
                 }
             } catch (_: TimeoutCancellationException) {
@@ -387,7 +393,7 @@ class AutoplayRefillCoordinator(
                 val recId = RecordingIdentityResolver.resolve(song).canonicalRecordingId
                 if (recId in alreadyInQueueIds || SongIdentity.canonicalGroupId(song) in alreadyInQueueIds) return false
                 val compKey = RecordingIdentityResolver.canonicalCompositionTitleKey(song)
-                if (!latest.isArtistRadioActive && compKey.isNotBlank() && compKey in alreadySeenComps) return false
+                if (compKey.isNotBlank() && compKey in alreadySeenComps) return false
                 return true
             }
 

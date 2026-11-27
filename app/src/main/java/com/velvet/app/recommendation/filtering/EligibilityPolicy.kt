@@ -208,6 +208,21 @@ class DefaultEligibilityPolicy : EligibilityPolicy {
             }
         }
 
+        if (request.mode == RecommendationMode.ARTIST_RADIO && !request.allowExplicitUserIntentOverride) {
+            val stationCtx = com.velvet.app.recommendation.modes.ArtistStationPolicy.buildContext(
+                request = request,
+                seedFeatures = seedFeatures,
+            )
+            val tier = com.velvet.app.recommendation.modes.ArtistStationPolicy.classify(
+                candidate = candidate,
+                ctx = stationCtx,
+                request = request,
+            )
+            if (tier == com.velvet.app.recommendation.modes.ArtistStationTier.UNRELATED_ARTIST) {
+                reasons.add("artist_station_unrelated_artist")
+            }
+        }
+
         return EligibilityDecision(
             eligible = reasons.isEmpty(),
             reasons = reasons,

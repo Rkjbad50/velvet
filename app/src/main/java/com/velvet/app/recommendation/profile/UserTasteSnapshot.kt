@@ -86,6 +86,8 @@ data class FatigueSnapshot(
     val dailyOverplayedRecordingIds: Set<String> = emptySet(),
     val singleSkipPenalties: Map<String, Double> = emptyMap(),
     val repeatedArtistPenalty: Map<String, Double> = emptyMap(),
+    val sessionArtistSkipPenalties: Map<String, Double> = emptyMap(),
+    val sessionGenreSkipPenalties: Map<String, Double> = emptyMap(),
 )
 
 /**
@@ -103,7 +105,14 @@ data class UserTasteSnapshot(
     val generatedAtMillis: Long = 0L,
     val sourceEventWatermark: String = "empty",
     val processedEventCount: Int = 0,
+    val lastPlayedMillisByRecording: Map<String, Long> = emptyMap(),
 ) {
+    fun lastPlayedMillis(song: Song, canonicalRecordingId: String? = null): Long? {
+        val canon = canonicalRecordingId ?: RecordingIdentityResolver.resolve(song).canonicalRecordingId
+        return lastPlayedMillisByRecording[canon]
+            ?: lastPlayedMillisByRecording[song.id]
+            ?: lastPlayedMillisByRecording[SongIdentity.canonicalGroupId(song)]
+    }
     fun isExplicitlyDisliked(song: Song): Boolean {
         val identity = RecordingIdentityResolver.resolve(song)
         val legacyGroup = SongIdentity.canonicalGroupId(song)

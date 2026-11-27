@@ -39,6 +39,9 @@ interface RecommendationEngine {
         allowMixedLanguages: Boolean = false,
         artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> = emptyMap(),
         sessionVibeOverride: com.velvet.app.recommendation.vibe.SessionVibe? = null,
+        randomSeed: Long? = null,
+        sessionSkippedArtistCounts: Map<String, Int> = emptyMap(),
+        sessionSkippedGenreCounts: Map<String, Int> = emptyMap(),
     ): RecommendationResult
 
     fun invalidateCandidateCache(seedId: String? = null)
@@ -103,6 +106,7 @@ class DefaultRecommendationEngine(
             request = effectiveRequest,
             recentHistoryFeatures = recentFeatures,
             seedFeatures = seamAnchorFeatures,
+            userProfile = profile,
         )
         val finalTracks = applyLibraryRediscoveryCap(
             selected = sequenced.tracks,
@@ -110,6 +114,7 @@ class DefaultRecommendationEngine(
             request = effectiveRequest,
             recentHistoryFeatures = recentFeatures,
             seedFeatures = seamAnchorFeatures,
+            userProfile = profile,
         )
 
         val finishedAt = clock()
@@ -170,6 +175,7 @@ class DefaultRecommendationEngine(
         request: RecommendationRequest,
         recentHistoryFeatures: List<com.velvet.app.recommendation.model.TrackFeatureRecord>,
         seedFeatures: com.velvet.app.recommendation.model.TrackFeatureRecord?,
+        userProfile: com.velvet.app.recommendation.profile.UserTasteSnapshot? = null,
     ): List<com.velvet.app.recommendation.model.RecommendedTrack> {
         if (request.mode !in setOf(RecommendationMode.AUTOPLAY_REFILL, RecommendationMode.SIMILAR_SONGS, RecommendationMode.SONG_RADIO)) {
             return selected
@@ -210,6 +216,7 @@ class DefaultRecommendationEngine(
                 request = request.copy(limit = fillSlots, excludedRecordingIds = request.excludedRecordingIds + existingRecs),
                 recentHistoryFeatures = recentHistoryFeatures,
                 seedFeatures = seedFeatures,
+                userProfile = userProfile,
             ).tracks
             kept.addAll(extra.take(fillSlots))
         }
@@ -234,6 +241,9 @@ class DefaultRecommendationEngine(
         allowMixedLanguages: Boolean,
         artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile>,
         sessionVibeOverride: com.velvet.app.recommendation.vibe.SessionVibe?,
+        randomSeed: Long?,
+        sessionSkippedArtistCounts: Map<String, Int>,
+        sessionSkippedGenreCounts: Map<String, Int>,
     ): RecommendationResult {
         val snapshotRecs = contextSnapshot.map { RecordingIdentityResolver.resolve(it).canonicalRecordingId }
         val snapshotIds = contextSnapshot.map { it.id }
@@ -259,6 +269,9 @@ class DefaultRecommendationEngine(
             allowMixedLanguages = allowMixedLanguages,
             artistLanguageMap = artistLanguageMap,
             sessionVibe = sessionVibeOverride,
+            randomSeed = randomSeed,
+            sessionSkippedArtistCounts = sessionSkippedArtistCounts,
+            sessionSkippedGenreCounts = sessionSkippedGenreCounts,
             createdAtMillis = clock(),
         )
         return recommend(request)

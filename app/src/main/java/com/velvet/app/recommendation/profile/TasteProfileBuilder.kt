@@ -221,6 +221,9 @@ class TasteProfileBuilder(
         val earlySkipProviderIds = mutableMapOf<String, MutableList<Long>>()
         val artistEarlySkips14d = mutableMapOf<String, MutableSet<String>>()
         val singleSkipRaw = mutableMapOf<String, Double>()
+        val sessionArtistSkips = mutableMapOf<String, Int>()
+        val sessionGenreSkips = mutableMapOf<String, Int>()
+        val lastPlayedByRec = mutableMapOf<String, Long>()
         val sessionRemovedRecs = linkedSetOf<String>()
         val sessionRemovedProviders = linkedSetOf<String>()
         val dailyPlayTimesByRec = mutableMapOf<String, MutableList<Long>>()
@@ -334,6 +337,9 @@ class TasteProfileBuilder(
                 }
 
                 RecommendationEventType.TRACK_MEANINGFUL_LISTEN -> {
+                    recKeys.forEach { k -> lastPlayedByRec[k] = maxOf(lastPlayedByRec[k] ?: 0L, event.occurredAtMillis) }
+                    primaryRecKey?.let { lastPlayedByRec[it] = maxOf(lastPlayedByRec[it] ?: 0L, event.occurredAtMillis) }
+                    event.providerItemId?.let { lastPlayedByRec[it] = maxOf(lastPlayedByRec[it] ?: 0L, event.occurredAtMillis) }
                     val playKey = "${event.recommendationSessionId ?: "na"}:${event.providerItemId ?: primaryRecKey}:${event.occurredAtMillis / 60_000L}"
                     if (meaningfulSeenPerPlayKey.add(playKey)) {
                         val w = 0.85
@@ -368,6 +374,9 @@ class TasteProfileBuilder(
 
                 RecommendationEventType.TRACK_COMPLETED,
                 RecommendationEventType.AUTOPLAY_TRACK_COMPLETED -> {
+                    recKeys.forEach { k -> lastPlayedByRec[k] = maxOf(lastPlayedByRec[k] ?: 0L, event.occurredAtMillis) }
+                    primaryRecKey?.let { lastPlayedByRec[it] = maxOf(lastPlayedByRec[it] ?: 0L, event.occurredAtMillis) }
+                    event.providerItemId?.let { lastPlayedByRec[it] = maxOf(lastPlayedByRec[it] ?: 0L, event.occurredAtMillis) }
                     val playKey = "${event.recommendationSessionId ?: "na"}:${event.providerItemId ?: primaryRecKey}:${event.occurredAtMillis / 60_000L}"
                     if (completedSeenPerPlayKey.add(playKey)) {
                         val base = if ("migrated_legacy_listen_event" in event.sessionContextTags) 0.9 else 1.2
@@ -389,6 +398,9 @@ class TasteProfileBuilder(
                 }
 
                 RecommendationEventType.TRACK_REPLAYED_MANUALLY -> {
+                    recKeys.forEach { k -> lastPlayedByRec[k] = maxOf(lastPlayedByRec[k] ?: 0L, event.occurredAtMillis) }
+                    primaryRecKey?.let { lastPlayedByRec[it] = maxOf(lastPlayedByRec[it] ?: 0L, event.occurredAtMillis) }
+                    event.providerItemId?.let { lastPlayedByRec[it] = maxOf(lastPlayedByRec[it] ?: 0L, event.occurredAtMillis) }
                     val unverifiedLegacy = "legacy_replay_unverified_repeat" in event.sessionContextTags
                     val base = if (unverifiedLegacy) 0.35 else 2.0
                     longAcc.add(base * longDecay, primaryRecKey, workId, artistKeys, albumKey, features)
@@ -457,6 +469,15 @@ class TasteProfileBuilder(
                         // Mild short-lived session negative only (NEVER nukes whole genre or artist on 1 skip)
                         if (inCurrentSession || ageMs <= SESSION_WINDOW_MS) {
                             sessAcc.add(-0.25 * sessDecay, primaryRecKey, null, emptySet(), null, null)
+                            artistKeys.forEach { ak ->
+                                sessionArtistSkips[ak] = (sessionArtistSkips[ak] ?: 0) + 1
+                            }
+                            features?.genreIds
+                                ?.filterValues { it >= 0.45 }
+                                ?.keys
+                                ?.forEach { g ->
+                                    sessionGenreSkips[g] = (sessionGenreSkips[g] ?: 0) + 1
+                                }
                         }
                     } else {
                         // Late skip (>= 30s): negligible negative on item only
@@ -557,11 +578,18 @@ class TasteProfileBuilder(
                 dailyOverplayedRecordingIds = dailyPlayTimesByRec.filter { (_, ts) -> ts.size >= 3 }.keys.toSet(),
                 singleSkipPenalties = singleSkipRaw.mapValues { (_, v) -> v.coerceIn(0.0, 0.5) },
                 repeatedArtistPenalty = repeatedArtistPenalty,
+                sessionArtistSkipPenalties = sessionArtistSkips.mapValues { (_, count) ->
+                    (0.18 * count).coerceAtMost(0.45)
+                },
+                sessionGenreSkipPenalties = sessionGenreSkips.mapValues { (_, count) ->
+                    (0.14 * count).coerceAtMost(0.35)
+                },
             ),
             noveltyPreference = novelty,
             generatedAtMillis = nowMillis,
             sourceEventWatermark = watermark,
             processedEventCount = sorted.size,
+            lastPlayedMillisByRecording = lastPlayedByRec.toMap(),
         )
     }
 

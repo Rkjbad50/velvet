@@ -61,6 +61,10 @@ object InstantTrackCatalog {
         limit: Int = 10,
         allowMixedLanguages: Boolean = false,
         artistLanguageMap: Map<String, ArtistLanguageProfile> = ArtistLanguageRegistry.snapshot(),
+        tasteSnapshot: com.velvet.app.recommendation.profile.UserTasteSnapshot? = null,
+        sessionSkippedArtistCounts: Map<String, Int> = emptyMap(),
+        sessionSkippedGenreCounts: Map<String, Int> = emptyMap(),
+        nowMillis: Long = System.currentTimeMillis(),
     ): List<Song> {
         val combined = (pool.values + extraPool).distinctBy { it.id }
         if (combined.isEmpty() || limit <= 0) return emptyList()
@@ -90,6 +94,9 @@ object InstantTrackCatalog {
             if (cand.durationSec == 0L || cand.durationSec in 1L..44L) return@mapNotNull null
             val identity = RecordingIdentityResolver.resolve(cand)
             if (!identity.releaseClassification.isVerifiedOriginalAudio) return@mapNotNull null
+            if (tasteSnapshot != null && (tasteSnapshot.isExplicitlyDisliked(cand) || tasteSnapshot.isFatiguedOrRemovedInSession(cand))) {
+                return@mapNotNull null
+            }
             if (identity.canonicalRecordingId in excludedRecIds ||
                 SongIdentity.canonicalGroupId(cand) in excludedRecIds
             ) {
@@ -157,8 +164,45 @@ object InstantTrackCatalog {
             val artistBonus = if (sameArtist) 0.35 else 0.0
             val tierBonus = identity.releaseClassification.audioClass.qualityTier * 0.02
 
+            var tasteBoost = 0.0
+            if (tasteSnapshot != null) {
+                val candArtistTaste = feat.artistDisplayNames
+                    .maxOfOrNull { tasteSnapshot.longTerm.artistAffinity(it) * 0.6 + tasteSnapshot.mediumTerm.artistAffinity(it) * 0.4 }
+                    ?: 0.0
+                val candGenreTaste = feat.genreIds.entries.maxOfOrNull { (g, c) ->
+                    ((tasteSnapshot.longTerm.genreWeights[g] ?: 0.0) * 0.6 + (tasteSnapshot.mediumTerm.genreWeights[g] ?: 0.0) * 0.4) * c
+                } ?: 0.0
+                val candEraTaste = feat.eraBucket?.let { tasteSnapshot.longTerm.eraWeights[it] ?: 0.0 } ?: 0.0
+                val likedBonus = if (
+                    identity.canonicalRecordingId in tasteSnapshot.explicit.likedRecordingIds ||
+                    cand.id in tasteSnapshot.explicit.likedProviderIds
+                ) 0.10 else 0.0
+                val effectiveNow = tasteSnapshot.generatedAtMillis.takeIf { it > 0L } ?: nowMillis
+                val lastPlayed = tasteSnapshot.lastPlayedMillis(cand, identity.canonicalRecordingId)
+                val freshnessBoost = if (lastPlayed != null && (effectiveNow - lastPlayed) >= 30L * 86_400_000L) 0.08 else 0.0
+                tasteBoost = (candArtistTaste * 0.22) + (candGenreTaste * 0.14) + (candEraTaste * 0.08) + likedBonus + freshnessBoost
+            }
+
+            val candArtistKeys = com.velvet.app.recommendation.modes.ArtistStationPolicy.extractAllArtistKeys(cand, feat)
+            val skipArtistPen = if (!sameArtist) {
+                candArtistKeys.maxOfOrNull { ak ->
+                    maxOf(
+                        tasteSnapshot?.fatigue?.sessionArtistSkipPenalties?.get(ak) ?: 0.0,
+                        ((sessionSkippedArtistCounts[ak] ?: 0) * 0.18).coerceAtMost(0.45),
+                    )
+                } ?: 0.0
+            } else 0.0
+            val skipGenrePen = if (!sameArtist) {
+                feat.genreIds.filterValues { it >= 0.45 }.keys.maxOfOrNull { g ->
+                    maxOf(
+                        tasteSnapshot?.fatigue?.sessionGenreSkipPenalties?.get(g) ?: 0.0,
+                        ((sessionSkippedGenreCounts[g] ?: 0) * 0.14).coerceAtMost(0.35),
+                    )
+                } ?: 0.0
+            } else 0.0
+
             val total = genreSim * 0.45 + subgenreBonus + typeSim * 0.25 + moodOverlap * 0.12 +
-                langBonus + eraBonus + artistBonus + tierBonus
+                langBonus + eraBonus + artistBonus + tierBonus + tasteBoost - skipArtistPen - skipGenrePen
 
             cand to total
         }.sortedByDescending { it.second }
@@ -205,6 +249,10 @@ class InstantTrackCatalogCandidateSource(
                 limit = request.maxCandidates,
                 allowMixedLanguages = request.request.allowMixedLanguages,
                 artistLanguageMap = request.request.artistLanguageMap,
+                tasteSnapshot = request.userProfile,
+                sessionSkippedArtistCounts = request.request.sessionSkippedArtistCounts,
+                sessionSkippedGenreCounts = request.request.sessionSkippedGenreCounts,
+                nowMillis = clock(),
             )
             val wrapped = matches.mapIndexed { idx, song ->
                 RawTrackCandidate(

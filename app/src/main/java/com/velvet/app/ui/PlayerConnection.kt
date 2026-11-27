@@ -1272,6 +1272,9 @@ object PlayerConnection {
                 val anchor = radioSeedSong ?: activeSong
                 if (anchor != null) VelvetApp.radioSessionManagerOrNull()?.evolvedSeedSongs(anchor).orEmpty() else emptyList()
             } else emptyList(),
+            randomSeed = if (!isArtistRadioActive) (ver * 1_000_003L) xor (activeSong?.id?.hashCode()?.toLong() ?: 0L) else null,
+            sessionSkippedArtistCounts = VelvetApp.radioSessionManagerOrNull()?.sessionSkippedArtistCounts().orEmpty(),
+            sessionSkippedGenreCounts = VelvetApp.radioSessionManagerOrNull()?.sessionSkippedGenreCounts().orEmpty(),
         )
     }
 

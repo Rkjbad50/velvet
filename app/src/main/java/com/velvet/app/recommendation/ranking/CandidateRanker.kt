@@ -72,11 +72,28 @@ class DefaultCandidateRanker(
                 computeSearchIntentFit(cand, feat, profile)
             } else 0.0
 
+            val selectedKeys = request.selectedArtistId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { com.velvet.app.recommendation.vibe.ArtistLanguageMap.allArtistKeys(it) }
+                ?: seedSong?.artist?.let { com.velvet.app.recommendation.vibe.ArtistLanguageMap.allArtistKeys(it) }
+                    .orEmpty()
+            val candArtistKeys = if (feat != null) {
+                com.velvet.app.recommendation.modes.ArtistStationPolicy.extractAllArtistKeys(cand.song, feat)
+            } else {
+                com.velvet.app.recommendation.vibe.ArtistLanguageMap.allArtistKeys(cand.song.artist)
+            }
             val selectedArtistNorm = request.selectedArtistId?.let(::normalizePrimaryArtist)
                 ?: seedSong?.artist?.let(::normalizePrimaryArtist)
-            val isSamePrimaryArtist = !selectedArtistNorm.isNullOrBlank() &&
-                feat?.primaryArtistIds?.any { it == selectedArtistNorm || it.contains(selectedArtistNorm) || selectedArtistNorm.contains(it) } == true
-            val rawSelectedArtist = if (request.mode == RecommendationMode.ARTIST_RADIO && isSamePrimaryArtist) 1.0 else 0.0
+            val candPrimaryNorm = normalizePrimaryArtist(cand.song.artist)
+            val isSamePrimaryArtist = !selectedArtistNorm.isNullOrBlank() && candPrimaryNorm.isNotBlank() &&
+                (candPrimaryNorm == selectedArtistNorm || candPrimaryNorm.contains(selectedArtistNorm) || selectedArtistNorm.contains(candPrimaryNorm))
+            val isFeaturedArtist = !isSamePrimaryArtist && selectedKeys.isNotEmpty() && candArtistKeys.any { it in selectedKeys }
+            val rawSelectedArtist = when {
+                request.mode != RecommendationMode.ARTIST_RADIO -> 0.0
+                isSamePrimaryArtist -> 1.0
+                isFeaturedArtist -> 0.90
+                else -> 0.0
+            }
             val rawPersonalArtist = if (compatibleMusic && feat != null) {
                 feat.artistDisplayNames
                     .maxOfOrNull { profile.longTerm.artistAffinity(it) * 0.6 + profile.mediumTerm.artistAffinity(it) * 0.4 }
@@ -86,7 +103,18 @@ class DefaultCandidateRanker(
             val rawQuality = computeQualityFit(cand, feat)
             val rawNovelty = computeNoveltyFit(cand, profile)
 
-            val penalties = computePenalties(cand, feat, seedFeatures, rawType, rawGenre, rawMood, profile, weights.penaltyScale)
+            val penalties = computePenalties(
+                cand = cand,
+                feat = feat,
+                seed = seedFeatures,
+                rawType = rawType,
+                rawGenre = rawGenre,
+                rawMood = rawMood,
+                profile = profile,
+                scale = weights.penaltyScale,
+                req = request,
+                rawSelectedArtist = rawSelectedArtist,
+            )
             val totalPenalties = penalties.values.sum()
 
             val wType = rawType * weights.typeFit
@@ -105,8 +133,15 @@ class DefaultCandidateRanker(
 
             val completeness = feat?.metadataCompleteness ?: 0.25
             val confMult = (0.70 + 0.30 * completeness).coerceIn(0.70, 1.0)
+            val freshnessBonus = computeFreshnessBonus(cand, profile, request)
+            val artistRadioOrderBonus = if (request.mode == RecommendationMode.ARTIST_RADIO && rawSelectedArtist > 0.0) {
+                val bestRank = cand.sourceEvidence.mapNotNull { it.rank }.minOrNull()
+                val popScore = bestRank?.let { 1.0 / (1.0 + it * 0.15) } ?: 0.5
+                val recencyScore = feat?.eraStartYear?.let { ((it - 1960).coerceIn(0, 70) / 70.0) } ?: 0.5
+                0.04 * popScore + 0.02 * recencyScore
+            } else 0.0
             val rawPositiveSum = wType + wGenre + wMood + wAudio + wTempo + wLang + wEra +
-                wContext + wPersonal + wSearch + wArtist + wQuality + wNovelty
+                wContext + wPersonal + wSearch + wArtist + wQuality + wNovelty + freshnessBonus + artistRadioOrderBonus
             val total = sanitize((rawPositiveSum * confMult) - totalPenalties)
 
             val breakdown = RankScoreBreakdown(
@@ -122,13 +157,13 @@ class DefaultCandidateRanker(
                 searchIntentFit = sanitize(wSearch),
                 artistAffinityFit = sanitize(wArtist),
                 qualityFit = sanitize(wQuality),
-                noveltyFit = sanitize(wNovelty),
+                noveltyFit = sanitize(wNovelty + freshnessBonus),
                 penalties = penalties.mapValues { (_, v) -> sanitize(v) },
                 confidenceMultiplier = sanitize(confMult),
                 total = total,
             )
 
-            val reasons = buildReasons(cand, rawType, rawGenre, rawMood, rawTempo, rawSelectedArtist, rawPersonalTaste, rawQuality, penalties, breakdown)
+            val reasons = buildReasons(cand, rawType, rawGenre, rawMood, rawTempo, rawSelectedArtist, rawPersonalTaste, rawQuality, penalties, breakdown, freshnessBonus)
 
             RankedCandidate(
                 candidate = cand,
@@ -399,6 +434,17 @@ class DefaultCandidateRanker(
         }
     }
 
+    private fun computeFreshnessBonus(
+        cand: CandidateTrack,
+        profile: UserTasteSnapshot,
+        req: RecommendationRequest,
+    ): Double {
+        val now = profile.generatedAtMillis.takeIf { it > 0L } ?: req.createdAtMillis
+        val lastPlayed = profile.lastPlayedMillis(cand.song, cand.identity.canonicalRecordingId) ?: return 0.0
+        val elapsed = (now - lastPlayed).coerceAtLeast(0L)
+        return if (elapsed >= 30L * 24L * 60L * 60L * 1000L) 0.10 else 0.0
+    }
+
     private fun computePenalties(
         cand: CandidateTrack,
         feat: TrackFeatureRecord?,
@@ -408,6 +454,8 @@ class DefaultCandidateRanker(
         rawMood: Double,
         profile: UserTasteSnapshot,
         scale: Double,
+        req: RecommendationRequest,
+        rawSelectedArtist: Double,
     ): Map<String, Double> {
         val map = linkedMapOf<String, Double>()
         val recId = cand.identity.canonicalRecordingId
@@ -422,6 +470,34 @@ class DefaultCandidateRanker(
         } ?: 0.0
         if (artistPenalty < 0.0) {
             map["repeated_artist_skip"] = abs(artistPenalty).coerceAtMost(0.35) * scale
+        }
+        if (rawSelectedArtist == 0.0) {
+            val candArtistKeys = if (feat != null) {
+                com.velvet.app.recommendation.modes.ArtistStationPolicy.extractAllArtistKeys(cand.song, feat)
+            } else {
+                com.velvet.app.recommendation.vibe.ArtistLanguageMap.allArtistKeys(cand.song.artist)
+            }
+            val sessionArtistPen = candArtistKeys.maxOfOrNull { ak ->
+                maxOf(
+                    profile.fatigue.sessionArtistSkipPenalties[ak] ?: 0.0,
+                    ((req.sessionSkippedArtistCounts[ak] ?: 0) * 0.18).coerceAtMost(0.45),
+                )
+            } ?: 0.0
+            if (sessionArtistPen > 0.0) {
+                map["session_artist_skip"] = sessionArtistPen * scale
+            }
+            val sessionGenrePen = feat?.genreIds
+                ?.filterValues { it >= 0.45 }
+                ?.keys
+                ?.maxOfOrNull { g ->
+                    maxOf(
+                        profile.fatigue.sessionGenreSkipPenalties[g] ?: 0.0,
+                        ((req.sessionSkippedGenreCounts[g] ?: 0) * 0.14).coerceAtMost(0.35),
+                    )
+                } ?: 0.0
+            if (sessionGenrePen > 0.0) {
+                map["session_genre_skip"] = sessionGenrePen * scale
+            }
         }
         val seedDur = seed?.durationMs
         val candDur = feat?.durationMs
@@ -447,6 +523,7 @@ class DefaultCandidateRanker(
         rawQuality: Double,
         penalties: Map<String, Double>,
         breakdown: RankScoreBreakdown,
+        freshnessBonus: Double = 0.0,
     ): List<RecommendationReason> = buildList {
         if (rawType > 0.5) add(RecommendationReason("TYPE_MATCH", "Matches seed musical category", breakdown.musicTypeFit))
         if (rawGenre > 0.5) add(RecommendationReason("GENRE_MATCH", "Matches musical genre and style", breakdown.genreFit))
@@ -454,6 +531,7 @@ class DefaultCandidateRanker(
         if (rawTempo > 0.4) add(RecommendationReason("TEMPO_MATCH", "Compatible rhythm / tempo", breakdown.tempoEnergyFit))
         if (rawSelectedArtist > 0.0) add(RecommendationReason("SELECTED_ARTIST", "Requested Artist Radio performer", breakdown.artistAffinityFit))
         if (rawPersonal > 0.2) add(RecommendationReason("PERSONAL_TASTE", "Aligned with listening history", breakdown.personalTasteFit))
+        if (freshnessBonus > 0.0) add(RecommendationReason("FRESHNESS_30D_BOOST", "Rediscovered track unplayed for 30+ days", freshnessBonus))
         if (cand.identity.releaseClassification.isVerifiedOriginalAudio && rawQuality > 0.5) {
             add(RecommendationReason("VERIFIED_STUDIO_AUDIO", "Verified original studio audio (${cand.identity.releaseClassification.audioClass.name})", breakdown.qualityFit))
         }

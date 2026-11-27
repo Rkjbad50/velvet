@@ -2,10 +2,13 @@ package com.velvet.app.recommendation.sequencing
 
 import com.velvet.app.recommendation.identity.RecordingIdentityResolver
 import com.velvet.app.recommendation.model.RankedCandidate
+import com.velvet.app.recommendation.model.RecommendationMode
 import com.velvet.app.recommendation.model.RecommendationReason
 import com.velvet.app.recommendation.model.RecommendationRequest
 import com.velvet.app.recommendation.model.RecommendedTrack
 import com.velvet.app.recommendation.model.TrackFeatureRecord
+import com.velvet.app.recommendation.modes.ArtistStationPolicy
+import com.velvet.app.recommendation.profile.UserTasteSnapshot
 
 data class SequenceOptimizationResult(
     val tracks: List<RecommendedTrack>,
@@ -21,6 +24,7 @@ interface SequenceOptimizer {
         recentHistoryFeatures: List<TrackFeatureRecord> = emptyList(),
         seedFeatures: TrackFeatureRecord? = null,
         config: SequenceConfig = SequenceConfigs.forMode(request.mode, request.limit),
+        userProfile: UserTasteSnapshot? = null,
     ): SequenceOptimizationResult
 }
 
@@ -41,6 +45,7 @@ class DefaultSequenceOptimizer(
         val ranked: RankedCandidate,
         val breakdown: TransitionBreakdown,
         val combinedStepScore: Double,
+        val noveltySlot: Boolean = false,
     )
 
     private data class BeamState(
@@ -59,15 +64,11 @@ class DefaultSequenceOptimizer(
         recentHistoryFeatures: List<TrackFeatureRecord>,
         seedFeatures: TrackFeatureRecord?,
         config: SequenceConfig,
+        userProfile: UserTasteSnapshot?,
     ): SequenceOptimizationResult {
         if (ranked.isEmpty() || config.targetCount <= 0) {
             return SequenceOptimizationResult(emptyList(), usedBeamSearch = false, averageTransitionScore = 0.0)
         }
-
-        // Bounded candidate slice preserves determinism and strict latency ceiling
-        val pool = ranked.take(maxOf(config.targetCount * 3, config.candidateLookaheadLimit).coerceAtMost(ranked.size))
-        val targetCount = minOf(config.targetCount, pool.size)
-        val anchor = seedFeatures ?: recentHistoryFeatures.lastOrNull()
 
         val initialExcludedRecordings = request.excludedRecordingIds + request.queueRecordingIds
         val initialCompositionKeys = if (!request.allowExplicitUserIntentOverride) {
@@ -75,6 +76,57 @@ class DefaultSequenceOptimizer(
                 .mapNotNull { RecordingIdentityResolver.canonicalCompositionTitleKey(it).takeIf { k -> k.isNotBlank() } }
                 .toSet()
         } else emptySet()
+
+        // C6: Enforce Artist Radio station purity & 60/25/15 composition quotas strictly
+        if (request.mode == RecommendationMode.ARTIST_RADIO && !request.allowExplicitUserIntentOverride) {
+            val preFiltered = ranked.filter { item ->
+                item.candidate.identity.canonicalRecordingId !in initialExcludedRecordings &&
+                    (RecordingIdentityResolver.canonicalCompositionTitleKey(item.candidate.song).let { ck ->
+                        ck.isBlank() || ck !in initialCompositionKeys
+                    })
+            }
+            val shaped = ArtistStationPolicy.shapeBatch(
+                rankedPool = preFiltered,
+                limit = config.targetCount,
+                request = request,
+                seedFeatures = seedFeatures,
+            )
+            if (shaped.isEmpty()) {
+                return SequenceOptimizationResult(emptyList(), usedBeamSearch = false, averageTransitionScore = 0.0)
+            }
+            val anchor = seedFeatures ?: recentHistoryFeatures.lastOrNull()
+            var recent = recentHistoryFeatures.takeLast(6)
+            val steps = shaped.map { item ->
+                val trans = transitionScorer.scoreTransition(
+                    previous = recent.lastOrNull() ?: seedFeatures,
+                    candidate = item,
+                    recentWindow = recent,
+                    anchorFeatures = anchor,
+                    config = config,
+                )
+                item.candidate.features?.let { feat -> recent = (recent + feat).takeLast(6) }
+                BeamStep(item, trans, item.rankScore + config.transitionWeight * trans.total, noveltySlot = false)
+            }
+            val recommended = buildRecommendedTracks(steps)
+            val avgTrans = recommended.map { it.sequenceScore }.average()
+            return SequenceOptimizationResult(
+                tracks = recommended,
+                usedBeamSearch = false,
+                averageTransitionScore = avgTrans,
+            )
+        }
+
+        // Bounded candidate slice preserves determinism and strict latency ceiling
+        val pool = ranked.take(maxOf(config.targetCount * 3, config.candidateLookaheadLimit).coerceAtMost(ranked.size))
+        val targetCount = minOf(config.targetCount, pool.size)
+        val anchor = seedFeatures ?: recentHistoryFeatures.lastOrNull()
+
+        // C5: Seeded reproducible exploration jitter (identical seed -> identical queue; different seed -> varied)
+        val exploreJitter: Map<String, Double> = request.randomSeed?.let { seed ->
+            val rng = kotlin.random.Random(seed)
+            pool.associate { it.candidate.song.id to ((rng.nextDouble() - 0.5) * 0.14) }
+        } ?: emptyMap()
+
         val beamWidth = config.beamWidth.coerceIn(1, 6)
         val useBeam = beamWidth > 1 && pool.size > 1 && targetCount > 1
 
@@ -93,6 +145,9 @@ class DefaultSequenceOptimizer(
 
         for (stepIndex in 0 until targetCount) {
             val nextStates = mutableListOf<BeamState>()
+            val isNoveltySlotStep = userProfile != null &&
+                targetCount >= 5 &&
+                (stepIndex + 1) % 5 == 0
 
             for (state in beam) {
                 val eligibleAtStep = filterStepCandidates(
@@ -123,8 +178,22 @@ class DefaultSequenceOptimizer(
 
                 if (eligibleAtStep.isEmpty()) continue
 
-                val branchLimit = minOf(eligibleAtStep.size, if (useBeam) beamWidth * 2 else 1)
-                for (cand in eligibleAtStep.take(branchLimit)) {
+                // C5: 1-in-5 novelty slot promotes a verified vibe-valid unseen track when available
+                val stepPool = if (isNoveltySlotStep) {
+                    val topRank = eligibleAtStep.maxOf { it.rankScore }
+                    val unseenInVibe = eligibleAtStep.filter { cand ->
+                        isNewToUser(cand, userProfile!!) && cand.rankScore >= topRank - 0.40
+                    }
+                    if (unseenInVibe.isNotEmpty()) unseenInVibe else eligibleAtStep
+                } else eligibleAtStep
+                val promotedNovelty = isNoveltySlotStep && stepPool !== eligibleAtStep
+
+                val rankedStepPool = if (exploreJitter.isNotEmpty()) {
+                    stepPool.sortedByDescending { it.rankScore + (exploreJitter[it.candidate.song.id] ?: 0.0) }
+                } else stepPool
+
+                val branchLimit = minOf(rankedStepPool.size, if (useBeam) beamWidth * 2 else 1)
+                for (cand in rankedStepPool.take(branchLimit)) {
                     val prevFeat = state.recentFeatures.lastOrNull() ?: seedFeatures
                     val trans = transitionScorer.scoreTransition(
                         previous = prevFeat,
@@ -133,7 +202,8 @@ class DefaultSequenceOptimizer(
                         anchorFeatures = anchor,
                         config = config,
                     )
-                    val stepScore = cand.rankScore + config.transitionWeight * trans.total
+                    val jitter = exploreJitter[cand.candidate.song.id] ?: 0.0
+                    val stepScore = cand.rankScore + config.transitionWeight * trans.total + jitter
                     val nextArtists = state.artistCounts.toMutableMap()
                     cand.candidate.features?.primaryArtistIds?.forEach { a ->
                         nextArtists[a] = (nextArtists[a] ?: 0) + 1
@@ -149,7 +219,7 @@ class DefaultSequenceOptimizer(
                     } else state.recentFeatures
 
                     nextStates += BeamState(
-                        steps = state.steps + BeamStep(cand, trans, stepScore),
+                        steps = state.steps + BeamStep(cand, trans, stepScore, noveltySlot = promotedNovelty),
                         recentFeatures = nextRecent,
                         usedRecordingIds = nextRecSet,
                         usedWorkIds = nextWorkSet,
@@ -175,12 +245,41 @@ class DefaultSequenceOptimizer(
                 .thenBy { it.cumulativeScore },
         ) ?: return SequenceOptimizationResult(emptyList(), usedBeamSearch = useBeam, averageTransitionScore = 0.0)
 
-        val recommended = best.steps.mapIndexed { idx, step ->
+        val recommended = buildRecommendedTracks(best.steps)
+        val avgTrans = if (recommended.isNotEmpty()) {
+            recommended.map { it.sequenceScore }.average()
+        } else 0.0
+
+        return SequenceOptimizationResult(
+            tracks = recommended,
+            usedBeamSearch = useBeam,
+            averageTransitionScore = avgTrans,
+            constraintRelaxations = relaxations.toList(),
+        )
+    }
+
+    private fun isNewToUser(cand: RankedCandidate, profile: UserTasteSnapshot): Boolean {
+        val recId = cand.candidate.identity.canonicalRecordingId
+        return recId !in profile.longTerm.recordingWeights &&
+            recId !in profile.mediumTerm.recordingWeights &&
+            recId !in profile.lastPlayedMillisByRecording &&
+            cand.candidate.song.id !in profile.lastPlayedMillisByRecording &&
+            recId !in profile.explicit.likedRecordingIds &&
+            cand.candidate.song.id !in profile.explicit.likedProviderIds &&
+            recId !in profile.explicit.savedPlaylistRecordingIds &&
+            cand.candidate.song.id !in profile.explicit.savedPlaylistProviderIds
+    }
+
+    private fun buildRecommendedTracks(steps: List<BeamStep>): List<RecommendedTrack> =
+        steps.mapIndexed { idx, step ->
             val cand = step.ranked.candidate
             val br = step.ranked.breakdown
             val trans = step.breakdown
             val mergedReasons = buildList {
                 addAll(step.ranked.reasons)
+                if (step.noveltySlot) {
+                    add(RecommendationReason("NOVELTY_DISCOVERY_SLOT", "New discovery selected for 1-in-5 freshness slot", 0.05))
+                }
                 if (trans.tempoContinuity >= 0.45) {
                     add(RecommendationReason("SMOOTH_TEMPO_FLOW", "Smooth rhythmic transition from previous track", trans.tempoContinuity))
                 }
@@ -228,18 +327,6 @@ class DefaultSequenceOptimizer(
                 selectedPosition = idx,
             )
         }
-
-        val avgTrans = if (recommended.isNotEmpty()) {
-            recommended.map { it.sequenceScore }.average()
-        } else 0.0
-
-        return SequenceOptimizationResult(
-            tracks = recommended,
-            usedBeamSearch = useBeam,
-            averageTransitionScore = avgTrans,
-            constraintRelaxations = relaxations.toList(),
-        )
-    }
 
     private fun filterStepCandidates(
         pool: List<RankedCandidate>,

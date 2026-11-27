@@ -35,6 +35,9 @@ data class RecommendationRequest(
     val allowMixedLanguages: Boolean = false,
     val sessionVibe: com.velvet.app.recommendation.vibe.SessionVibe? = null,
     val artistLanguageMap: Map<String, com.velvet.app.recommendation.vibe.ArtistLanguageProfile> = emptyMap(),
+    val randomSeed: Long? = null,
+    val sessionSkippedArtistCounts: Map<String, Int> = emptyMap(),
+    val sessionSkippedGenreCounts: Map<String, Int> = emptyMap(),
     val createdAtMillis: Long = System.currentTimeMillis(),
 ) {
     val primarySeed: Song?
