@@ -368,7 +368,7 @@ object ArtistStationPolicy {
         val trimmedNeighbours = pickedNeighbours.toMutableList()
         if (!preserveTinyAcceptancePool) {
             while (pickedSelected.size + trimmedCollabs.size + trimmedNeighbours.size > 0 &&
-                pickedSelected.size.toDouble() / (pickedSelected.size + trimmedCollabs.size + trimmedNeighbours.size).toDouble() < 0.60
+                pickedSelected.size * 5 < (pickedSelected.size + trimmedCollabs.size + trimmedNeighbours.size) * 3
             ) {
                 if (trimmedNeighbours.isNotEmpty()) {
                     trimmedNeighbours.removeAt(trimmedNeighbours.lastIndex)

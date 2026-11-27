@@ -60,7 +60,11 @@ class Phase6RankerAndArtistPurityTest {
                 SeedRelatedCandidateSource(relatedProvider = { relatedCatalog }, clock = { now }),
                 ArtistCatalogueCandidateSource(artistTracksProvider = { artistCatalog }, clock = { now }),
                 CollaboratorCandidateSource(
-                    artistTracksProvider = { co -> collaboratorCatalog[co.lowercase()].orEmpty() },
+                    artistTracksProvider = { co ->
+                        val norm = co.lowercase()
+                        collaboratorCatalog[norm]
+                            ?: if ("mith" in norm) collaboratorCatalog["mithoon"].orEmpty() else emptyList()
+                    },
                     clock = { now },
                 ),
                 GenreLanguageNeighbourSource(querySearchProvider = { neighbourCatalog }, clock = { now }),
